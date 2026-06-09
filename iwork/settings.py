@@ -204,6 +204,16 @@ ALLOWED_FLOWS = [
     'SO9-L9A', 'SO9-L9B', 'SO9-L9C', 'SO9-L9D',
 ]
 
+# 隐藏分组 — 不查询、不显示（配置具体 Flow 名称）
+HIDDEN_FLOWS = [
+    'SO2-L2A', 'SO2-L2B', 'SO2-L2C', 'SO2-L2D', 'SO2-L2E', 'SO2-L2F', 'SO2-L2G',
+    'SO6-L6A', 'SO6-L6B', 'SO6-L6C', 'SO6-L6D', 'SO6-L6E', 'SO6-L6F', 'SO6-L6G',
+    'SO10-L10A', 'SO10-L10B', 'SO10-L10C', 'SO10-L10D', 'SO10-L10E', 'SO10-L10F', 'SO10-L10G',
+]
+
+# 实际可见分组 = 白名单 - 隐藏
+VISIBLE_FLOWS = [f for f in ALLOWED_FLOWS if f not in HIDDEN_FLOWS]
+
 # 数据库查询超时（秒）
 QUERY_TIMEOUT = 45
 

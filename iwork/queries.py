@@ -7,7 +7,7 @@ from loguru import logger
 
 # =====
 # 业务配置引用（统一在 settings.py 中定义）
-ALLOWED_FLOWS = settings.ALLOWED_FLOWS
+ALLOWED_FLOWS = settings.VISIBLE_FLOWS
 
 
 def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
@@ -136,16 +136,31 @@ def get_worker_ranking(target: date, limit: int = 10, stepno_filter: list[int] |
     return [{'name': str(s['RegPerSysID']), 'qty': s['qty'] or 0} for s in stats]
 
 
+def _inject_flows(records, wo_list: list) -> None:
+    """为工单列表注入关联的 Flow 分组列表（原地修改）"""
+    wo_orders = [wo['wrk_order'] for wo in wo_list]
+    if not wo_orders:
+        return
+    flow_map = {}
+    rows = records.filter(WrkOrder__in=wo_orders).values('WrkOrder', 'Flow').distinct()
+    for r in rows:
+        flow_map.setdefault(r['WrkOrder'], set()).add(r['Flow'])
+    for wo in wo_list:
+        wo['flows'] = sorted(flow_map.get(wo['wrk_order'], set()))
+
+
 def get_workorders_list(target: date, limit: int = 20, stepno_filter: list[int] | None = None) -> list:
     """获取工单列表"""
     records = get_records_queryset(target)
     records = apply_stepno_filter(records, stepno_filter)
     stats = list(
         records.values('WrkOrder')
-        .annotate(total_qty=Sum('Qty'), step_count=Count('StepNo', distinct=True))
+        .annotate(total_qty=Sum('Qty'))
         .order_by('-total_qty')[:limit]
     )
-    return [{'wrk_order': s['WrkOrder'], 'total_qty': s['total_qty'] or 0, 'step_count': s['step_count']} for s in stats]
+    wo_list = [{'wrk_order': s['WrkOrder'], 'total_qty': s['total_qty'] or 0} for s in stats]
+    _inject_flows(records, wo_list)
+    return wo_list
 
 
 def get_workorder_detail(wrk_order: str, target: date) -> dict:
@@ -279,14 +294,14 @@ def get_workorders_paginated(target_date: date, page: int = 1, page_size: int = 
         records.values('WrkOrder')
         .annotate(
             total_qty=Sum('Qty'),
-            step_count=Count('StepNo', distinct=True),
             worker_count=Count('RegPerSysID', distinct=True),
         )
         .order_by('-total_qty')
         [(page - 1) * page_size: page * page_size]
     )
 
-    items = [{'wrk_order': s['WrkOrder'], 'total_qty': s['total_qty'] or 0, 'step_count': s['step_count'], 'worker_count': s['worker_count'] or 0} for s in stats]
+    items = [{'wrk_order': s['WrkOrder'], 'total_qty': s['total_qty'] or 0, 'worker_count': s['worker_count'] or 0} for s in stats]
+    _inject_flows(records, items)
 
     return {
         'items': items,
@@ -333,7 +348,7 @@ def get_batch_hourly_stats(target_date: date) -> dict:
 def get_batch_process_by_flow(target_date: date) -> dict:
     """每个工序的 Flow 对比：{stepno: [{step, flow, qty}]}"""
     t0 = time.perf_counter()
-    records = get_records_queryset(target_date).exclude(Flow='')
+    records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=ALLOWED_FLOWS)
     rows = list(
         records.values('StepNo', 'Flow')
         .annotate(qty=Sum('Qty'))
@@ -391,18 +406,25 @@ def get_batch_station_ranking(target_date: date, limit: int = 10) -> dict:
 
 
 def get_batch_workorders_list(target_date: date, limit: int = 20) -> dict:
-    """每个工序的工单列表：{stepno: [{wrk_order, total_qty, step_count}]}"""
+    """每个工序的工单列表：{stepno: [{wrk_order, total_qty, flows}]}"""
     records = get_records_queryset(target_date)
     rows = list(
         records.values('StepNo', 'WrkOrder')
-        .annotate(total_qty=Sum('Qty'), step_count=Count('StepNo', distinct=True))
+        .annotate(total_qty=Sum('Qty'))
         .order_by('StepNo', '-total_qty')
     )
+    # 收集每个工单关联的 Flow 分组
+    wo_flows: dict = {}
+    flow_rows = records.values('WrkOrder', 'Flow').distinct()
+    for r in flow_rows:
+        wo_flows.setdefault(r['WrkOrder'], set()).add(r['Flow'])
+
     result: dict = {}
     for stepno_key, group_rows in _groupby(rows, 'StepNo'):
         top = sorted(group_rows, key=lambda r: r['total_qty'], reverse=True)[:limit]
         result[stepno_key] = [
-            {'wrk_order': r['WrkOrder'], 'total_qty': r['total_qty'] or 0, 'step_count': r['step_count']}
+            {'wrk_order': r['WrkOrder'], 'total_qty': r['total_qty'] or 0,
+             'flows': sorted(wo_flows.get(r['WrkOrder'], set()))}
             for r in top
         ]
     return result

@@ -118,9 +118,8 @@
                                 <span class="font-semibold text-slate-200">{[ wo.wrk_order ]}</span>
                                 <span class="text-emerald-400 font-bold">{[ fmtNum(wo.total_qty) ]}件</span>
                             </div>
-                            <div class="flex justify-between text-slate-400 mt-1">
-                                <span>{[ wo.step_count ]}道工序</span>
-                                <span>{[ wo.worker_count ]}人</span>
+                            <div class="text-slate-400 mt-1">
+                                <span>{[ (wo.flows || []).length ]}道工序</span>
                             </div>
                         </div>
                         <div v-if="workorderSummaryList.length === 0" class="text-center text-slate-500 py-8">
@@ -145,7 +144,7 @@
                         <div class="text-xs text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
                             <span v-for="(sd, sn, idx) in card.stepnos" :key="sn" class="whitespace-nowrap inline-flex items-center gap-1.5">
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold"
-                                    :style="{ border: '1.5px solid ' + stepColor(idx), color: stepColor(idx), backgroundColor: stepColor(idx) + '1a' }">
+                                    :style="{ border: '1.5px solid ' + stepColor(idx, sn), color: stepColor(idx, sn), backgroundColor: stepColor(idx, sn) + '1a' }">
                                     工序{[ sn ]}
                                 </span>
                                 <span>{[ fmtNum(sd.qty) ]}件<span class="text-slate-500">({[ sd.workers ]}人)</span></span>
@@ -434,7 +433,7 @@ createApp({
         function hideLoading() {
             clearInterval(loadingTimer);
             loadingProgress.value = 100;
-            lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+            lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             setTimeout(() => {
                 isLoading.value = false;
                 loadingProgress.value = 0;
@@ -515,7 +514,7 @@ createApp({
             return workorderList.value.map(wo => ({
                 wrk_order: wo.wrk_order,
                 total_qty: wo.total_qty || 0,
-                step_count: wo.step_count || 0,
+                flows: wo.flows || [],
                 worker_count: wo.worker_count || 0,
             })).sort((a, b) => b.total_qty - a.total_qty);
         });
@@ -657,9 +656,9 @@ createApp({
         function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
 
         // 工序色板
-        const STEP_COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#a855f7'];
-        function stepColor(idx) {
-            return STEP_COLORS[idx % STEP_COLORS.length];
+        function stepColor(idx, stepno) {
+            if (String(stepno) === '70') return '#f59e0b';  // 工序70 突出显示（金色）
+            return '#3b82f6';  // 其他工序统一蓝色
         }
 
         // 自然排序（SO2 < SO10）
@@ -904,7 +903,7 @@ createApp({
                         efficiency: target > 0 ? (totalQty / target * 100) : null,
                     };
                 });
-                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { /* 静默忽略 */ }
         }
 
@@ -932,7 +931,7 @@ createApp({
                 }
                 flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
                 workorderList.value = woData.items || [];
-                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { /* 静默忽略 */ }
         }
 
@@ -989,9 +988,9 @@ createApp({
                 const qtyData = isFlow
                     ? cards.map(c => Object.values(c.stepnos || {}).reduce((s, sd) => s + (sd.qty || 0), 0))
                     : cards.map(c => c.total_qty || 0);
-                // 人数：Flow 视图取 stepnos 中最大 workers 数（近似），工序视图直接用 worker_count
+                // 人数：Flow 视图用 total_workers（卡片已有的总人数），工序视图用 worker_count
                 const workerData = isFlow
-                    ? cards.map(c => Math.max(0, ...Object.values(c.stepnos || {}).map(sd => sd.workers || 0)))
+                    ? cards.map(c => c.total_workers || 0)
                     : cards.map(c => c.worker_count || 0);
                 // 柱状折线组合图
                 if (charts['combo-chart']) charts['combo-chart'].destroy();
@@ -1009,11 +1008,11 @@ createApp({
                         options: {
                             responsive: true, maintainAspectRatio: false,
                             animation: false,
-                            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10 } } } },
+                            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 14 } } } },
                             scales: {
-                                x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 9 } } },
-                                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, title: { display: true, text: '产量', color: '#94a3b8' } },
-                                y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e' }, title: { display: true, text: '人数', color: '#22c55e' } },
+                                x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } } },
+                                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } }, title: { display: true, text: '产量', color: '#94a3b8' } },
+                                y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e', font: { size: 14 } }, title: { display: true, text: '人数', color: '#22c55e' } },
                             },
                         },
                     });

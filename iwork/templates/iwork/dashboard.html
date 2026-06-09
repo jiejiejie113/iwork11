@@ -225,18 +225,16 @@
                     <tr class="text-left text-slate-400 border-b border-slate-700">
                         <th class="pb-2">工单号</th>
                         <th class="pb-2">总产量</th>
-                        <th class="pb-2">工序数</th>
-                        <th class="pb-2">更新时间</th>
+                        <th class="pb-2">分组</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="wo in workorderItems" :key="wo.wrk_order" class="border-b border-slate-700 hover:bg-slate-700/50">
                         <td class="py-2 text-slate-300">{[ wo.wrk_order ]}</td>
                         <td class="py-2 text-emerald-400 font-bold tabular-nums">{[ fmtNum(wo.total_qty) ]}</td>
-                        <td class="py-2 text-slate-400">{[ wo.step_count ]}</td>
-                        <td class="py-2 text-slate-500">{[ nowTime ]}</td>
+                        <td class="py-2 text-slate-400 text-xs">{[ (wo.flows || []).join(', ') ]}</td>
                     </tr>
-                    <tr v-if="!workorderItems.length"><td colspan="4" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
+                    <tr v-if="!workorderItems.length"><td colspan="3" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
                 </tbody>
             </table>
         </div>
@@ -283,10 +281,10 @@ function chartDefaults() {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
-        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 14 } } } },
         scales: {
-            x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
-            y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+            x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } } },
+            y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } } }
         }
     };
 }
@@ -342,8 +340,6 @@ createApp({
         });
         const jumpPage = ref('1');
         const workorderPage = ref(1);
-        const nowTime = ref(new Date().toLocaleTimeString('zh-CN'));
-
         const prefill = {{ stats_json|safe }};
         const data = reactive({
             total_qty: prefill.total_qty || 0,
@@ -368,10 +364,7 @@ createApp({
         const workorderCache = reactive({});  // { page: [items] }
 
         const workorderItems = computed(() => {
-            const cached = workorderCache[workorderPage.value];
-            if (cached) return cached;
-            // 首屏 fallback：使用批量数据前 20 条
-            return (data.workorders || []).slice(0, 20);
+            return workorderCache[workorderPage.value] || [];
         });
 
         // 分页页码
@@ -446,7 +439,7 @@ createApp({
         }
 
         async function goWorkorderPage(p) {
-            const total = Math.max(1, workorderPagination.total_pages || Math.ceil(data.workorders.length / 20));
+            const total = Math.max(1, workorderPagination.total_pages);
             if (p < 1 || p > total) return;
             if (!workorderCache[p]) {
                 await fetchWorkorderPage(p);
@@ -540,7 +533,7 @@ createApp({
                 initChart('station-dist-chart', 'doughnut', {
                     labels: stStats.map(s => s.station),
                     datasets: [{ data: stStats.map(s => s.qty), backgroundColor: COLORS.slice(0, stStats.length) }]
-                }, { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 10 } } } } });
+                }, { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 14 } } } } });
 
                 // 主题6：工站排行
                 const srStats = data.station_ranking || [];
@@ -660,7 +653,7 @@ createApp({
 
             eventSource = new EventSource(url);
 
-            eventSource.onmessage = (event) => {
+            eventSource.onmessage = async (event) => {
                 if (isPaused.value) return;
                 if (currentView.value !== 'realtime') return;
 
@@ -668,11 +661,16 @@ createApp({
                     const msg = JSON.parse(event.data);
                     if (msg.data) {
                         Object.assign(data, msg.data);
-                        // 清空工单缓存，下次翻页时重新获取
-                        Object.keys(workorderCache).forEach(k => delete workorderCache[k]);
-                        workorderPage.value = 1;
+                        // 先获取新数据，再更新缓存，避免中间空档导致闪烁
+                        const resp = await fetch(`${basePath}api/dashboard/workorders/?page=1&page_size=20&${buildStepnoParam()}`);
+                        const result = await resp.json();
+                        workorderCache[1] = result.items;
+                        workorderPagination.total = result.total;
+                        workorderPagination.total_pages = result.total_pages;
                         workorderPagination.page = 1;
-                        fetchWorkorderPage(1);  // 异步更新，不 await
+                        workorderPage.value = 1;
+                        // 清除其他页缓存
+                        Object.keys(workorderCache).forEach(k => { if (k != 1) delete workorderCache[k]; });
                     }
                     if (msg.process_list) {
                         // 处理工序列表更新
@@ -682,8 +680,7 @@ createApp({
                     }
                     wsConnected.value = true;
                     wsStatus.value = '已连接';
-                    lastUpdate.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
-                    nowTime.value = new Date().toLocaleTimeString('zh-CN');
+                    lastUpdate.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
                     renderAllCharts();
                 } catch (e) {
                     console.error('SSE 数据解析失败:', e);
@@ -762,7 +759,6 @@ createApp({
             } else {
                 loadAvailableDates().then(() => loadProcessList());
             }
-            setInterval(() => { nowTime.value = new Date().toLocaleTimeString('zh-CN'); }, 30000);
         });
 
         onUnmounted(() => {
@@ -776,7 +772,7 @@ createApp({
             selectedDate, showStepnoDropdown, stepnoFilter, isLoading,
             pfSteps, activePfStep, activePfTotal, pfJumpInput,
             switchPfStep, jumpPfStep,
-            jumpPage, workorderPage, nowTime,
+            jumpPage, workorderPage,
             data, workorderPagination, workorderItems, pageNumbers, displayDate,
             fmtNum, heatmapAverages, heatmapCellColor,
             goWorkorderPage,

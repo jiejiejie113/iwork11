@@ -132,7 +132,7 @@ def _build_heatmap_matrix(process_flow_stats: list) -> dict:
         flow_step_qty[(flow, step)] = qty
 
     sorted_stepnos = sorted(step_qty.keys(), key=lambda s: step_qty[s], reverse=True)
-    flows = list(settings.ALLOWED_FLOWS)
+    flows = list(settings.VISIBLE_FLOWS)
     data = [[flow_step_qty.get((flow, step), 0) for step in sorted_stepnos] for flow in flows]
 
     return {
@@ -250,15 +250,15 @@ def get_batch_stats(q=None) -> dict:
     all_top = _merge_batch_top_processes(batch_basic)
     all_wo = []
     wo_merged = {}
-    wo_steps = {}
+    wo_flows = {}
     for stepno, items in batch_wo.items():
         for item in items:
             k = item['wrk_order']
             wo_merged[k] = wo_merged.get(k, 0) + item['total_qty']
-            if k not in wo_steps:
-                wo_steps[k] = set()
-            wo_steps[k].add(stepno)
-    all_wo = [{'wrk_order': k, 'total_qty': v, 'step_count': len(wo_steps.get(k, set()))}
+            if k not in wo_flows:
+                wo_flows[k] = set()
+            wo_flows[k].update(item.get('flows', []))
+    all_wo = [{'wrk_order': k, 'total_qty': v, 'flows': sorted(wo_flows.get(k, set()))}
               for k, v in sorted(wo_merged.items(), key=lambda kv: kv[1], reverse=True)[:20]]
 
     all_stepnos_sorted = sorted(all_stepnos, reverse=True)
