@@ -64,14 +64,14 @@
         }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen" style="touch-action:none;">
-<div id="app" class="container mx-auto px-4 py-6"
+<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" style="touch-action:none;">
+<div id="app" class="container mx-auto flex flex-col h-full px-4 py-6"
      data-initial-view="{{ initial_view }}"
      data-detail-type="{{ detail_type|default:'' }}"
      data-detail-key="{{ detail_key|default:'' }}">
 
     <!-- 顶部工具栏（导航 + 标题 + 搜索 + 日期 + Tab 合并为一行） -->
-    <header class="flex items-center gap-3 mb-4 flex-wrap bg-slate-800/50 rounded-lg px-4 py-2 border border-slate-700/50">
+    <header class="flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap bg-slate-800/50 rounded-lg px-4 py-2 border border-slate-700/50">
         <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
             <a :href="basePath" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">实时数据</a>
             <a :href="basePath + 'history/'" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">历史数据</a>
@@ -97,7 +97,7 @@
     <div v-if="isLoading" class="loading-bar" :style="{ width: loadingProgress + '%' }"></div>
 
     <!-- ===== 概览页 ===== -->
-    <div v-if="currentView === 'overview'">
+    <div v-if="currentView === 'overview'" class="flex-1 overflow-y-auto">
         <!-- 可视化图表区 + 工单列表 -->
         <div class="flex gap-4 mb-4" style="height:340px;">
             <!-- 左侧：各 Flow 产量 & 人数 -->
@@ -195,9 +195,9 @@
     </div>
 
     <!-- ===== 详情页 ===== -->
-    <div v-if="currentView === 'detail'">
+    <div v-if="currentView === 'detail'" class="flex-1 flex flex-col overflow-hidden">
         <!-- 面包屑 -->
-        <div class="flex items-center gap-2 mb-4 text-sm">
+        <div class="flex-shrink-0 flex items-center gap-2 mb-4 text-sm">
             <a :href="basePath + 'production/detail-data/'" class="text-blue-400 hover:underline">生产详情</a>
             <span class="text-slate-600">/</span>
             <span class="font-semibold">{[ detailTitle ]}</span>
@@ -215,7 +215,7 @@
         </div>
 
         <!-- Tab + 搜索 -->
-        <div class="flex items-center gap-3 mb-4">
+        <div class="flex-shrink-0 flex items-center gap-3 mb-4">
             <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
                 <button @click="detailLayout = 'table'"
                     :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
@@ -235,26 +235,26 @@
         </div>
 
         <!-- ===== 版面1：表格视图 ===== -->
-        <div v-if="detailLayout === 'table'" class="bg-slate-800 border border-slate-700 rounded-lg overflow-x-auto">
+        <div v-if="detailLayout === 'table'" class="bg-slate-800 border border-slate-700 rounded-lg flex-1 overflow-y-auto">
             <table class="w-full text-sm">
                 <thead>
                     <tr class="text-left text-slate-400 border-b border-slate-700">
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white whitespace-nowrap" @click="sortBy('reg_per_sys_id')">员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-slate-500 whitespace-nowrap">工单</th>
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white whitespace-nowrap sticky left-0 top-0 bg-slate-800 z-30" @click="sortBy('reg_per_sys_id')">员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-slate-500 whitespace-nowrap sticky top-0 bg-slate-800 z-10">工单</th>
                         <th v-if="detailType === 'flow'" v-for="(sn, i) in detailStepnos" :key="sn"
-                            class="px-3 py-3 text-center whitespace-nowrap cursor-pointer select-none hover:text-white"
+                            class="px-3 py-3 text-center whitespace-nowrap cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                             @click="sortBy('stepno')">工序{[ sn ]} {[ sortKey === 'stepno' && i === 0 ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-else class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('qty')">实时产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-center text-slate-500">合计</th>
-                        <th class="px-3 py-3">目标</th>
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('efficiency')">达标 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('efficiency')">效率 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-else class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('qty')">实时产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-center text-slate-500 sticky top-0 bg-slate-800 z-10">合计</th>
+                        <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('efficiency')">达标 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('efficiency')">效率 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="emp in filteredEmployees" :key="emp.reg_per_sys_id"
-                        class="border-b border-slate-700 hover:bg-slate-700/50">
-                        <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
+                        class="border-b border-slate-700 group hover:bg-slate-700/50">
+                        <td class="py-2 px-3 text-slate-300 sticky left-0 bg-slate-800 group-hover:bg-slate-700/50 z-20">{[ emp.reg_per_sys_id ]}</td>
                         <!-- Flow 详情：工单列 -->
                         <td v-if="detailType === 'flow'" class="py-2 px-3 text-xs text-slate-400 max-w-[200px]">
                             <span v-if="emp.workorders && emp.workorders.length > 0">{[ emp.workorders.join(', ') ]}</span>
@@ -294,8 +294,8 @@
                 </tbody>
                 <!-- 竖轴汇总：Flow 详情 -->
                 <tfoot v-if="detailType === 'flow' && filteredEmployees.length > 0">
-                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold">
-                        <td class="py-2 px-3 text-slate-400">合计</td>
+                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold sticky bottom-0 z-30">
+                        <td class="py-2 px-3 text-slate-400 sticky left-0 bottom-0 bg-slate-800 z-40">合计</td>
                         <td class="py-2 px-3"></td>
                         <td v-for="sn in detailStepnos" :key="sn"
                             class="py-2 px-3 text-center text-emerald-400 tabular-nums">
@@ -309,8 +309,8 @@
                 </tfoot>
                 <!-- 竖轴汇总：工序详情 -->
                 <tfoot v-if="detailType === 'stepno' && filteredEmployees.length > 0">
-                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold">
-                        <td class="py-2 px-3 text-slate-400">合计</td>
+                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold sticky bottom-0 z-30">
+                        <td class="py-2 px-3 text-slate-400 sticky left-0 bottom-0 bg-slate-800 z-40">合计</td>
                         <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums">{[ fmtNum(columnGrandTotal) ]}</td>
                         <td class="py-2 px-3 text-slate-400 tabular-nums">{[ fmtNum(columnTargetTotal) ]}</td>
                         <td class="py-2 px-3"></td>
@@ -321,7 +321,8 @@
         </div>
 
         <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
-        <TransitionGroup v-if="detailLayout === 'cards'" name="flip" tag="div" class="grid grid-cols-2 gap-3">
+        <div v-if="detailLayout === 'cards'" class="flex-1 overflow-y-auto">
+        <TransitionGroup name="flip" tag="div" class="grid grid-cols-2 gap-3">
             <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" class="card-wrapper">
                 <!-- 占位符：原位置显示虚线框 -->
                 <div v-if="activeDrag && dragIndex === idx" class="card placeholder"></div>
@@ -330,9 +331,8 @@
                     :class="{ dragging: activeDrag && dragIndex === idx }"
                     :style="activeDrag && dragIndex === idx ? dragStyle : {}"
                     @pointerdown="onPointerDown($event, idx)">
-                    <!-- 左卡布局 -->
                     <template v-if="idx % 2 === 0">
-                        <div class="flex-1 text-right mr-3">
+                        <div class="flex-1 text-left mr-3">
                             <div v-for="s in emp.steps" :key="s.stepno" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
@@ -343,7 +343,8 @@
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
                             </div>
                             <div class="text-xs mt-1">
-                                <span class="text-slate-200 font-semibold">{[ emp.qty ]}件</span>
+                                <span class="text-slate-500">产量</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <template v-if="emp.target > 0">
                                     <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
                                     <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
@@ -356,7 +357,6 @@
                             {[ emp.reg_per_sys_id ]}
                         </div>
                     </template>
-                    <!-- 右卡布局 -->
                     <template v-else>
                         <div class="w-24 h-24 rounded-lg flex items-center justify-center text-white font-extrabold text-base flex-shrink-0"
                             :style="{ backgroundColor: getStatusColor(emp) }">
@@ -373,7 +373,8 @@
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
                             </div>
                             <div class="text-xs mt-1">
-                                <span class="text-slate-200 font-semibold">{[ emp.qty ]}件</span>
+                                <span class="text-slate-500">产量</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <template v-if="emp.target > 0">
                                     <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
                                     <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
@@ -388,6 +389,7 @@
                 暂无数据
             </div>
         </TransitionGroup>
+        </div>
 
     </div>
 </div>
@@ -433,7 +435,7 @@ createApp({
         function hideLoading() {
             clearInterval(loadingTimer);
             loadingProgress.value = 100;
-            lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+            lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             setTimeout(() => {
                 isLoading.value = false;
                 loadingProgress.value = 0;
@@ -566,6 +568,18 @@ createApp({
                     const ai = orderMap[a.reg_per_sys_id] ?? 9999;
                     const bi = orderMap[b.reg_per_sys_id] ?? 9999;
                     return ai - bi;
+                });
+            } else {
+                // 默认按工序排序（与表格视图一致）
+                const stepnoOrder = {};
+                detailStepnos.value.forEach((sn, i) => { stepnoOrder[sn] = i; });
+                emps.sort((a, b) => {
+                    const aFirst = (a.steps || []).find(s => s.qty > 0);
+                    const bFirst = (b.steps || []).find(s => s.qty > 0);
+                    const aIdx = aFirst ? (stepnoOrder[aFirst.stepno] ?? 999) : 999;
+                    const bIdx = bFirst ? (stepnoOrder[bFirst.stepno] ?? 999) : 999;
+                    if (aIdx !== bIdx) return aIdx - bIdx;
+                    return (bFirst ? bFirst.qty : 0) - (aFirst ? aFirst.qty : 0);
                 });
             }
             // 搜索过滤
@@ -903,7 +917,7 @@ createApp({
                         efficiency: target > 0 ? (totalQty / target * 100) : null,
                     };
                 });
-                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { /* 静默忽略 */ }
         }
 
@@ -931,7 +945,7 @@ createApp({
                 }
                 flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
                 workorderList.value = woData.items || [];
-                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { /* 静默忽略 */ }
         }
 
