@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: iwork-mysql
+    restart: unless-stopped
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: iwork_local
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  redis:
+    image: redis:7-alpine
+    container_name: iwork-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  iwork:
+    build: .
+    container_name: iwork-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=iwork.settings
+      - MYSQL_HOST=mysql
+      - REDIS_HOST=redis
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./static:/app/static
+    depends_on:
+      - mysql
+      - redis
+
+volumes:
+  mysql_data:
+  redis_data:

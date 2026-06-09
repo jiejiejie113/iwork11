@@ -1,0 +1,563 @@
+import json
+import time
+import asyncio
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from django.core.cache import cache
+from django.http import StreamingHttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from asgiref.sync import sync_to_async
+from datetime import date, datetime
+from loguru import logger
+
+from iwork.statistics import get_realtime_stats, _seconds_to_midnight
+from iwork.queries import (
+    get_hourly_stats,
+    get_flow_detail,
+    get_workorders_list,
+    get_workorder_detail,
+    get_monthly_total_trend,
+    get_process_by_flow,
+    get_process_stats,
+    get_heatmap_data,
+    get_station_ranking,
+    get_workorders_paginated,
+    get_all_stepnos as remote_get_all_stepnos,
+    get_batch_flow_overview as remote_get_batch_flow_overview,
+    get_batch_flow_hourly as remote_get_batch_flow_hourly,
+    get_batch_flow_employees as remote_get_batch_flow_employees,
+    get_batch_stepno_employees as remote_get_batch_stepno_employees,
+)
+from iwork.local_queries import (
+    get_all_stepnos as local_get_all_stepnos,
+    get_batch_flow_overview as local_get_batch_flow_overview,
+    get_batch_flow_hourly as local_get_batch_flow_hourly,
+    get_batch_flow_employees as local_get_batch_flow_employees,
+    get_batch_stepno_employees as local_get_batch_stepno_employees,
+)
+from iwork.local_models import TargetProduction
+
+
+def _parse_stepno(request) -> list[int] | None:
+    """从请求参数解析 StepNo 过滤列表，无参数返回 None（全工序）"""
+    # 兼容 DRF Request 和 Django WSGIRequest
+    params = getattr(request, 'query_params', request.GET)
+    raw = params.get('stepno', '')
+    if not raw:
+        return None
+    return [int(s.strip()) for s in raw.split(',') if s.strip().isdigit()]
+
+
+@api_view(['GET'])
+def realtime_stats(request):
+    """获取实时统计数据（支持 ?stepno=70,69 过滤工序）"""
+    t0 = time.time()
+    try:
+        stepno_filter = _parse_stepno(request)
+        stats = get_realtime_stats(stepno_filter=stepno_filter)
+        elapsed = (time.time() - t0) * 1000
+        logger.info('GET /api/dashboard/realtime stepno={} qty={} ({:.0f}ms)',
+                    stepno_filter or 'all', stats.get('total_qty', 0), elapsed)
+        logger.debug('[工序产量对比] /api/dashboard/realtime 完成 stepno={} total_qty={} '
+                     'process_flow_stats={}行 hourly_stats={}行 elapsed={:.0f}ms',
+                     stepno_filter or 'all',
+                     stats.get('total_qty', 0),
+                     len(stats.get('process_flow_stats', [])),
+                     len(stats.get('hourly_stats', [])),
+                     elapsed)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error('GET /api/dashboard/realtime 失败 ({:.0f}ms): {}', (time.time() - t0) * 1000, e)
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def process_list(request):
+    """获取可用工序号列表（实时+历史共用，支持 ?mode=local&date=2026-05-12）"""
+    try:
+        mode = request.query_params.get('mode', 'remote')
+        date_str = request.query_params.get('date', date.today().isoformat())
+        date_obj = date.fromisoformat(date_str)
+
+        if mode == 'local':
+            stepnos = local_get_all_stepnos(date_obj)
+        else:
+            stepnos = remote_get_all_stepnos(date_obj)
+
+        return Response({
+            'date': date_obj.isoformat(),
+            'mode': mode,
+            'stepnos': stepnos,
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f'获取工序列表失败: {e}')
+        return Response({'error': '获取工序列表失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def hourly_stats(request):
+    """获取按小时统计数据"""
+    target_date = request.query_params.get('date', date.today().isoformat())
+    stepno_filter = _parse_stepno(request)
+    cache_key = f'dashboard:hourly:{target_date}:{stepno_filter}'
+
+    stats = cache.get(cache_key)
+    if stats is None:
+        try:
+            target = date.fromisoformat(target_date)
+            stats = get_hourly_stats(target, stepno_filter=stepno_filter)
+            cache.set(cache_key, stats, 86400)
+        except Exception as e:
+            logger.error(f'获取小时统计失败: {e}')
+            return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response(stats, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+def flow_stats(request, flow_name):
+    """获取指定 Flow 组统计数据"""
+    try:
+        today = date.today()
+        stats = get_flow_detail(today, flow_name)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取 Flow 统计失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def workorder_list(request):
+    """获取工单列表（分页），支持 ?mode=local&date=2026-05-18"""
+    try:
+        mode = request.query_params.get('mode', 'remote')
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+        stepno_filter = _parse_stepno(request)
+
+        if mode == 'local':
+            from iwork.local_queries import get_workorders_paginated as local_paginated
+            result = local_paginated(target_date, page=page, page_size=page_size,
+                                     stepno_filter=stepno_filter)
+        else:
+            result = get_workorders_paginated(target_date, page=page, page_size=page_size,
+                                              stepno_filter=stepno_filter)
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取工单列表失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def workorder_detail(request, wrk_order):
+    """获取工单详情"""
+    target_date = request.query_params.get('date', date.today().isoformat())
+
+    try:
+        target = date.fromisoformat(target_date)
+        detail = get_workorder_detail(wrk_order, target)
+        return Response(detail, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取工单详情失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# 新增 API 端点（看板改版 v2）
+
+@api_view(['GET'])
+def monthly_trend(request):
+    """获取当月总产量日趋势（主题 3c）"""
+    try:
+        target_date = request.query_params.get('date', date.today().isoformat())
+        target = date.fromisoformat(target_date)
+        month_start = date(target.year, target.month, 1)
+        stepno_filter = _parse_stepno(request)
+
+        stats = get_monthly_total_trend(month_start, target, stepno_filter=stepno_filter)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取月趋势失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def process_compare(request):
+    """获取工序×Flow 产量对比（主题 3a）"""
+    t0 = time.time()
+    try:
+        target_date = request.query_params.get('date', date.today().isoformat())
+        target = date.fromisoformat(target_date)
+
+        stepnos_raw = request.query_params.get('stepnos', '')
+        if not stepnos_raw:
+            # 默认取当天 Top 8 工序
+            top = get_process_stats(target, limit=8)
+            stepno_list = [p['step'] for p in top]
+        else:
+            stepno_list = [int(s.strip()) for s in stepnos_raw.split(',') if s.strip().isdigit()]
+
+        stats = get_process_by_flow(target, stepno_list)
+        elapsed = (time.time() - t0) * 1000
+        logger.info('GET /api/dashboard/process-compare date={} stepnos={} → {}行 ({:.0f}ms)',
+                    target_date, stepno_list, len(stats), elapsed)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error('获取工序对比失败 ({:.0f}ms): {}', (time.time() - t0) * 1000, e)
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def heatmap(request):
+    """获取热力图数据（主题 5）"""
+    try:
+        target_date = request.query_params.get('date', date.today().isoformat())
+        target = date.fromisoformat(target_date)
+        stepno_filter = _parse_stepno(request)
+
+        stats = get_heatmap_data(target, stepno_filter=stepno_filter)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取热力图数据失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def station_ranking(request):
+    """获取工站产量排行（主题 6）"""
+    try:
+        target_date = request.query_params.get('date', date.today().isoformat())
+        target = date.fromisoformat(target_date)
+        limit = int(request.query_params.get('limit', 15))
+        stepno_filter = _parse_stepno(request)
+
+        stats = get_station_ranking(target, limit=limit, stepno_filter=stepno_filter)
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取工站排行失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# 生产详情 API 端点
+
+
+def _get_targets_with_fallback(target_date):
+    """
+    获取目标产量（优先 Redis → 回退数据库）
+
+    Args:
+        target_date (date): 目标日期
+
+    Returns:
+        dict: {employee_id_str: target_qty}
+    """
+    date_str = target_date.isoformat()
+
+    # 1. 优先读 Redis
+    key = f'targets:{date_str}'
+    cached = cache.get(key)
+    if cached:
+        return json.loads(cached)
+
+    # 2. Redis 未命中，读数据库
+    try:
+        targets = TargetProduction.objects.filter(
+            target_date=target_date
+        ).values_list('employee_id', 'target_qty')
+        targets_dict = {eid: qty for eid, qty in targets}
+
+        # 3. 回写 Redis 缓存
+        if targets_dict:
+            cache.set(key, json.dumps(targets_dict), timeout=_seconds_to_midnight())
+
+        return targets_dict
+    except Exception as e:
+        logger.error(f'从数据库读取目标产量失败: {e}')
+        return {}
+
+
+def _get_flow_detail_data(flow_name, target_date, mode='remote'):
+    """
+    获取指定 Flow 的完整详情数据
+
+    Args:
+        flow_name (str): Flow 名称
+        target_date (date): 目标日期
+        mode (str): 'remote' 远程数据库 / 'local' 本地数据库
+
+    Returns:
+        dict: 包含 flow、date、total_qty、worker_count、hourly_trend、employees
+    """
+    if mode == 'local':
+        employees_data = local_get_batch_flow_employees(target_date)
+        hourly_data = local_get_batch_flow_hourly(target_date)
+    else:
+        employees_data = remote_get_batch_flow_employees(target_date)
+        hourly_data = remote_get_batch_flow_hourly(target_date)
+
+    employees = employees_data.get(flow_name, [])
+    total_qty = sum(e['total_qty'] for e in employees)
+
+    # 读取已保存的目标产量并注入到员工数据中
+    targets_dict = _get_targets_with_fallback(target_date)
+    for emp in employees:
+        emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
+
+    return {
+        'flow': flow_name,
+        'date': target_date.isoformat(),
+        'total_qty': total_qty,
+        'worker_count': len(employees),
+        'hourly_trend': hourly_data.get(flow_name, []),
+        'employees': employees,
+    }
+
+
+def _get_stepno_detail_data(stepno, target_date, mode='remote'):
+    """
+    获取指定 StepNo 的完整详情数据
+
+    Args:
+        stepno (int): 工序号
+        target_date (date): 目标日期
+        mode (str): 'remote' 远程数据库 / 'local' 本地数据库
+
+    Returns:
+        dict: 包含 stepno、date、total_qty、worker_count、employees
+    """
+    if mode == 'local':
+        stepno_data = local_get_batch_stepno_employees(target_date)
+    else:
+        stepno_data = remote_get_batch_stepno_employees(target_date)
+
+    employees = stepno_data.get(stepno, [])
+    total_qty = sum(e['qty'] for e in employees)
+
+    # 读取已保存的目标产量并注入到员工数据中
+    targets_dict = _get_targets_with_fallback(target_date)
+    for emp in employees:
+        emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
+
+    return {
+        'stepno': stepno,
+        'date': target_date.isoformat(),
+        'total_qty': total_qty,
+        'worker_count': len(employees),
+        'employees': employees,
+    }
+
+
+@api_view(['GET'])
+def stepno_overview(request):
+    """
+    获取工序概览汇总（从 Redis 缓存一次读取，消除 N+1 查询）
+
+    支持参数：
+        ?date=...    目标日期（默认今日）
+    """
+    try:
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+
+        if target_date == date.today():
+            cached = cache.get('stats:detail:stepno_overview')
+            if cached is not None:
+                result = {}
+                for stepno, emps in cached.items():
+                    total_qty = sum(e['qty'] for e in emps)
+                    result[stepno] = {'total_qty': total_qty, 'worker_count': len(emps)}
+                return Response(result, status=status.HTTP_200_OK)
+
+        # 历史日期或缓存未命中，实时查询
+        stepno_data = remote_get_batch_stepno_employees(target_date)
+        result = {}
+        for stepno, emps in stepno_data.items():
+            total_qty = sum(e['qty'] for e in emps)
+            result[stepno] = {'total_qty': total_qty, 'worker_count': len(emps)}
+        return Response(result, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f'获取工序概览失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def flow_overview(request):
+    """
+    获取 Flow 概览（今日优先读取 Redis 缓存）
+
+    支持参数：
+        ?date=...    目标日期（默认今日）
+        ?mode=local  历史视图模式
+    """
+    try:
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = request.query_params.get('mode', 'remote')
+
+        # 今日优先读 Redis
+        if target_date == date.today() and mode == 'remote':
+            cached = cache.get('stats:detail:flow_overview')
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
+        if mode == 'local':
+            result = local_get_batch_flow_overview(target_date)
+        else:
+            result = remote_get_batch_flow_overview(target_date)
+
+        # 今日结果写入 Redis（当天有效）
+        if target_date == date.today() and mode == 'remote':
+            cache.set('stats:detail:flow_overview', result, 3600)
+
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取 Flow 概览失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def flow_detail(request, flow_name):
+    """
+    获取指定 Flow 的员工明细
+
+    支持参数：
+        ?date=...    目标日期（默认今日）
+        ?mode=local  历史视图模式
+    """
+    try:
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = request.query_params.get('mode', 'remote')
+
+        # 今日优先读员工缓存，但仍需注入 targets
+        if target_date == date.today() and mode == 'remote':
+            cached = cache.get(f'stats:detail:flow:{flow_name}')
+            if cached is not None:
+                targets_key = f'targets:{target_date.isoformat()}:{flow_name}'
+                cached_targets = cache.get(targets_key)
+                targets_dict = json.loads(cached_targets) if cached_targets else {}
+                for emp in cached:
+                    emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
+                result = _get_flow_detail_data(flow_name, target_date, mode)
+                result['employees'] = cached
+                return Response(result, status=status.HTTP_200_OK)
+
+        result = _get_flow_detail_data(flow_name, target_date, mode)
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取 Flow 详情失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def stepno_detail(request, stepno):
+    """
+    获取指定工序的员工明细
+
+    支持参数：
+        ?date=...    目标日期（默认今日）
+        ?mode=local  历史视图模式
+    """
+    try:
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = request.query_params.get('mode', 'remote')
+
+        result = _get_stepno_detail_data(stepno, target_date, mode)
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取工序详情失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# SSE 实时推送 + 目标产量设置
+
+
+@csrf_exempt
+async def dashboard_stream(request):
+    """
+    SSE 实时推送流（异步，每 60s 从 Redis 读缓存推送给客户端）
+
+    支持参数：
+        ?stepno=70    过滤工序号（可选）
+
+    异步实现：每个连接仅占一个 asyncio 协程（~KB 级），不占用 worker 进程。
+    通过 sync_to_async 将同步 Redis 读取放到线程池，不阻塞事件循环。
+    """
+    stepno_filter = _parse_stepno(request)
+
+    @sync_to_async
+    def _get_data():
+        stats = get_realtime_stats(stepno_filter=stepno_filter)
+        process_list = cache.get('stats:realtime:_process_list') or []
+        detail_overview = cache.get('stats:detail:flow_overview') or []
+        return stats, process_list, detail_overview
+
+    async def event_stream():
+        while True:
+            try:
+                stats, process_list, detail_overview = await _get_data()
+                data = {
+                    'type': 'dashboard_update',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': stats,
+                    'process_list': process_list,
+                    'detail_overview': detail_overview,
+                }
+                yield f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+            except Exception as e:
+                logger.error('SSE 数据获取失败: {}', e)
+            # 心跳保活：60秒内每15秒发一次SSE注释，防止Nginx/浏览器断开
+            for _ in range(4):
+                await asyncio.sleep(15)
+                yield ": heartbeat\n\n"
+
+    return StreamingHttpResponse(
+        event_stream(),
+        content_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@api_view(['POST'])
+def set_targets(request):
+    """
+    设置目标产量（HTTP POST）
+
+    请求体：
+        targets (dict): {reg_per_sys_id: target_qty}
+
+    采用全局员工日目标模型，每个员工每天只有一个总目标
+    同时写入数据库（持久化）和 Redis（缓存）
+    """
+    targets = request.data.get('targets', {})
+    today = date.today()
+
+    # 1. 写入数据库（持久化存储）
+    try:
+        for emp_id, qty in targets.items():
+            qty_int = int(qty) if qty else 0
+            if qty_int > 0:
+                TargetProduction.objects.update_or_create(
+                    target_date=today,
+                    employee_id=str(emp_id),
+                    defaults={'target_qty': qty_int}
+                )
+        logger.info(f'目标产量已保存到数据库: {len(targets)} 条')
+    except Exception as e:
+        logger.error(f'目标产量保存到数据库失败: {e}')
+
+    # 2. 写入 Redis（缓存）
+    key = f'targets:{today.isoformat()}'
+    cache.set(key, json.dumps(targets), timeout=_seconds_to_midnight())
+    logger.info(f'目标产量已保存到 Redis: {key}')
+
+    return Response({'status': 'ok', 'count': len(targets)})

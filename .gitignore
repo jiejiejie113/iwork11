@@ -1,0 +1,92 @@
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+media/
+staticfiles/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 测试覆盖率
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# 临时数据文件
+save/
+*.xls
+*.xlsx
+*.csv
+
+# 外部技能目录
+andrej-karpathy-skills/
+
+# Celery 运行时文件
+celerybeat-schedule.*
+
+#业务数据
+img/
+
+# Docker
+docker-compose.override.yml
+logs/
+static/
+
+# AI 工具
+.claude/
+.opencode/
+.superpowers/
+claude.md

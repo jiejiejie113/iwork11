@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script>
+        const _p = location.pathname;
+        window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontSize: {
+                        'xs': ['15px', { lineHeight: '1.5' }],
+                        'sm': ['17px', { lineHeight: '1.5' }],
+                        'base': ['20px', { lineHeight: '1.5' }],
+                        'lg': ['22px', { lineHeight: '1.5' }],
+                        'xl': ['24px', { lineHeight: '1.5' }],
+                        '2xl': ['29px', { lineHeight: '1.5' }],
+                        '3xl': ['36px', { lineHeight: '1.5' }],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        /* 静默加载条 */
+        .loading-bar {
+            position: fixed; top: 0; left: 0; height: 3px; z-index: 100;
+            background: linear-gradient(90deg, #3b82f6, #22c55e);
+            transition: width 0.3s ease;
+        }
+        /* 拖拽：卡片容器 */
+        .card-wrapper { position: relative; border-radius: 10px; user-select: none; -webkit-user-select: none; }
+        .card-wrapper .card {
+            background:#1e293b; border:1px solid #334155; border-radius:10px; padding:16px;
+            display:flex; align-items:center; width:100%; height:100%;
+            transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, opacity .2s ease;
+        }
+        .card-wrapper .card.grab { cursor:grab; }
+        .card-wrapper .card.grab:active { cursor:grabbing; }
+        /* 占位符 */
+        .card-wrapper .card.placeholder { background:transparent; border:2px dashed #475569; opacity:.5; }
+        /* 正在拖拽 */
+        .card-wrapper .card.dragging { position:fixed; z-index:1000; pointer-events:none; cursor:grabbing; opacity:.9; transform:scale(1.06); box-shadow:0 15px 40px rgba(0,0,0,.6); }
+        /* FLIP */
+        .flip-move { transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+        /* 隐藏滚动条但保留滚动功能 */
+        .hide-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;  /* Chrome, Safari and Opera */
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen" style="touch-action:none;">
+<div id="app" class="container mx-auto px-4 py-6"
+     data-initial-view="{{ initial_view }}"
+     data-detail-type="{{ detail_type|default:'' }}"
+     data-detail-key="{{ detail_key|default:'' }}">
+
+    <!-- 顶部工具栏（导航 + 标题 + 搜索 + 日期 + Tab 合并为一行） -->
+    <header class="flex items-center gap-3 mb-4 flex-wrap bg-slate-800/50 rounded-lg px-4 py-2 border border-slate-700/50">
+        <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+            <a :href="basePath" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">实时数据</a>
+            <a :href="basePath + 'history/'" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">历史数据</a>
+            <a :href="basePath + 'production/detail-data/'" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-blue-600">生产详情</a>
+        </div>
+        <h1 class="text-sm font-bold text-slate-200 whitespace-nowrap">{{ page_title }}</h1>
+        <input v-if="currentView === 'overview'" v-model="searchQuery" placeholder="搜索员工ID..."
+            class="flex-1 min-w-[120px] max-w-[200px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
+        <input v-if="currentView === 'overview'" type="date" v-model="selectedDate" @change="loadOverview"
+            class="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
+        <div v-if="currentView === 'overview'" class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+            <button @click="groupMode = 'flow'; loadOverview()"
+                :class="groupMode === 'flow' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                class="px-3 py-1.5 rounded-md text-xs transition-colors">按 Flow</button>
+            <button @click="groupMode = 'stepno'; loadStepnoOverview()"
+                :class="groupMode === 'stepno' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                class="px-3 py-1.5 rounded-md text-xs transition-colors">按工序</button>
+        </div>
+        <span class="text-xs text-slate-500 ml-auto whitespace-nowrap">更新 {[ lastUpdateTime ]}</span>
+    </header>
+
+    <!-- 静默加载条 -->
+    <div v-if="isLoading" class="loading-bar" :style="{ width: loadingProgress + '%' }"></div>
+
+    <!-- ===== 概览页 ===== -->
+    <div v-if="currentView === 'overview'">
+        <!-- 可视化图表区 + 工单列表 -->
+        <div class="flex gap-4 mb-4" style="height:340px;">
+            <!-- 左侧：各 Flow 产量 & 人数 -->
+            <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各 Flow' : '各工序' ]} 产量 & 人数</h3>
+                <div class="flex-1"><canvas id="combo-chart"></canvas></div>
+            </div>
+            <!-- 右侧：工单列表 -->
+            <div class="w-80 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">工单列表</h3>
+                <div ref="workorderListRef" class="flex-1 overflow-y-auto hide-scrollbar"
+                    @mouseenter="pauseWorkorderScroll"
+                    @mouseleave="resumeWorkorderScroll">
+                    <div class="space-y-2 pb-4">
+                        <div v-for="wo in workorderSummaryList" :key="wo.wrk_order"
+                            class="bg-slate-700/50 rounded px-3 py-2 text-xs">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold text-slate-200">{[ wo.wrk_order ]}</span>
+                                <span class="text-emerald-400 font-bold">{[ fmtNum(wo.total_qty) ]}件</span>
+                            </div>
+                            <div class="flex justify-between text-slate-400 mt-1">
+                                <span>{[ wo.step_count ]}道工序</span>
+                                <span>{[ wo.worker_count ]}人</span>
+                            </div>
+                        </div>
+                        <div v-if="workorderSummaryList.length === 0" class="text-center text-slate-500 py-8">
+                            暂无工单数据
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flow 卡片 -->
+        <div v-if="groupMode === 'flow'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div v-for="card in filteredFlowCards" :key="card.flow"
+                @click="goDetail('flow', card.flow)"
+                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
+                <div class="flex justify-between items-start">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-bold text-lg">
+                            {[ card.flow ]}
+                            <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
+                        </h3>
+                        <div class="text-xs text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                            <span v-for="(sd, sn, idx) in card.stepnos" :key="sn" class="whitespace-nowrap inline-flex items-center gap-1.5">
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold"
+                                    :style="{ border: '1.5px solid ' + stepColor(idx), color: stepColor(idx), backgroundColor: stepColor(idx) + '1a' }">
+                                    工序{[ sn ]}
+                                </span>
+                                <span>{[ fmtNum(sd.qty) ]}件<span class="text-slate-500">({[ sd.workers ]}人)</span></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="text-right flex-shrink-0 ml-2">
+                        <span class="text-slate-600 text-lg">→</span>
+                    </div>
+                </div>
+                <div v-if="card.hourly && card.hourly.length" style="height:60px;">
+                    <canvas :id="'mini-chart-' + card.flow"></canvas>
+                </div>
+                <div v-if="card.target_total > 0" class="mt-2 text-xs">
+                    <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
+                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                        效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
+                    </span>
+                </div>
+            </div>
+            <div v-if="filteredFlowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+                暂无 Flow 数据
+            </div>
+        </div>
+
+        <!-- 工序卡片 -->
+        <div v-if="groupMode === 'stepno'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div v-for="card in filteredStepnoCards" :key="card.stepno"
+                @click="goDetail('stepno', card.stepno)"
+                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-bold text-lg">工序 {[ card.stepno ]}</h3>
+                        <p class="text-sm text-slate-400">👤 {[ card.worker_count ]}人 · 📦 {[ fmtNum(card.total_qty) ]}件</p>
+                    </div>
+                    <span class="text-slate-600 text-lg">→</span>
+                </div>
+                <div v-if="card.target_total > 0" class="mt-2 text-xs">
+                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                        {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
+                    </span>
+                </div>
+            </div>
+            <div v-if="filteredStepnoCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+                暂无工序数据
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 详情页 ===== -->
+    <div v-if="currentView === 'detail'">
+        <!-- 面包屑 -->
+        <div class="flex items-center gap-2 mb-4 text-sm">
+            <a :href="basePath + 'production/detail-data/'" class="text-blue-400 hover:underline">生产详情</a>
+            <span class="text-slate-600">/</span>
+            <span class="font-semibold">{[ detailTitle ]}</span>
+            <span class="ml-auto text-slate-400">
+                👤 {[ detailSummary.worker_count ]}人
+                <span v-if="detailSummary.target_total > 0">
+                    · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
+                    · 🎯 目标 {[ fmtNum(detailSummary.target_total) ]}
+                    · 产值 {[ fmtNum(detailSummary.targeted_qty) ]}
+                    · <span :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                        效率 {[ detailSummary.efficiency.toFixed(1) ]}% {[ detailSummary.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
+                    </span>
+                </span>
+            </span>
+        </div>
+
+        <!-- Tab + 搜索 -->
+        <div class="flex items-center gap-3 mb-4">
+            <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                <button @click="detailLayout = 'table'"
+                    :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                    class="px-3 py-1 rounded-md text-xs transition-colors">表格视图</button>
+                <button @click="detailLayout = 'cards'"
+                    :class="detailLayout === 'cards' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                    class="px-3 py-1 rounded-md text-xs transition-colors">卡片视图</button>
+            </div>
+            <input v-model="tableSearch" placeholder="搜索员工ID..."
+                class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+            <button v-if="detailLayout === 'table' && !isEditing" @click="startEditing"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
+            <button v-if="detailLayout === 'table' && isEditing" @click="cancelEditing"
+                class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
+            <button v-if="detailLayout === 'table' && isEditing" @click="saveTargets"
+                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
+        </div>
+
+        <!-- ===== 版面1：表格视图 ===== -->
+        <div v-if="detailLayout === 'table'" class="bg-slate-800 border border-slate-700 rounded-lg overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-slate-400 border-b border-slate-700">
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white whitespace-nowrap" @click="sortBy('reg_per_sys_id')">员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-slate-500 whitespace-nowrap">工单</th>
+                        <th v-if="detailType === 'flow'" v-for="(sn, i) in detailStepnos" :key="sn"
+                            class="px-3 py-3 text-center whitespace-nowrap cursor-pointer select-none hover:text-white"
+                            @click="sortBy('stepno')">工序{[ sn ]} {[ sortKey === 'stepno' && i === 0 ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-else class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('qty')">实时产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-center text-slate-500">合计</th>
+                        <th class="px-3 py-3">目标</th>
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('efficiency')">达标 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white" @click="sortBy('efficiency')">效率 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="emp in filteredEmployees" :key="emp.reg_per_sys_id"
+                        class="border-b border-slate-700 hover:bg-slate-700/50">
+                        <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
+                        <!-- Flow 详情：工单列 -->
+                        <td v-if="detailType === 'flow'" class="py-2 px-3 text-xs text-slate-400 max-w-[200px]">
+                            <span v-if="emp.workorders && emp.workorders.length > 0">{[ emp.workorders.join(', ') ]}</span>
+                            <span v-else class="text-slate-600">--</span>
+                        </td>
+                        <!-- Flow 详情：每工序一列 -->
+                        <td v-if="detailType === 'flow'" v-for="sn in detailStepnos" :key="sn"
+                            class="py-2 px-3 text-center tabular-nums"
+                            :class="getStepQty(emp, sn) > 0 ? 'text-emerald-400 font-bold' : 'text-slate-600'">
+                            {[ getStepQty(emp, sn) || '--' ]}
+                        </td>
+                        <!-- 工序详情：单一产量列 -->
+                        <td v-else class="py-2 px-3 text-emerald-400 font-bold tabular-nums">{[ fmtNum(emp.qty) ]}</td>
+                        <!-- Flow 详情：行合计 -->
+                        <td v-if="detailType === 'flow'" class="py-2 px-3 text-center text-slate-300 font-bold tabular-nums">{[ fmtNum(emp.qty) ]}</td>
+                        <td class="py-2 px-3">
+                            <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
+                                class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
+                            <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
+                        </td>
+                        <td class="py-2 px-3">
+                            <span v-if="emp.target > 0" :class="emp.qty >= emp.target ? 'text-emerald-400' : 'text-red-400'">
+                                {[ emp.qty >= emp.target ? '✓' : '✗' ]}
+                            </span>
+                            <span v-else class="text-slate-500">--</span>
+                        </td>
+                        <td class="py-2 px-3">
+                            <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                {[ emp.efficiency.toFixed(1) ]}%
+                            </span>
+                            <span v-else class="text-slate-500">--</span>
+                        </td>
+                    </tr>
+                    <tr v-if="filteredEmployees.length === 0">
+                        <td :colspan="detailType === 'flow' ? 6 + detailStepnos.length : 5" class="py-4 text-slate-500 text-center">暂无数据</td>
+                    </tr>
+                </tbody>
+                <!-- 竖轴汇总：Flow 详情 -->
+                <tfoot v-if="detailType === 'flow' && filteredEmployees.length > 0">
+                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold">
+                        <td class="py-2 px-3 text-slate-400">合计</td>
+                        <td class="py-2 px-3"></td>
+                        <td v-for="sn in detailStepnos" :key="sn"
+                            class="py-2 px-3 text-center text-emerald-400 tabular-nums">
+                            {[ fmtNum(stepnoColumnTotals[sn] || 0) ]}
+                        </td>
+                        <td class="py-2 px-3 text-center text-emerald-400 tabular-nums">{[ fmtNum(columnGrandTotal) ]}</td>
+                        <td class="py-2 px-3 text-slate-400 tabular-nums">{[ fmtNum(columnTargetTotal) ]}</td>
+                        <td class="py-2 px-3"></td>
+                        <td class="py-2 px-3"></td>
+                    </tr>
+                </tfoot>
+                <!-- 竖轴汇总：工序详情 -->
+                <tfoot v-if="detailType === 'stepno' && filteredEmployees.length > 0">
+                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold">
+                        <td class="py-2 px-3 text-slate-400">合计</td>
+                        <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums">{[ fmtNum(columnGrandTotal) ]}</td>
+                        <td class="py-2 px-3 text-slate-400 tabular-nums">{[ fmtNum(columnTargetTotal) ]}</td>
+                        <td class="py-2 px-3"></td>
+                        <td class="py-2 px-3"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
+        <TransitionGroup v-if="detailLayout === 'cards'" name="flip" tag="div" class="grid grid-cols-2 gap-3">
+            <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" class="card-wrapper">
+                <!-- 占位符：原位置显示虚线框 -->
+                <div v-if="activeDrag && dragIndex === idx" class="card placeholder"></div>
+                <!-- 真实卡片 -->
+                <div class="card grab"
+                    :class="{ dragging: activeDrag && dragIndex === idx }"
+                    :style="activeDrag && dragIndex === idx ? dragStyle : {}"
+                    @pointerdown="onPointerDown($event, idx)">
+                    <!-- 左卡布局 -->
+                    <template v-if="idx % 2 === 0">
+                        <div class="flex-1 text-right mr-3">
+                            <div v-for="s in emp.steps" :key="s.stepno" class="text-xs mb-0.5">
+                                <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
+                            </div>
+                            <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
+                            <div v-if="emp.workorders && emp.workorders.length > 0" class="text-xs mb-0.5" :title="emp.workorders.join(', ')">
+                                <span class="text-slate-500">工单</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
+                            </div>
+                            <div class="text-xs mt-1">
+                                <span class="text-slate-200 font-semibold">{[ emp.qty ]}件</span>
+                                <template v-if="emp.target > 0">
+                                    <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                    <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                </template>
+                                <span v-else class="text-slate-600 ml-1">未设目标</span>
+                            </div>
+                        </div>
+                        <div class="w-24 h-24 rounded-lg flex items-center justify-center text-white font-extrabold text-base flex-shrink-0"
+                            :style="{ backgroundColor: getStatusColor(emp) }">
+                            {[ emp.reg_per_sys_id ]}
+                        </div>
+                    </template>
+                    <!-- 右卡布局 -->
+                    <template v-else>
+                        <div class="w-24 h-24 rounded-lg flex items-center justify-center text-white font-extrabold text-base flex-shrink-0"
+                            :style="{ backgroundColor: getStatusColor(emp) }">
+                            {[ emp.reg_per_sys_id ]}
+                        </div>
+                        <div class="flex-1 text-left ml-3">
+                            <div v-for="s in emp.steps" :key="s.stepno" class="text-xs mb-0.5">
+                                <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
+                            </div>
+                            <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
+                            <div v-if="emp.workorders && emp.workorders.length > 0" class="text-xs mb-0.5" :title="emp.workorders.join(', ')">
+                                <span class="text-slate-500">工单</span>
+                                <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
+                            </div>
+                            <div class="text-xs mt-1">
+                                <span class="text-slate-200 font-semibold">{[ emp.qty ]}件</span>
+                                <template v-if="emp.target > 0">
+                                    <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                    <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                </template>
+                                <span v-else class="text-slate-600 ml-1">未设目标</span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div v-if="orderedEmployees.length === 0" :key="'empty'" class="col-span-2 text-center text-slate-500 py-12">
+                暂无数据
+            </div>
+        </TransitionGroup>
+
+    </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick } = Vue;
+
+createApp({
+    delimiters: ['{[', ']}'],
+    setup() {
+        const basePath = window.basePath;
+        const appEl = document.getElementById('app');
+        const initialView = appEl?.dataset.initialView || 'overview';
+        const initialDetailType = appEl?.dataset.detailType || 'flow';
+        const initialDetailKey = appEl?.dataset.detailKey || '';
+
+        const currentView = ref(initialView);
+        const groupMode = ref('flow');
+        const detailType = ref(initialDetailType);
+        const detailKey = ref(initialDetailKey);
+        const detailLayout = ref('table');   // 'table' | 'cards'
+        const cardOrder = ref([]);           // 用户自定义工人排序
+        const dragIndex = ref(-1);           // 当前拖拽中的索引
+        const activeDrag = ref(false);       // 是否正在拖拽
+        const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
+        const searchQuery = ref('');
+        const tableSearch = ref('');
+        const selectedDate = ref(new Date().toISOString().split('T')[0]);
+        const isLoading = ref(false);
+        const loadingProgress = ref(0);
+        let loadingTimer = null;
+
+        function showLoading() {
+            isLoading.value = true;
+            loadingProgress.value = 0;
+            // 模拟进度条增长（最多到 90%，剩余在数据加载完成后到 100%）
+            loadingTimer = setInterval(() => {
+                if (loadingProgress.value < 90) {
+                    loadingProgress.value += (90 - loadingProgress.value) * 0.15;
+                }
+            }, 200);
+        }
+        function hideLoading() {
+            clearInterval(loadingTimer);
+            loadingProgress.value = 100;
+            lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+            setTimeout(() => {
+                isLoading.value = false;
+                loadingProgress.value = 0;
+            }, 300);
+        }
+        const wsConnected = ref(false);
+        const lastUpdateTime = ref('');
+
+        const isEditing = ref(false);
+        const draft = reactive({});
+        const sortKey = ref('stepno');
+        const sortAsc = ref(true);
+
+        function startEditing() {
+            // 深拷贝当前目标值到 draft
+            employees.value.forEach(emp => {
+                draft[emp.reg_per_sys_id] = emp.target || 0;
+            });
+            isEditing.value = true;
+        }
+        function cancelEditing() {
+            // 丢弃 draft，恢复到原始目标值
+            const t = targets[detailKey.value] || {};
+            employees.value.forEach(emp => {
+                emp.target = t[String(emp.reg_per_sys_id)] || 0;
+                emp.efficiency = emp.target > 0 ? (emp.qty / emp.target * 100) : null;
+            });
+            isEditing.value = false;
+        }
+
+        const flowCards = ref([]);
+        const stepnoCards = ref([]);
+        const employees = ref([]);
+        const targets = reactive({});
+        const charts = {};
+
+        // 计算属性
+        const detailTitle = computed(() => {
+            if (detailType.value === 'flow') return detailKey.value;
+            return '工序 ' + detailKey.value;
+        });
+
+        const detailSummary = computed(() => {
+            const emps = employees.value;
+            const withTarget = emps.filter(e => e.target > 0);
+            const targeted_qty = withTarget.reduce((s, e) => s + (e.qty || 0), 0);
+            const target_total = withTarget.reduce((s, e) => s + e.target, 0);
+            return {
+                worker_count: emps.length,
+                targeted_count: withTarget.length,
+                targeted_qty,
+                target_total,
+                efficiency: target_total > 0 ? (targeted_qty / target_total * 100) : null,
+            };
+        });
+
+        const filteredFlowCards = computed(() => {
+            let cards = flowCards.value;
+            if (searchQuery.value) {
+                const q = searchQuery.value.toLowerCase();
+                cards = cards.filter(c => String(c.flow).toLowerCase().includes(q));
+            }
+            return cards;
+        });
+
+        const filteredStepnoCards = computed(() => {
+            let cards = stepnoCards.value;
+            if (searchQuery.value) {
+                const q = searchQuery.value.toLowerCase();
+                cards = cards.filter(c => String(c.stepno).includes(q));
+            }
+            return cards;
+        });
+
+        // 工单汇总数据
+        const workorderList = ref([]);
+        const workorderSummaryList = computed(() => {
+            return workorderList.value.map(wo => ({
+                wrk_order: wo.wrk_order,
+                total_qty: wo.total_qty || 0,
+                step_count: wo.step_count || 0,
+                worker_count: wo.worker_count || 0,
+            })).sort((a, b) => b.total_qty - a.total_qty);
+        });
+
+        // 工单列表自动滚动
+        const workorderListRef = ref(null);
+        let scrollInterval = null;
+        let isScrollPaused = false;
+
+        function startWorkorderScroll() {
+            if (scrollInterval) return;
+            const el = workorderListRef.value;
+            if (!el) return;
+
+            scrollInterval = setInterval(() => {
+                if (isScrollPaused) return;
+                // 向下滚动
+                el.scrollTop += 1;
+                // 如果滚动到底部，重置到顶部
+                if (el.scrollTop >= el.scrollHeight - el.clientHeight) {
+                    el.scrollTop = 0;
+                }
+            }, 50); // 50ms 滚动一次，速度较慢
+        }
+
+        function pauseWorkorderScroll() {
+            isScrollPaused = true;
+        }
+
+        function resumeWorkorderScroll() {
+            isScrollPaused = false;
+        }
+
+        function stopWorkorderScroll() {
+            if (scrollInterval) {
+                clearInterval(scrollInterval);
+                scrollInterval = null;
+            }
+        }
+
+        // 版面2：按自定义顺序排列的员工
+        const orderedEmployees = computed(() => {
+            const emps = [...employees.value];
+            const order = cardOrder.value;
+            if (order.length > 0) {
+                const orderMap = {};
+                order.forEach((id, i) => { orderMap[id] = i; });
+                emps.sort((a, b) => {
+                    const ai = orderMap[a.reg_per_sys_id] ?? 9999;
+                    const bi = orderMap[b.reg_per_sys_id] ?? 9999;
+                    return ai - bi;
+                });
+            }
+            // 搜索过滤
+            if (tableSearch.value) {
+                const q = String(tableSearch.value).toLowerCase();
+                return emps.filter(e => String(e.reg_per_sys_id).includes(q));
+            }
+            return emps;
+        });
+
+        function getStatusColor(emp) {
+            if (!emp.target || emp.target <= 0) return '#3b82f6';  // 天蓝
+            if (emp.qty >= emp.target) return '#22c55e';             // 绿色
+            return '#ef4444';                                         // 红色
+        }
+
+        // 提取所有员工明细中涉及的工序号（用于动态表头列）
+        const detailStepnos = computed(() => {
+            const stepnoSet = new Set();
+            employees.value.forEach(emp => {
+                (emp.steps || []).forEach(s => stepnoSet.add(s.stepno));
+            });
+            return [...stepnoSet].sort((a, b) => a - b);
+        });
+
+        function getStepQty(emp, stepno) {
+            const step = (emp.steps || []).find(s => s.stepno === stepno);
+            return step ? step.qty : 0;
+        }
+
+        // 各工序列产量汇总（基于筛选后的员工）
+        const stepnoColumnTotals = computed(() => {
+            const totals = {};
+            const emps = filteredEmployees.value;
+            detailStepnos.value.forEach(sn => {
+                totals[sn] = emps.reduce((s, e) => s + getStepQty(e, sn), 0);
+            });
+            return totals;
+        });
+
+        // 筛选后员工产量总计
+        const columnGrandTotal = computed(() => {
+            return filteredEmployees.value.reduce((s, e) => s + (e.qty || 0), 0);
+        });
+
+        // 筛选后员工目标总计
+        const columnTargetTotal = computed(() => {
+            return filteredEmployees.value.reduce((s, e) => s + (e.target || 0), 0);
+        });
+
+        const filteredEmployees = computed(() => {
+            let emps = [...employees.value];
+            if (tableSearch.value) {
+                const q = String(tableSearch.value).toLowerCase();
+                emps = emps.filter(e => String(e.reg_per_sys_id).includes(q));
+            }
+            const key = sortKey.value;
+            const asc = sortAsc.value;
+            // 工序优先级映射（用于 stepno 排序）
+            const stepnoOrder = {};
+            detailStepnos.value.forEach((sn, i) => { stepnoOrder[sn] = i; });
+            emps.sort((a, b) => {
+                let va, vb;
+                if (key === 'stepno') {
+                    // 按工序出现顺序优先：找每个员工第一个有数据的工序
+                    const aFirst = (a.steps || []).find(s => s.qty > 0);
+                    const bFirst = (b.steps || []).find(s => s.qty > 0);
+                    const aIdx = aFirst ? (stepnoOrder[aFirst.stepno] ?? 999) : 999;
+                    const bIdx = bFirst ? (stepnoOrder[bFirst.stepno] ?? 999) : 999;
+                    if (aIdx !== bIdx) return asc ? aIdx - bIdx : bIdx - aIdx;
+                    // 同工序内按产量降序
+                    va = aFirst ? aFirst.qty : 0;
+                    vb = bFirst ? bFirst.qty : 0;
+                    return vb - va;  // 同工序内始终降序排列
+                }
+                if (key === 'reg_per_sys_id') {
+                    va = Number(a.reg_per_sys_id) || 0; vb = Number(b.reg_per_sys_id) || 0;
+                } else if (key === 'qty') {
+                    va = a.qty || 0; vb = b.qty || 0;
+                } else if (key === 'efficiency') {
+                    va = a.efficiency || 0; vb = b.efficiency || 0;
+                }
+                return asc ? va - vb : vb - va;
+            });
+            return emps;
+        });
+
+        function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
+
+        // 工序色板
+        const STEP_COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#a855f7'];
+        function stepColor(idx) {
+            return STEP_COLORS[idx % STEP_COLORS.length];
+        }
+
+        // 自然排序（SO2 < SO10）
+        function naturalCompare(a, b) {
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        function sortBy(key) {
+            if (sortKey.value === key) {
+                sortAsc.value = !sortAsc.value;
+            } else {
+                sortKey.value = key;
+                sortAsc.value = true;
+            }
+        }
+
+        // ---- Pointer 拖拽排序（fixed定位 + FLIP 避让） ----
+        let dragStartX = 0, dragStartY = 0;
+        let dragOriginLeft = 0, dragOriginTop = 0;
+        let dragCardW = 0, dragCardH = 0;
+        let dragCurrentIdx = -1;
+
+        function onPointerDown(e, idx) {
+            if (e.button !== undefined && e.button !== 0) return;
+            const el = e.currentTarget;
+            const rect = el.getBoundingClientRect();
+            dragIndex.value = idx;
+            dragCurrentIdx = idx;
+            activeDrag.value = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragOriginLeft = rect.left;
+            dragOriginTop = rect.top;
+            dragCardW = rect.width;
+            dragCardH = rect.height;
+            Object.assign(dragStyle, { left: `${dragOriginLeft}px`, top: `${dragOriginTop}px`, width: `${dragCardW}px`, height: `${dragCardH}px` });
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            el.setPointerCapture(e.pointerId);
+        }
+
+        function onPointerMove(e) {
+            if (!activeDrag.value) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+            dragStyle.left = `${dragOriginLeft + dx}px`;
+            dragStyle.top = `${dragOriginTop + dy}px`;
+
+            // 碰撞检测：隐藏拖拽卡片后获取下方元素
+            const draggingEl = document.querySelector('.card.dragging');
+            if (draggingEl) draggingEl.style.display = 'none';
+            const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
+            if (draggingEl) draggingEl.style.display = '';
+            const wrapper = elemBelow?.closest('.card-wrapper');
+            if (!wrapper) return;
+            const wrappers = [...document.querySelectorAll('.card-wrapper')];
+            const targetIdx = wrappers.indexOf(wrapper);
+            if (targetIdx !== -1 && targetIdx !== dragCurrentIdx) {
+                const arr = [...orderedEmployees.value.map(e => e.reg_per_sys_id)];
+                const [moved] = arr.splice(dragCurrentIdx, 1);
+                arr.splice(targetIdx, 0, moved);
+                cardOrder.value = arr;
+                dragIndex.value = targetIdx;
+                dragCurrentIdx = targetIdx;
+            }
+        }
+
+        function onPointerUp(e) {
+            activeDrag.value = false;
+            dragIndex.value = -1;
+            dragCurrentIdx = -1;
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            if (cardOrder.value.length > 0) saveCardOrder(cardOrder.value);
+        }
+
+        // ---- localStorage 持久化 ----
+        function getStorageKey() {
+            return `worker-card-order:${detailType.value}:${detailKey.value}`;
+        }
+        function loadCardOrder() {
+            try {
+                const raw = localStorage.getItem(getStorageKey());
+                if (raw) {
+                    const arr = JSON.parse(raw);
+                    if (Array.isArray(arr)) { cardOrder.value = arr; return; }
+                }
+            } catch (e) { /* ignore */ }
+            cardOrder.value = [];
+        }
+        function saveCardOrder(arr) {
+            try {
+                localStorage.setItem(getStorageKey(), JSON.stringify(arr));
+            } catch (e) { /* ignore */ }
+        }
+
+        function computeTargets(flowName) {
+            const t = targets[flowName] || {};
+            flowCards.value.forEach(card => {
+                if (card.flow === flowName) {
+                    const vals = Object.values(t);
+                    card.target_total = vals.reduce((s, v) => s + v, 0);
+                    card.efficiency = card.target_total > 0 ? (card.total_qty / card.target_total * 100) : null;
+                }
+            });
+            employees.value.forEach(emp => {
+                const tgt = t[String(emp.reg_per_sys_id)] || 0;
+                emp.target = tgt;
+                // 按 StepNo 分列的 qty 汇总
+                const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0);
+                emp.qty = totalQty;
+                emp.efficiency = tgt > 0 ? (totalQty / tgt * 100) : null;
+            });
+        }
+
+        // API
+        async function loadOverview() {
+            showLoading();
+            groupMode.value = 'flow';  // 确保图表渲染使用正确的数据源
+            try {
+                // 并行获取 Flow 概览和工单列表
+                const [flowResp, woResp] = await Promise.all([
+                    fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
+                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100`)
+                ]);
+                const flowData = await flowResp.json();
+                const woData = await woResp.json();
+
+                // 处理 Flow 卡片数据
+                const cards = [];
+                for (const [name, info] of Object.entries(flowData)) {
+                    const stepnos = info.stepnos || {};
+                    let total_qty = 0;
+                    for (const sd of Object.values(stepnos)) {
+                        total_qty += sd.qty || 0;
+                    }
+                    cards.push({
+                        flow: name,
+                        stepnos,
+                        total_workers: info.total_workers || 0,
+                        total_qty,
+                        target_total: 0,
+                        efficiency: null,
+                        hourly: [],
+                    });
+                }
+                flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
+
+                // 处理工单数据
+                workorderList.value = woData.items || [];
+
+                await nextTick();
+                renderMiniCharts();
+                renderOverviewCharts();
+                // 启动工单列表自动滚动
+                startWorkorderScroll();
+            } catch (e) { console.error('加载 Flow 概览失败:', e); }
+            finally { hideLoading(); }
+        }
+
+        async function loadStepnoOverview() {
+            showLoading();
+            try {
+                // 一次请求拿到所有工序汇总（Batch 引擎已缓存到 Redis）
+                const resp = await fetch(`${basePath}api/dashboard/detail/stepno-overview/?date=${selectedDate.value}`);
+                const data = await resp.json();
+                const cards = [];
+                for (const [stepno, info] of Object.entries(data)) {
+                    // 概览页面不显示目标产量（无法精确计算每个工序的目标）
+                    // 用户需要进入详情页才能看到精确的员工目标
+                    cards.push({
+                        stepno: Number(stepno),
+                        total_qty: info.total_qty,
+                        worker_count: info.worker_count,
+                        target_total: 0,
+                        efficiency: null,
+                    });
+                }
+                stepnoCards.value = cards.sort((a, b) => a.stepno - b.stepno);
+            } catch (e) { console.error('加载工序概览失败:', e); }
+            finally {
+                hideLoading();
+                await nextTick();
+                renderOverviewCharts();
+            }
+        }
+
+        async function loadDetail(type, key) {
+            showLoading();
+            detailType.value = type;
+            detailKey.value = key;
+            try {
+                let resp;
+                if (type === 'flow') {
+                    resp = await fetch(`${basePath}api/dashboard/detail/flow/${key}/?date=${selectedDate.value}`);
+                } else {
+                    resp = await fetch(`${basePath}api/dashboard/detail/stepno/${key}/?date=${selectedDate.value}`);
+                }
+                const data = await resp.json();
+                // 从 localStorage 读取目标作为兜底
+                const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
+                const localTargets = JSON.parse(localStorage.getItem(`targets:${dateStr}`) || '{}');
+                // 同步初始化 targets 对象，供 cancelEditing 恢复使用
+                targets[detailKey.value] = localTargets;
+                employees.value = (data.employees || []).map(emp => {
+                    const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
+                    const target = emp.target || localTargets[String(emp.reg_per_sys_id)] || 0;
+                    return {
+                        ...emp,
+                        qty: totalQty,
+                        steps: emp.steps || [],
+                        target: target,
+                        efficiency: target > 0 ? (totalQty / target * 100) : null,
+                    };
+                });
+                currentView.value = 'detail';
+                loadCardOrder();
+            } catch (e) { console.error('加载详情失败:', e); }
+            finally { hideLoading(); }
+        }
+
+        async function refreshDetailSilently() {
+            try {
+                let resp;
+                if (detailType.value === 'flow') {
+                    resp = await fetch(`${basePath}api/dashboard/detail/flow/${detailKey.value}/?date=${selectedDate.value}`);
+                } else {
+                    resp = await fetch(`${basePath}api/dashboard/detail/stepno/${detailKey.value}/?date=${selectedDate.value}`);
+                }
+                const data = await resp.json();
+                // 从 localStorage 读取目标作为兜底
+                const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
+                const localTargets = JSON.parse(localStorage.getItem(`targets:${dateStr}`) || '{}');
+                employees.value = (data.employees || []).map(emp => {
+                    const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
+                    const target = emp.target || localTargets[String(emp.reg_per_sys_id)] || 0;
+                    return {
+                        ...emp,
+                        qty: totalQty,
+                        steps: emp.steps || [],
+                        target: target,
+                        efficiency: target > 0 ? (totalQty / target * 100) : null,
+                    };
+                });
+                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+            } catch (e) { /* 静默忽略 */ }
+        }
+
+        // 概览静默刷新（不显示 loading 条）
+        async function refreshOverviewSilently() {
+            try {
+                const [flowResp, woResp] = await Promise.all([
+                    fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
+                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100`)
+                ]);
+                const flowData = await flowResp.json();
+                const woData = await woResp.json();
+                const cards = [];
+                for (const [name, info] of Object.entries(flowData)) {
+                    const stepnos = info.stepnos || {};
+                    let total_qty = 0;
+                    for (const sd of Object.values(stepnos)) {
+                        total_qty += sd.qty || 0;
+                    }
+                    cards.push({
+                        flow: name, stepnos,
+                        total_workers: info.total_workers || 0,
+                        total_qty, target_total: 0, efficiency: null, hourly: [],
+                    });
+                }
+                flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
+                workorderList.value = woData.items || [];
+                lastUpdateTime.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+            } catch (e) { /* 静默忽略 */ }
+        }
+
+        function goDetail(type, key) {
+            if (type === 'flow') {
+                window.location.href = basePath + 'production/detail-data/flow/' + encodeURIComponent(key) + '/';
+            } else {
+                window.location.href = basePath + 'production/detail-data/stepno/' + key + '/';
+            }
+        }
+
+        // 迷你图表
+        function renderMiniCharts() {
+            nextTick(() => {
+                flowCards.value.forEach(card => {
+                    if (!card.hourly || !card.hourly.length) return;
+                    const canvasId = 'mini-chart-' + card.flow;
+                    const canvas = document.getElementById(canvasId);
+                    if (!canvas) return;
+                    if (charts[canvasId]) charts[canvasId].destroy();
+                    const ctx = canvas.getContext('2d');
+                    charts[canvasId] = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: card.hourly.map(h => h.hour + ':00'),
+                            datasets: [{
+                                data: card.hourly.map(h => h.qty),
+                                backgroundColor: '#3b82f6',
+                                borderRadius: 1,
+                            }],
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { display: false },
+                                y: { display: false },
+                            },
+                        },
+                    });
+                });
+            });
+        }
+
+        // 概览图表（柱状折线 + 环形）
+        function renderOverviewCharts() {
+            nextTick(() => {
+                const isFlow = groupMode.value === 'flow';
+                const cards = isFlow ? flowCards.value : stepnoCards.value;
+                const labels = isFlow ? cards.map(c => c.flow) : cards.map(c => '工序 ' + c.stepno);
+                // Flow 视图：从 stepnos 汇总 total_qty；工序视图直接用 total_qty
+                const qtyData = isFlow
+                    ? cards.map(c => Object.values(c.stepnos || {}).reduce((s, sd) => s + (sd.qty || 0), 0))
+                    : cards.map(c => c.total_qty || 0);
+                // 人数：Flow 视图取 stepnos 中最大 workers 数（近似），工序视图直接用 worker_count
+                const workerData = isFlow
+                    ? cards.map(c => Math.max(0, ...Object.values(c.stepnos || {}).map(sd => sd.workers || 0)))
+                    : cards.map(c => c.worker_count || 0);
+                // 柱状折线组合图
+                if (charts['combo-chart']) charts['combo-chart'].destroy();
+                const comboCanvas = document.getElementById('combo-chart');
+                if (comboCanvas) {
+                    charts['combo-chart'] = new Chart(comboCanvas.getContext('2d'), {
+                        type: 'bar',
+                        data: {
+                            labels,
+                            datasets: [
+                                { label: '产量', data: qtyData, backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y' },
+                                { label: '人数', data: workerData, type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3 },
+                            ],
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            animation: false,
+                            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10 } } } },
+                            scales: {
+                                x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 9 } } },
+                                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, title: { display: true, text: '产量', color: '#94a3b8' } },
+                                y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e' }, title: { display: true, text: '人数', color: '#22c55e' } },
+                            },
+                        },
+                    });
+                }
+
+            });
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+        }
+
+        async function saveTargets() {
+            const t = {};
+            employees.value.forEach(emp => {
+                const v = Number(draft[emp.reg_per_sys_id]) || 0;
+                if (v > 0) t[String(emp.reg_per_sys_id)] = v;
+                emp.target = v;
+                emp.efficiency = v > 0 ? (emp.qty / v * 100) : null;
+            });
+            try {
+                const resp = await fetch(basePath + 'api/dashboard/set-targets/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({ targets: t }),
+                });
+                if (resp.ok) {
+                    // 保存到 localStorage 兜底
+                    const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
+                    localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
+                    // 更新本地 targets 对象
+                    targets[detailKey.value] = t;
+                } else {
+                    alert('保存失败: ' + resp.statusText);
+                }
+            } catch (e) {
+                console.error('保存目标失败:', e);
+                // 网络失败时保存到 localStorage
+                const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
+                localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
+                targets[detailKey.value] = t;
+            }
+            isEditing.value = false;
+        }
+
+        // 生命周期
+        let autoRefreshTimer = null;
+
+        onMounted(() => {
+            if (initialView === 'overview') {
+                loadOverview();
+            } else if (initialView === 'detail') {
+                loadDetail(initialDetailType, initialDetailKey);
+            }
+            // 每60秒自动刷新数据
+            autoRefreshTimer = setInterval(() => {
+                if (currentView.value === 'overview') {
+                    refreshOverviewSilently();
+                } else if (currentView.value === 'detail') {
+                    refreshDetailSilently();
+                }
+            }, 60000);
+        });
+
+        // 组件卸载时停止滚动和定时器
+        onUnmounted(() => {
+            stopWorkorderScroll();
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+        });
+
+        return {
+            basePath,
+            currentView, groupMode, detailType, detailKey, detailLayout,
+            cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
+            onPointerDown,
+            searchQuery, tableSearch, selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
+            flowCards, stepnoCards, employees, targets,
+            detailTitle, detailSummary, detailStepnos, getStepQty,
+            stepnoColumnTotals, columnGrandTotal, columnTargetTotal,
+            filteredFlowCards, filteredStepnoCards, filteredEmployees,
+            isEditing, draft, sortKey, sortAsc,
+            sortBy, startEditing, cancelEditing,
+            fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
+            // 工单列表相关
+            workorderList, workorderSummaryList, workorderListRef,
+            pauseWorkorderScroll, resumeWorkorderScroll,
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>

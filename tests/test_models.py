@@ -1,0 +1,111 @@
+import pytest
+from datetime import datetime, date, time
+from unittest.mock import Mock
+from iwork.models import Pytckreg3
+
+
+class TestPytckreg3Model:
+    """Pytckreg3 模型测试"""
+
+    def test_app_label_is_iwork(self):
+        """测试 app_label 配置为 iwork"""
+        assert Pytckreg3._meta.app_label == 'iwork'
+
+    def test_managed_is_false(self):
+        """测试 managed=False 禁止迁移"""
+        assert Pytckreg3._meta.managed is False
+
+    def test_db_table_is_pytckreg3(self):
+        """测试 db_table 配置"""
+        assert Pytckreg3._meta.db_table == 'pytckreg3'
+
+    def test_ticketno_max_length_is_13(self):
+        """测试 TicketNo 字段最大长度"""
+        field = Pytckreg3._meta.get_field('TicketNo')
+        assert field.max_length == 13
+
+    def test_ticketno_is_primary_key(self):
+        """测试 TicketNo 是主键"""
+        field = Pytckreg3._meta.get_field('TicketNo')
+        assert field.primary_key is True
+
+    def test_seqno_is_integer_field(self):
+        """测试 SeqNo 是整数字段"""
+        from django.db.models import IntegerField
+        field = Pytckreg3._meta.get_field('SeqNo')
+        assert isinstance(field, IntegerField)
+
+    def test_wrkorder_max_length_is_14(self):
+        """测试 WrkOrder 字段最大长度"""
+        field = Pytckreg3._meta.get_field('WrkOrder')
+        assert field.max_length == 14
+
+    def test_rfid_max_length_is_10(self):
+        """测试 RFID 字段最大长度"""
+        field = Pytckreg3._meta.get_field('RFID')
+        assert field.max_length == 10
+
+    def test_flow_max_length_is_40(self):
+        """测试 Flow 字段最大长度"""
+        field = Pytckreg3._meta.get_field('Flow')
+        assert field.max_length == 40
+
+    def test_po_max_length_is_40(self):
+        """测试 PO 字段最大长度"""
+        field = Pytckreg3._meta.get_field('PO')
+        assert field.max_length == 40
+
+    def test_stationid_max_length_is_3(self):
+        """测试 StationID 字段最大长度"""
+        field = Pytckreg3._meta.get_field('StationID')
+        assert field.max_length == 3
+
+    def test_regdate_is_datetime_field(self):
+        """测试 RegDate 是 DateTimeField"""
+        from django.db.models import DateTimeField
+        field = Pytckreg3._meta.get_field('RegDate')
+        assert isinstance(field, DateTimeField)
+
+    def test_regtime_is_datetime_field(self):
+        """测试 RegTime 是 DateTimeField"""
+        from django.db.models import DateTimeField
+        field = Pytckreg3._meta.get_field('RegTime')
+        assert isinstance(field, DateTimeField)
+
+    def test_full_datetime_returns_combined_datetime(self):
+        """测试 full_datetime 属性组合年月日和时分秒"""
+        record = Pytckreg3(
+            RegDate=datetime(2026, 4, 21, 0, 0, 0),
+            RegTime=datetime(1900, 1, 1, 14, 30, 45)
+        )
+        result = record.full_datetime
+        assert result == datetime(2026, 4, 21, 14, 30, 45)
+
+    def test_full_datetime_with_none_regdate(self):
+        """测试 full_datetime 处理 None RegDate"""
+        record = Pytckreg3(
+            RegDate=None,
+            RegTime=datetime(1900, 1, 1, 14, 30, 45)
+        )
+        result = record.full_datetime
+        assert result is None
+
+    def test_full_datetime_with_none_regtime(self):
+        """测试 full_datetime 处理 None RegTime"""
+        record = Pytckreg3(
+            RegDate=datetime(2026, 4, 21, 0, 0, 0),
+            RegTime=None
+        )
+        result = record.full_datetime
+        assert result is None
+
+    def test_full_datetime_with_both_none(self):
+        """测试 full_datetime 处理两者都为 None"""
+        record = Pytckreg3(RegDate=None, RegTime=None)
+        result = record.full_datetime
+        assert result is None
+
+    def test_str_representation(self):
+        """测试字符串表示"""
+        record = Pytckreg3(TicketNo='TK123456789AB', SeqNo=1, SysSource='SYS')
+        assert str(record) == 'TK123456789AB'

@@ -1,0 +1,57 @@
+"""
+URL configuration for iwork project.
+
+The `urlpatterns` list routes URLs to views. For more information please see:
+    https://docs.djangoproject.com/en/5.2/topics/http/urls/
+Examples:
+Function views
+    1. Add an import:  from my_app import views
+    2. Add a URL to urlpatterns:  path('', views.home, name='home')
+Class-based views
+    1. Add an import:  from other_app.views import Home
+    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
+Including another URLconf
+    1. Import the include() function: from django.urls import include, path
+    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+"""
+
+from django.contrib import admin
+from django.urls import path, include
+from iwork import views, api_views
+
+urlpatterns = [
+    path("", views.dashboard, name="dashboard"),
+    path("history/", views.history_dashboard, name="history-dashboard"),
+
+    # 实时数据API
+    path("api/dashboard/realtime/", api_views.realtime_stats, name="realtime-stats"),
+    path("api/dashboard/processes/", api_views.process_list, name="process-list"),
+    path("api/dashboard/hourly/", api_views.hourly_stats, name="hourly-stats"),
+    path("api/dashboard/flow/<str:flow_name>/", api_views.flow_stats, name="flow-stats"),
+    path("api/dashboard/workorders/", api_views.workorder_list, name="workorder-list"),
+    path("api/dashboard/workorders/<str:wrk_order>/", api_views.workorder_detail, name="workorder-detail"),
+
+    # 新增API（看板改版 v2）
+    path("api/dashboard/monthly-trend/", api_views.monthly_trend, name="monthly-trend"),
+    path("api/dashboard/process-compare/", api_views.process_compare, name="process-compare"),
+    path("api/dashboard/heatmap/", api_views.heatmap, name="heatmap"),
+    path("api/dashboard/station-ranking/", api_views.station_ranking, name="station-ranking"),
+
+    # SSE 实时推送 + 目标产量设置
+    path("api/dashboard/stream/", api_views.dashboard_stream, name="dashboard-stream"),
+    path("api/dashboard/set-targets/", api_views.set_targets, name="set-targets"),
+
+    # 历史数据API（迁移到独立路由）
+    path("api/history/", include('iwork.history_urls')),
+
+    # 生产详情 API
+    path("api/dashboard/detail/stepno-overview/", api_views.stepno_overview, name="detail-stepno-overview"),
+    path("api/dashboard/detail/flows/", api_views.flow_overview, name="detail-flow-overview"),
+    path("api/dashboard/detail/flow/<str:flow_name>/", api_views.flow_detail, name="detail-flow-detail"),
+    path("api/dashboard/detail/stepno/<int:stepno>/", api_views.stepno_detail, name="detail-stepno-detail"),
+
+    # 生产详情页面
+    path("production/detail-data/", views.production_detail, name="production-detail"),
+    path("production/detail-data/flow/<str:flow_name>/", views.production_detail_flow, name="production-detail-flow"),
+    path("production/detail-data/stepno/<int:stepno>/", views.production_detail_stepno, name="production-detail-stepno"),
+]
