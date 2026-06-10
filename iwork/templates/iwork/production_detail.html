@@ -70,14 +70,9 @@
      data-detail-type="{{ detail_type|default:'' }}"
      data-detail-key="{{ detail_key|default:'' }}">
 
-    <!-- 顶部工具栏（导航 + 标题 + 搜索 + 日期 + Tab 合并为一行） -->
-    <header class="flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap bg-slate-800/50 rounded-lg px-4 py-2 border border-slate-700/50">
-        <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-            <a :href="basePath" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">实时数据</a>
-            <a :href="basePath + 'history/'" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-slate-700 hover:bg-slate-600">历史数据</a>
-            <a :href="basePath + 'production/detail-data/'" class="px-3 py-1.5 rounded-md text-xs transition-colors font-medium bg-blue-600">生产详情</a>
-        </div>
-        <h1 class="text-sm font-bold text-slate-200 whitespace-nowrap">{{ page_title }}</h1>
+    <!-- 顶部工具栏 -->
+    <header class="flex justify-between items-center mb-6 flex-wrap gap-4">
+        {% include 'iwork/_header.html' %}
         <input v-if="currentView === 'overview'" v-model="searchQuery" placeholder="搜索员工ID..."
             class="flex-1 min-w-[120px] max-w-[200px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
         <input v-if="currentView === 'overview'" type="date" v-model="selectedDate" @change="loadOverview"
@@ -91,6 +86,7 @@
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按工序</button>
         </div>
         <span class="text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
+        </div>
     </header>
 
     <!-- 静默加载条 -->

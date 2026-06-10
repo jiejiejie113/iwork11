@@ -50,19 +50,7 @@
 
     <!-- ========== 顶部工具栏 ========== -->
     <header class="flex justify-between items-center mb-6 flex-wrap gap-4">
-        <h1 class="text-2xl font-bold text-slate-100">{{ page_title }}</h1>
-        <div class="flex items-center gap-3 flex-wrap">
-            <!-- 视图切换 -->
-            <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-                <a :href="basePath"
-                    :class="currentView === 'realtime' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-4 py-2 rounded-md text-sm transition-colors font-medium">实时数据</a>
-                <a :href="basePath + 'history/'"
-                    :class="currentView === 'history' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-4 py-2 rounded-md text-sm transition-colors font-medium">历史数据</a>
-                <a :href="basePath + 'production/detail-data/'"
-                    class="px-4 py-2 rounded-md text-sm transition-colors font-medium bg-slate-700 hover:bg-slate-600">生产详情</a>
-            </div>
+        {% include 'iwork/_header.html' %}
 
             <!-- StepNo 全局过滤（单选下拉） -->
             <div class="relative">
@@ -117,11 +105,11 @@
     <!-- ========== 第1行：KPI 卡片 ========== -->
     <section class="grid grid-cols-3 gap-4 mb-6">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <div class="text-slate-400 text-sm mb-1">成衣工序产量 <span class="text-xs text-slate-600">(StepNo={[ stepnoFilter != null ? stepnoFilter : '全部' ]})</span></div>
+            <div class="text-slate-400 text-sm mb-1">全厂成衣工序产量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
             <div class="text-3xl font-bold text-emerald-400 tabular-nums">{[ fmtNum(data.total_qty) ]}</div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <div class="text-slate-400 text-sm mb-1">今日工单数</div>
+            <div class="text-slate-400 text-sm mb-1">今日本厂款号数量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
             <div class="text-3xl font-bold text-blue-400 tabular-nums">{[ fmtNum(data.workorder_count) ]}</div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
@@ -138,7 +126,7 @@
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
             <h3 class="text-lg font-semibold mb-4 text-slate-200">每日工序产量（堆积）
-                <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">+ 第{[ currentHour ]}小时趋势</span>
+                <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">至 {[ currentHour + 1 ]}时产量累计</span>
             </h3>
             <div style="height:200px;"><canvas id="daily-process-chart"></canvas></div>
         </div>
@@ -390,9 +378,7 @@ createApp({
 
         const displayDate = computed(() => {
             const d = data.date || selectedDate.value;
-            if (!d) return '--';
-            const parts = String(d).split('-');
-            return parts.length === 3 ? `${parts[1]}-${parts[2]}` : d;
+            return d || '--';
         });
 
         // ---- 工具函数 ----

@@ -1,0 +1,15 @@
+<!-- 共用标题栏 + tab导航（实时数据/生产详情/历史数据） -->
+<!-- 用法：在 header 标签内 include，之后再放各页面特有的控件 -->
+<h1 class="text-2xl font-bold text-slate-100">{{ page_title }} <span v-if="stepnoFilter" class="text-slate-400">- {[ stepnoFilter ]}工序</span></h1>
+<div class="flex items-center gap-3 flex-wrap">
+    <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+        <a :href="basePath"
+            :class="currentView === 'realtime' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+            class="px-4 py-2 rounded-md text-sm transition-colors font-medium">实时数据</a>
+        <a :href="basePath + 'production/detail-data/'"
+            :class="currentView === 'overview' || currentView === 'detail' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+            class="px-4 py-2 rounded-md text-sm transition-colors font-medium">生产详情</a>
+        <a :href="basePath + 'history/'"
+            :class="currentView === 'history' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+            class="px-4 py-2 rounded-md text-sm transition-colors font-medium">历史数据</a>
+    </div>

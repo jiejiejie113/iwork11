@@ -14,7 +14,7 @@ def dashboard(request):
     context = {
         'stats': stats,
         'stats_json': stats_json,
-        'page_title': '生产看板',
+        'page_title': 'Eastex生产看板',
         'initial_view': 'realtime',
     }
     return render(request, 'iwork/dashboard.html', context)
@@ -26,7 +26,7 @@ def history_dashboard(request):
     context = {
         'stats': {'total_qty': 0, 'workorder_count': 0},
         'stats_json': '{}',
-        'page_title': '生产看板 - 历史数据',
+        'page_title': 'Eastex生产看板 - 历史数据',
         'initial_view': 'history',
     }
     return render(request, 'iwork/dashboard.html', context)
@@ -36,7 +36,7 @@ def history_dashboard(request):
 def production_detail(request):
     """生产详情 — Flow 概览页"""
     context = {
-        'page_title': '生产看板 - 生产详情',
+        'page_title': 'Eastex生产看板 - 生产详情',
         'initial_view': 'overview',
         'detail_type': '',
         'detail_key': '',
@@ -48,7 +48,7 @@ def production_detail(request):
 def production_detail_flow(request, flow_name):
     """生产详情 — Flow 员工明细"""
     context = {
-        'page_title': f'生产看板 - 生产详情 - {flow_name}',
+        'page_title': f'Eastex生产看板 - 生产详情 - {flow_name}',
         'initial_view': 'detail',
         'detail_type': 'flow',
         'detail_key': flow_name,
@@ -60,7 +60,7 @@ def production_detail_flow(request, flow_name):
 def production_detail_stepno(request, stepno):
     """生产详情 — 工序员工明细"""
     context = {
-        'page_title': f'生产看板 - 生产详情 - 工序 {stepno}',
+        'page_title': f'Eastex生产看板 - 生产详情 - 工序 {stepno}',
         'initial_view': 'detail',
         'detail_type': 'stepno',
         'detail_key': stepno,
