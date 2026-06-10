@@ -191,15 +191,15 @@ CELERY_TIMEZONE = 'Asia/Shanghai'
 
 # ======
 # 业务配置（统一管理，模块内通过 django.conf.settings 引用）
+# Flow 白名单生效工序 — 仅此工序使用 ALLOWED_FLOWS 过滤，其他工序查询全量 Flow
+ALLOWED_FLOWS_STEPNO = 70
+
 # Flow 白名单 — 生产详情仅保留这些分组
 ALLOWED_FLOWS = [
-    'SO10-L10A', 'SO10-L10B', 'SO10-L10C', 'SO10-L10D', 'SO10-L10E', 'SO10-L10F', 'SO10-L10G',
     'SO11-L11A', 'SO11-L11B', 'SO11-L11D', 'SO11-L11E',
     'SO14-L14A', 'SO14-L14B', 'SO14-L14C', 'SO14-L14D',
-    'SO2-L2A', 'SO2-L2B', 'SO2-L2C', 'SO2-L2D', 'SO2-L2E', 'SO2-L2F', 'SO2-L2G',
     'SO3-L3A', 'SO3-L3B', 'SO3-L3C', 'SO3-L3D', 'SO3-L3E', 'SO3-L3F',
     'SO5-L5B', 'SO5-L5C', 'SO5-L5D', 'SO5-L5E',
-    'SO6-L6A', 'SO6-L6B', 'SO6-L6C', 'SO6-L6D', 'SO6-L6E', 'SO6-L6F', 'SO6-L6G',
     'SO8-L8A', 'SO8-L8B', 'SO8-L8C', 'SO8-L8D', 'SO8-L8E', 'SO8-L8F',
     'SO9-L9A', 'SO9-L9B', 'SO9-L9C', 'SO9-L9D',
 ]
