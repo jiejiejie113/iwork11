@@ -110,7 +110,7 @@
                 class="px-4 py-2 border border-slate-600 rounded-lg text-sm transition-colors">
                 {[ isPaused ? '恢复更新' : '暂停更新' ]}
             </button>
-            <span v-if="currentView === 'realtime'" class="text-sm text-slate-500">{[ lastUpdate ]}</span>
+            <span v-if="currentView === 'realtime'" class="text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
         </div>
     </header>
 
@@ -680,7 +680,7 @@ createApp({
                     }
                     wsConnected.value = true;
                     wsStatus.value = '已连接';
-                    lastUpdate.value = '最后更新: ' + new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                    lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
                     renderAllCharts();
                 } catch (e) {
                     console.error('SSE 数据解析失败:', e);
