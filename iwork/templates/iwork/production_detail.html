@@ -119,7 +119,7 @@
                                 <span class="text-emerald-400 font-bold">{[ fmtNum(wo.total_qty) ]}件</span>
                             </div>
                             <div class="text-slate-400 mt-1">
-                                <span>{[ (wo.flows || []).length ]}道工序</span>
+                                <span>{[ (wo.flows || []).join(', ') ]}</span>
                             </div>
                         </div>
                         <div v-if="workorderSummaryList.length === 0" class="text-center text-slate-500 py-8">
@@ -796,7 +796,7 @@ createApp({
                 // 并行获取 Flow 概览和工单列表
                 const [flowResp, woResp] = await Promise.all([
                     fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
-                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100`)
+                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
                 ]);
                 const flowData = await flowResp.json();
                 const woData = await woResp.json();
@@ -926,7 +926,7 @@ createApp({
             try {
                 const [flowResp, woResp] = await Promise.all([
                     fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
-                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100`)
+                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
                 ]);
                 const flowData = await flowResp.json();
                 const woData = await woResp.json();
