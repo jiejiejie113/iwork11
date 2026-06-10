@@ -418,7 +418,7 @@ def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
     rows = list(
-        records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegDate)'})
+        records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegTime)'})
         .values('StepNo', 'reg_date', 'hour')
         .annotate(qty=Sum('Qty'))
         .order_by('StepNo', 'reg_date', 'hour')
