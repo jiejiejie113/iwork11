@@ -1015,8 +1015,8 @@ createApp({
                         data: {
                             labels,
                             datasets: [
-                                { label: '产量', data: qtyData, backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y' },
-                                { label: '人数', data: workerData, type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3 },
+                                { label: '产量', data: qtyData, backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y', order: 1 },
+                                { label: '人数', data: workerData, type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3, order: 2 },
                             ],
                         },
                         options: {
