@@ -468,6 +468,26 @@ def get_batch_monthly_process_stats(start_date: date, end_date: date) -> dict:
     return result
 
 
+def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
+    """月内每天×每小时×工序的产量：{stepno: [{date, hour, qty}]}，单次SQL"""
+    from iwork.models import Pytckreg3
+    start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
+    end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
+    records = Pytckreg3.objects.using('iwork').filter(RegDate__gte=start, RegDate__lt=end)
+    rows = list(
+        records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegDate)'})
+        .values('StepNo', 'reg_date', 'hour')
+        .annotate(qty=Sum('Qty'))
+        .order_by('StepNo', 'reg_date', 'hour')
+    )
+    result: dict = {}
+    for r in rows:
+        result.setdefault(r['StepNo'], []).append({
+            'date': str(r['reg_date']), 'hour': r['hour'], 'qty': r['qty'] or 0
+        })
+    return result
+
+
 def _groupby(rows: list, key: str):
     """按 key 分组迭代器（假定 rows 已排序）"""
     current_key = None

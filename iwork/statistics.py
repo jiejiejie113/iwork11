@@ -119,6 +119,16 @@ def _merge_batch_monthly_proc(batch_monthly_proc: dict) -> list:
     return merged
 
 
+def _merge_batch_monthly_hourly(batch_monthly_hourly: dict) -> list:
+    """合并全工序的月小时趋势：按(date, hour)聚合所有工序产量"""
+    merged = {}
+    for stepno, items in batch_monthly_hourly.items():
+        for item in items:
+            key = (item['date'], item['hour'])
+            merged[key] = merged.get(key, 0) + item['qty']
+    return [{'date': d, 'hour': h, 'qty': q} for (d, h), q in sorted(merged.items())]
+
+
 def _build_heatmap_matrix(process_flow_stats: list) -> dict:
     """将 process_flow 数据转为热力图矩阵：ALLOWED_FLOWS(行) × 工序(列)"""
     from django.conf import settings
@@ -144,7 +154,7 @@ def _build_heatmap_matrix(process_flow_stats: list) -> dict:
 
 def _assemble_stepno_stats(stepno, batch_basic, batch_hourly, batch_pf,
                            batch_monthly_total, batch_monthly_proc,
-                           batch_station, batch_wo,
+                           batch_monthly_hourly, batch_station, batch_wo,
                            today, month_start, all_stepnos_list=None) -> dict:
     """组装单个工序的完整 stats dict"""
     basic = batch_basic.get(stepno, {'total_qty': 0, 'workorder_count': 0})
@@ -156,6 +166,7 @@ def _assemble_stepno_stats(stepno, batch_basic, batch_hourly, batch_pf,
         'process_flow_stats': batch_pf.get(stepno, []),
         'monthly_process_stats': batch_monthly_proc.get(stepno, []),
         'monthly_total_trend': batch_monthly_total.get(stepno, []),
+        'monthly_hourly_stats': batch_monthly_hourly.get(stepno, []),
         'station_stats': batch_station.get(stepno, [])[:10],
         'heatmap_matrix': _build_heatmap_matrix(batch_pf.get(stepno, [])),
         'station_ranking': batch_station.get(stepno, []),
@@ -199,6 +210,7 @@ def get_batch_stats(q=None) -> dict:
         logger.info('第2阶段：月趋势查询[跳过] (SKIP_MONTHLY_QUERIES=True)')
         batch_monthly_total = {}
         batch_monthly_proc = {}
+        batch_monthly_hourly = {}
     else:
         logger.info('第2阶段：月趋势查询开始')
         t2 = time.time()
@@ -227,10 +239,21 @@ def get_batch_stats(q=None) -> dict:
         else:
             batch_monthly_proc = q.get_batch_monthly_process_stats(month_start, today)
 
+        # 月小时趋势（单次SQL，性能优先）
+        if 'hourly' in cached_monthly:
+            today_hourly = q.get_batch_monthly_hourly_stats(today, today)
+            batch_monthly_hourly = dict(cached_monthly['hourly'])
+            for stepno, items in today_hourly.items():
+                old = batch_monthly_hourly.setdefault(stepno, [])
+                old[:] = [r for r in old if r['date'] != today_str] + items
+        else:
+            batch_monthly_hourly = q.get_batch_monthly_hourly_stats(month_start, today)
+
         # 同步缓存
         cache.set(month_key + ':total', batch_monthly_total, MONTHLY_CACHE_TTL)
         cache.set(month_key + ':proc', batch_monthly_proc, MONTHLY_CACHE_TTL)
-        cache.set(month_key, {'total': batch_monthly_total, 'proc': batch_monthly_proc}, MONTHLY_CACHE_TTL)
+        cache.set(month_key + ':hourly', batch_monthly_hourly, MONTHLY_CACHE_TTL)
+        cache.set(month_key, {'total': batch_monthly_total, 'proc': batch_monthly_proc, 'hourly': batch_monthly_hourly}, MONTHLY_CACHE_TTL)
         logger.info('第2阶段完成，耗时 {:.1f}s', time.time() - t2)
 
     # ---- 第 3 阶段：按 stepno 组装 ----
@@ -268,7 +291,7 @@ def get_batch_stats(q=None) -> dict:
         batch[stepno] = _assemble_stepno_stats(
             stepno, batch_basic, batch_hourly, batch_pf,
             batch_monthly_total, batch_monthly_proc,
-            batch_station, batch_wo,
+            batch_monthly_hourly, batch_station, batch_wo,
             today, month_start, all_stepnos_sorted
         )
 
@@ -281,6 +304,7 @@ def get_batch_stats(q=None) -> dict:
         'process_flow_stats': _merge_batch_process_flow(batch_pf),
         'monthly_process_stats': _merge_batch_monthly_proc(batch_monthly_proc),
         'monthly_total_trend': _merge_batch_monthly_total(batch_monthly_total),
+        'monthly_hourly_stats': _merge_batch_monthly_hourly(batch_monthly_hourly),
         'station_stats': all_station_full[:10],
         'heatmap_matrix': _build_heatmap_matrix(_merge_batch_process_flow(batch_pf)),
         'station_ranking': all_station_full,

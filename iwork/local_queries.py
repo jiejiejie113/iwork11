@@ -412,6 +412,25 @@ def get_batch_monthly_process_stats(start_date: date, end_date: date) -> dict:
     return result
 
 
+def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
+    """月内每天×每小时×工序的产量：{stepno: [{date, hour, qty}]}，单次SQL"""
+    start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
+    end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
+    records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    rows = list(
+        records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegDate)'})
+        .values('StepNo', 'reg_date', 'hour')
+        .annotate(qty=Sum('Qty'))
+        .order_by('StepNo', 'reg_date', 'hour')
+    )
+    result: dict = {}
+    for r in rows:
+        result.setdefault(r['StepNo'], []).append({
+            'date': str(r['reg_date']), 'hour': r['hour'], 'qty': r['qty'] or 0
+        })
+    return result
+
+
 # ============================================================================
 # 生产详情模块 Batch 查询函数（Flow 分组 + 员工明细）
 
