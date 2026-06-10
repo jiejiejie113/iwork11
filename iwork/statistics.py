@@ -120,14 +120,15 @@ def _merge_batch_monthly_proc(batch_monthly_proc: dict) -> list:
 
 
 def _merge_batch_monthly_hourly(batch_monthly_hourly: dict) -> list:
-    """合并全工序的月小时趋势：按(date, hour)聚合所有工序产量"""
+    """合并全工序的月小时趋势：按(date, hour, stepno)保留工序维度"""
     merged = {}
     for stepno, items in batch_monthly_hourly.items():
         for item in items:
             if item['hour'] is not None:
-                key = (item['date'], item['hour'])
+                key = (item['date'], item['hour'], stepno)
                 merged[key] = merged.get(key, 0) + item['qty']
-    return [{'date': d, 'hour': h, 'qty': q} for (d, h), q in sorted(merged.items())]
+    return [{'date': d, 'hour': h, 'step': s, 'qty': q}
+            for (d, h, s), q in sorted(merged.items())]
 
 
 def _build_heatmap_matrix(process_flow_stats: list) -> dict:
@@ -167,7 +168,7 @@ def _assemble_stepno_stats(stepno, batch_basic, batch_hourly, batch_pf,
         'process_flow_stats': batch_pf.get(stepno, []),
         'monthly_process_stats': batch_monthly_proc.get(stepno, []),
         'monthly_total_trend': batch_monthly_total.get(stepno, []),
-        'monthly_hourly_stats': batch_monthly_hourly.get(stepno, []),
+        'monthly_hourly_stats': [{**r, 'step': stepno} for r in batch_monthly_hourly.get(stepno, [])],
         'station_stats': batch_station.get(stepno, [])[:10],
         'heatmap_matrix': _build_heatmap_matrix(batch_pf.get(stepno, [])),
         'station_ranking': batch_station.get(stepno, []),

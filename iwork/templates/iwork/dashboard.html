@@ -137,16 +137,10 @@
             <div style="height:200px;"><canvas id="hourly-chart"></canvas></div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">每日工序产量（堆积）</h3>
+            <h3 class="text-lg font-semibold mb-4 text-slate-200">每日工序产量（堆积）
+                <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">+ 第{[ currentHour ]}小时趋势</span>
+            </h3>
             <div style="height:200px;"><canvas id="daily-process-chart"></canvas></div>
-        </div>
-    </section>
-
-    <!-- ========== 第2.5行：当前时段趋势（仅实时模式） ========== -->
-    <section v-if="currentView === 'realtime'" class="mb-6">
-        <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">当前时段趋势（第{[ currentHour ]}小时）</h3>
-            <div style="height:200px;"><canvas id="hourly-trend-chart"></canvas></div>
         </div>
     </section>
 
@@ -523,52 +517,51 @@ createApp({
                     nextTick(() => renderPfChart());
                 }
 
-                // 主题3b：每日工序堆积柱状图
+                // 主题3b：每日工序产量（堆积柱状）+ 当前时段趋势（折线，右侧Y轴）
                 const mpStats = data.monthly_process_stats || [];
                 const mpDates = [...new Set(mpStats.map(s => s.date))];
                 const mpSteps = [...new Set(mpStats.map(s => s.step))];
                 const mpDatasets = mpSteps.map((step, i) => ({
                     label: String(step),
                     data: mpDates.map(d => { const f = mpStats.find(s => s.date === d && s.step === step); return f ? f.qty : 0; }),
-                    backgroundColor: COLORS[i % COLORS.length]
+                    backgroundColor: COLORS[i % COLORS.length],
+                    yAxisID: 'y',
+                    order: 2,
                 }));
-                initChart('daily-process-chart', 'bar', { labels: mpDates, datasets: mpDatasets }, {
-                    ...chartDefaults(),
-                    scales: { x: { ...chartDefaults().scales.x, stacked: true }, y: { ...chartDefaults().scales.y, stacked: true } }
-                });
-                updateChart('daily-process-chart', { labels: mpDates, datasets: mpDatasets });
 
-                // 主题3c：当前时段趋势（仅实时模式）
+                // 实时模式：叠加时段趋势折线
                 if (currentView.value === 'realtime') {
                     currentHour.value = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false }));
-                    const hourlyTrend = (data.monthly_hourly_stats || []).filter(s => s.hour === currentHour.value);
-                    const htDates = hourlyTrend.map(s => s.date);
-                    const htQtys = hourlyTrend.map(s => s.qty);
-                    initChart('hourly-trend-chart', 'line', {
-                        labels: htDates,
-                        datasets: [{
-                            label: `第${currentHour.value}小时产量`,
-                            data: htQtys,
-                            borderColor: '#22c55e',
-                            backgroundColor: 'rgba(34,197,94,0.1)',
-                            tension: 0.3,
-                            pointRadius: 3,
-                            fill: true,
-                        }]
-                    }, chartDefaults());
-                    updateChart('hourly-trend-chart', {
-                        labels: htDates,
-                        datasets: [{
-                            label: `第${currentHour.value}小时产量`,
-                            data: htQtys,
-                            borderColor: '#22c55e',
-                            backgroundColor: 'rgba(34,197,94,0.1)',
-                            tension: 0.3,
-                            pointRadius: 3,
-                            fill: true,
-                        }]
+                    const hourlyTrend = (data.monthly_hourly_stats || [])
+                        .filter(s => s.hour === currentHour.value && s.step === stepnoFilter.value);
+                    const lineData = mpDates.map(d => {
+                        const f = hourlyTrend.find(s => s.date === d);
+                        return f ? f.qty : null;
+                    });
+                    mpDatasets.push({
+                        label: `工序${stepnoFilter.value} 第${currentHour.value}小时`,
+                        data: lineData,
+                        type: 'line',
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34,197,94,0.1)',
+                        tension: 0.3,
+                        pointRadius: 3,
+                        fill: false,
+                        yAxisID: 'y1',
+                        order: 1,
                     });
                 }
+
+                const comboOptions = {
+                    ...chartDefaults(),
+                    scales: {
+                        x: { ...chartDefaults().scales.x, stacked: true },
+                        y: { ...chartDefaults().scales.y, stacked: true, position: 'left', title: { display: true, text: '产量', color: '#94a3b8' } },
+                        y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e', font: { size: 14 } }, title: { display: true, text: '时段产量', color: '#22c55e' } },
+                    }
+                };
+                initChart('daily-process-chart', 'bar', { labels: mpDates, datasets: mpDatasets }, comboOptions);
+                updateChart('daily-process-chart', { labels: mpDates, datasets: mpDatasets });
 
                 // 主题4：工站分布
                 const stStats = data.station_stats || [];
