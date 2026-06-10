@@ -124,8 +124,9 @@ def _merge_batch_monthly_hourly(batch_monthly_hourly: dict) -> list:
     merged = {}
     for stepno, items in batch_monthly_hourly.items():
         for item in items:
-            key = (item['date'], item['hour'])
-            merged[key] = merged.get(key, 0) + item['qty']
+            if item['hour'] is not None:
+                key = (item['date'], item['hour'])
+                merged[key] = merged.get(key, 0) + item['qty']
     return [{'date': d, 'hour': h, 'qty': q} for (d, h), q in sorted(merged.items())]
 
 

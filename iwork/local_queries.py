@@ -425,9 +425,10 @@ def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
     )
     result: dict = {}
     for r in rows:
-        result.setdefault(r['StepNo'], []).append({
-            'date': str(r['reg_date']), 'hour': r['hour'], 'qty': r['qty'] or 0
-        })
+        if r['hour'] is not None:
+            result.setdefault(r['StepNo'], []).append({
+                'date': str(r['reg_date']), 'hour': r['hour'], 'qty': r['qty'] or 0
+            })
     return result
 
 
