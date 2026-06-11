@@ -14,10 +14,10 @@ def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
 
 
 def apply_flow_filter(queryset, stepno_filter: list[int] | None = None):
-    """仅 ALLOWED_FLOWS_STEPNO 工序应用白名单过滤（全部视图不过滤）"""
-    target = settings.ALLOWED_FLOWS_STEPNO
+    """仅 settings.ALLOWED_FLOWS_STEPNO 工序应用白名单过滤（全部视图不过滤）"""
+    target = settings.settings.ALLOWED_FLOWS_STEPNO
     if stepno_filter is not None and target in stepno_filter:
-        queryset = queryset.filter(Flow__in=settings.ALLOWED_FLOWS)
+        queryset = queryset.filter(Flow__in=settings.settings.ALLOWED_FLOWS)
     return queryset
 
 
@@ -531,7 +531,7 @@ def get_all_flows(target_date: date) -> list[str]:
         list[str]: 按字母升序排列的 Flow 名称列表
     """
     records = get_records_queryset(target_date)
-    records = records.exclude(Flow='').filter(Flow__in=ALLOWED_FLOWS)
+    records = records.exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
     stats = list(
         records.values('Flow')
         .annotate(qty=Sum('Qty'))
@@ -551,7 +551,7 @@ def get_batch_flow_overview(target_date: date) -> dict:
         dict: {flow_name: {stepnos: {stepno: {qty, workers}}}, ...}
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=ALLOWED_FLOWS)
+    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
         records.values('Flow', 'StepNo')
         .annotate(
@@ -588,7 +588,7 @@ def get_batch_flow_hourly(target_date: date) -> dict:
         dict: {flow_name: [{hour, qty}, ...], ...}
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=ALLOWED_FLOWS)
+    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
         records.extra(select={'hour': 'HOUR(RegTime)'})
         .values('Flow', 'hour')
@@ -616,7 +616,7 @@ def get_batch_flow_employees(target_date: date) -> dict:
         组内员工按 total_qty 降序排列
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=ALLOWED_FLOWS)
+    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
         records.values('Flow', 'RegPerSysID', 'StepNo', 'WrkOrder')
         .annotate(qty=Sum('Qty'))
@@ -666,7 +666,7 @@ def get_batch_stepno_employees(target_date: date) -> dict:
         组内员工按 qty 降序排列
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=ALLOWED_FLOWS)
+    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
         records.values('StepNo', 'RegPerSysID', 'Flow')
         .annotate(qty=Sum('Qty'))
