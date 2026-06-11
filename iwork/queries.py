@@ -15,9 +15,9 @@ def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
 
 def apply_flow_filter(queryset, stepno_filter: list[int] | None = None):
     """仅 settings.ALLOWED_FLOWS_STEPNO 工序应用白名单过滤（全部视图不过滤）"""
-    target = settings.settings.ALLOWED_FLOWS_STEPNO
+    target = settings.ALLOWED_FLOWS_STEPNO
     if stepno_filter is not None and target in stepno_filter:
-        queryset = queryset.filter(Flow__in=settings.settings.ALLOWED_FLOWS)
+        queryset = queryset.filter(Flow__in=settings.ALLOWED_FLOWS)
     return queryset
 
 
