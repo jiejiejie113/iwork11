@@ -135,7 +135,7 @@
     <!-- ========== 第3行：工序产量对比（全宽，Tab切换） ========== -->
     <section class="mb-6">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-3 text-slate-200">工序产量对比（按 Flow 分组）</h3>
+            <h3 class="text-lg font-semibold mb-3 text-slate-200">工序产量对比（按生产线分组）</h3>
             <!-- Tab 菜单（多工序时显示）：单行 + 横向滚动 + 输入跳转 -->
             <div v-if="pfSteps.length > 1" class="flex items-center gap-2 mb-3">
                 <input v-model="pfJumpInput" @keyup.enter="jumpPfStep"
@@ -184,7 +184,7 @@
                 <table class="w-full text-xs border-collapse">
                     <thead>
                         <tr>
-                            <th class="p-1 text-slate-500 sticky left-0 bg-slate-800 z-10 text-left">Flow \ 工序</th>
+                            <th class="p-1 text-slate-500 sticky left-0 bg-slate-800 z-10 text-left">生产线 \ 工序</th>
                             <th v-for="s in data.heatmap_matrix.stepnos" :key="s" class="p-1 text-slate-500 font-mono">{[ s ]}</th>
                         </tr>
                     </thead>
