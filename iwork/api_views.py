@@ -436,18 +436,26 @@ def flow_detail(request, flow_name):
         target_date = date.fromisoformat(date_str)
         mode = request.query_params.get('mode', 'remote')
 
-        # 今日优先读员工缓存，但仍需注入 targets
+        # 今日优先读缓存，所有字段统一来自 Redis 快照，避免混用新旧数据
         if target_date == date.today() and mode == 'remote':
-            cached = cache.get(f'stats:detail:flow:{flow_name}')
-            if cached is not None:
+            cached_employees = cache.get(f'stats:detail:flow:{flow_name}')
+            if cached_employees is not None:
+                total_qty = sum(e['total_qty'] for e in cached_employees)
+                hourly_cache = cache.get('stats:detail:flow_hourly') or {}
+                hourly_trend = hourly_cache.get(flow_name, [])
                 targets_key = f'targets:{target_date.isoformat()}:{flow_name}'
                 cached_targets = cache.get(targets_key)
                 targets_dict = json.loads(cached_targets) if cached_targets else {}
-                for emp in cached:
+                for emp in cached_employees:
                     emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
-                result = _get_flow_detail_data(flow_name, target_date, mode)
-                result['employees'] = cached
-                return Response(result, status=status.HTTP_200_OK)
+                return Response({
+                    'flow': flow_name,
+                    'date': target_date.isoformat(),
+                    'total_qty': total_qty,
+                    'worker_count': len(cached_employees),
+                    'hourly_trend': hourly_trend,
+                    'employees': cached_employees,
+                }, status=status.HTTP_200_OK)
 
         result = _get_flow_detail_data(flow_name, target_date, mode)
         return Response(result, status=status.HTTP_200_OK)

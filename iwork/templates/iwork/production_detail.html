@@ -98,7 +98,7 @@
         <div class="flex gap-4 mb-4" style="height:340px;">
             <!-- 左侧：各生产线 产量 & 人数 -->
             <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
-                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各工序' ]} 产量 & 人数</h3>
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各工序' ]} 产量 & 人数{[ groupMode === 'flow' ? ' -70工序' : '' ]}</h3>
                 <div class="flex-1"><canvas id="combo-chart"></canvas></div>
             </div>
             <!-- 右侧：工单列表 -->
@@ -329,15 +329,12 @@
                     @pointerdown="onPointerDown($event, idx)">
                     <template v-if="idx % 2 === 0">
                         <div class="flex-1 text-left mr-3">
-                            <div v-for="s in emp.steps" :key="s.stepno" class="text-xs mb-0.5">
+                            <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
                             </div>
                             <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
-                            <div v-if="emp.workorders && emp.workorders.length > 0" class="text-xs mb-0.5" :title="emp.workorders.join(', ')">
-                                <span class="text-slate-500">工单</span>
-                                <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
-                            </div>
                             <div class="text-xs mt-1">
                                 <span class="text-slate-500">产量</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
@@ -359,15 +356,12 @@
                             {[ emp.reg_per_sys_id ]}
                         </div>
                         <div class="flex-1 text-left ml-3">
-                            <div v-for="s in emp.steps" :key="s.stepno" class="text-xs mb-0.5">
+                            <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
                             </div>
                             <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
-                            <div v-if="emp.workorders && emp.workorders.length > 0" class="text-xs mb-0.5" :title="emp.workorders.join(', ')">
-                                <span class="text-slate-500">工单</span>
-                                <span class="text-slate-200 font-semibold ml-1">{[ emp.workorders.join(', ') ]}</span>
-                            </div>
                             <div class="text-xs mt-1">
                                 <span class="text-slate-500">产量</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
@@ -602,8 +596,7 @@ createApp({
         });
 
         function getStepQty(emp, stepno) {
-            const step = (emp.steps || []).find(s => s.stepno === stepno);
-            return step ? step.qty : 0;
+            return (emp.steps || []).reduce((sum, s) => s.stepno === stepno ? sum + (s.qty || 0) : sum, 0);
         }
 
         // 各工序列产量汇总（基于筛选后的员工）
@@ -797,7 +790,7 @@ createApp({
                 const flowData = await flowResp.json();
                 const woData = await woResp.json();
 
-                // 处理 Flow 卡片数据
+                // 处理 Flow 卡片数据（全部工序）
                 const cards = [];
                 for (const [name, info] of Object.entries(flowData)) {
                     const stepnos = info.stepnos || {};
@@ -993,15 +986,18 @@ createApp({
             nextTick(() => {
                 const isFlow = groupMode.value === 'flow';
                 const cards = isFlow ? flowCards.value : stepnoCards.value;
-                const labels = isFlow ? cards.map(c => c.flow) : cards.map(c => '工序 ' + c.stepno);
-                // Flow 视图：从 stepnos 汇总 total_qty；工序视图直接用 total_qty
+                // Flow 视图：70工序产量；工序视图：直接用 total_qty
                 const qtyData = isFlow
-                    ? cards.map(c => Object.values(c.stepnos || {}).reduce((s, sd) => s + (sd.qty || 0), 0))
+                    ? cards.map(c => (c.stepnos && c.stepnos['70'] ? c.stepnos['70'].qty : 0))
                     : cards.map(c => c.total_qty || 0);
                 // 人数：Flow 视图用 total_workers（卡片已有的总人数），工序视图用 worker_count
                 const workerData = isFlow
                     ? cards.map(c => c.total_workers || 0)
                     : cards.map(c => c.worker_count || 0);
+                // 合并、按产量降序排列
+                const combined = cards.map((c, i) => ({ label: isFlow ? c.flow : '工序 ' + c.stepno, qty: qtyData[i], workers: workerData[i] }));
+                combined.sort((a, b) => b.qty - a.qty);
+                const labels = combined.map(x => x.label);
                 // 柱状折线组合图
                 if (charts['combo-chart']) charts['combo-chart'].destroy();
                 const comboCanvas = document.getElementById('combo-chart');
@@ -1011,8 +1007,8 @@ createApp({
                         data: {
                             labels,
                             datasets: [
-                                { label: '产量', data: qtyData, backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y', order: 2 },
-                                { label: '人数', data: workerData, type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3, order: 1 },
+                                { label: '产量', data: combined.map(x => x.qty), backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y', order: 2 },
+                                { label: '人数', data: combined.map(x => x.workers), type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3, order: 1 },
                             ],
                         },
                         options: {

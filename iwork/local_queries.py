@@ -578,7 +578,7 @@ def get_batch_flow_employees(target_date: date) -> dict:
             if emp_id not in emp_map:
                 emp_map[emp_id] = {'total_qty': 0, 'steps': [], 'workorders': set()}
             emp_map[emp_id]['total_qty'] += (r['qty'] or 0)
-            emp_map[emp_id]['steps'].append({'stepno': r['StepNo'], 'qty': r['qty'] or 0})
+            emp_map[emp_id]['steps'].append({'stepno': r['StepNo'], 'qty': r['qty'] or 0, 'workorder': r['WrkOrder'] or ''})
             if r['WrkOrder']:
                 emp_map[emp_id]['workorders'].add(r['WrkOrder'])
 
