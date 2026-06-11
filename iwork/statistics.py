@@ -160,15 +160,12 @@ def _assemble_stepno_stats(stepno, batch_basic, batch_hourly, batch_pf,
                            today, month_start, all_stepnos_list=None) -> dict:
     """组装单个工序的完整 stats dict"""
     basic = batch_basic.get(stepno, {'total_qty': 0, 'workorder_count': 0})
-    pf_stats = batch_pf.get(stepno, [])
-    if stepno == settings.ALLOWED_FLOWS_STEPNO:
-        pf_stats = [r for r in pf_stats if r['flow'] in settings.ALLOWED_FLOWS]
     return {
         'workorder_count': basic['workorder_count'],
         'total_qty': basic['total_qty'],
         'date': today,
         'hourly_stats': [item for item in batch_hourly.get(stepno, []) if item['hour'] is not None],
-        'process_flow_stats': pf_stats,
+        'process_flow_stats': batch_pf.get(stepno, []),
         'monthly_process_stats': batch_monthly_proc.get(stepno, []),
         'monthly_total_trend': batch_monthly_total.get(stepno, []),
         'monthly_hourly_stats': [{**r, 'step': stepno} for r in batch_monthly_hourly.get(stepno, [])],

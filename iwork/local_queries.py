@@ -21,6 +21,15 @@ def apply_flow_filter(queryset, stepno_filter: list[int] | None = None):
     return queryset
 
 
+def apply_batch_flow_filter(queryset):
+    """批量查询：仅 ALLOWED_FLOWS_STEPNO 工序走白名单，其他工序全量（单次SQL）"""
+    from django.db.models import Q
+    target = settings.ALLOWED_FLOWS_STEPNO
+    return queryset.filter(
+        ~Q(StepNo=target) | Q(Flow__in=settings.ALLOWED_FLOWS)
+    )
+
+
 def get_date_range(target: date) -> tuple:
     """获取指定日期的范围（开始时间、结束时间）"""
     start = timezone.make_aware(timezone.datetime.combine(target, timezone.datetime.min.time()))
@@ -324,6 +333,7 @@ def get_available_dates(mode: str = 'local') -> list:
 def get_batch_basic_stats(target_date: date) -> dict:
     """每个工序的 KPI：{stepno: {total_qty, workorder_count}}"""
     records = get_records_queryset(target_date)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.values('StepNo')
         .annotate(total_qty=Sum('Qty'), workorder_count=Count('WrkOrder', distinct=True))
@@ -333,6 +343,7 @@ def get_batch_basic_stats(target_date: date) -> dict:
 
 def get_batch_hourly_stats(target_date: date) -> dict:
     records = get_records_queryset(target_date)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.extra(select={'hour': 'HOUR(RegTime)'})
         .values('StepNo', 'hour').annotate(qty=Sum('Qty')).order_by('StepNo', 'hour')
@@ -345,6 +356,7 @@ def get_batch_hourly_stats(target_date: date) -> dict:
 
 def get_batch_process_by_flow(target_date: date) -> dict:
     records = get_records_queryset(target_date).exclude(Flow='')
+    records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'Flow').annotate(qty=Sum('Qty')).order_by('StepNo', '-qty'))
     result = {}
     for r in rows:
@@ -354,6 +366,7 @@ def get_batch_process_by_flow(target_date: date) -> dict:
 
 def get_batch_heatmap_data(target_date: date) -> dict:
     records = get_records_queryset(target_date).exclude(Flow='')
+    records = apply_batch_flow_filter(records)
     rows = list(records.extra(select={'hour': 'HOUR(RegTime)'}).values('StepNo', 'hour', 'Flow').annotate(qty=Sum('Qty')))
     from iwork.queries import _groupby
     result = {}
@@ -372,6 +385,7 @@ def get_batch_heatmap_data(target_date: date) -> dict:
 
 def get_batch_station_ranking(target_date: date, limit: int = 10) -> dict:
     records = get_records_queryset(target_date).exclude(Flow='').exclude(StationID='')
+    records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'Flow', 'StationID').annotate(qty=Sum('Qty')).order_by('StepNo', '-qty'))
     from iwork.queries import _groupby
     result = {}
@@ -383,6 +397,7 @@ def get_batch_station_ranking(target_date: date, limit: int = 10) -> dict:
 
 def get_batch_workorders_list(target_date: date, limit: int = 20) -> dict:
     records = get_records_queryset(target_date)
+    records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'WrkOrder')
                 .annotate(total_qty=Sum('Qty'))
                 .order_by('StepNo', '-total_qty'))
@@ -406,6 +421,7 @@ def get_batch_monthly_total_trend(start_date: date, end_date: date) -> dict:
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = apply_batch_flow_filter(records)
     rows = list(records.extra(select={'reg_date': 'DATE(RegDate)'})
                 .values('StepNo', 'reg_date').annotate(qty=Sum('Qty')).order_by('StepNo', 'reg_date'))
     result = {}
@@ -418,6 +434,7 @@ def get_batch_monthly_process_stats(start_date: date, end_date: date) -> dict:
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = apply_batch_flow_filter(records)
     rows = list(records.extra(select={'reg_date': 'DATE(RegDate)'})
                 .values('StepNo', 'reg_date').annotate(qty=Sum('Qty')).order_by('StepNo', 'reg_date'))
     result = {}
@@ -431,6 +448,7 @@ def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegTime)'})
         .values('StepNo', 'reg_date', 'hour')
@@ -461,7 +479,8 @@ def get_all_flows(target_date: date) -> list[str]:
         list[str]: 按字母升序排列的 Flow 名称列表
     """
     records = get_records_queryset(target_date)
-    records = records.exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = records.exclude(Flow='')
+    records = apply_batch_flow_filter(records)
     stats = list(
         records.values('Flow')
         .annotate(qty=Sum('Qty'))
@@ -481,7 +500,7 @@ def get_batch_flow_overview(target_date: date) -> dict:
         dict: {flow_name: {stepnos: {stepno: {qty, workers}}}, ...}
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.values('Flow', 'StepNo')
         .annotate(
@@ -518,7 +537,7 @@ def get_batch_flow_hourly(target_date: date) -> dict:
         dict: {flow_name: [{hour, qty}, ...], ...}
     """
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.extra(select={'hour': 'HOUR(RegTime)'})
         .values('Flow', 'hour')
@@ -548,7 +567,7 @@ def get_batch_flow_employees(target_date: date) -> dict:
     from iwork.queries import _groupby
 
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.values('Flow', 'RegPerSysID', 'StepNo', 'WrkOrder')
         .annotate(qty=Sum('Qty'))
@@ -600,7 +619,7 @@ def get_batch_stepno_employees(target_date: date) -> dict:
     from iwork.queries import _groupby
 
     records = get_records_queryset(target_date).exclude(Flow='')
-    records = records.filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = apply_batch_flow_filter(records)
     rows = list(
         records.values('StepNo', 'RegPerSysID', 'Flow')
         .annotate(qty=Sum('Qty'))
