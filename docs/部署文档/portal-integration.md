@@ -37,9 +37,24 @@
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/history/stats/<date>/` | GET | 指定日期统计 |
-| `/api/history/monthly/<year>/<month>/` | GET | 月度统计 |
-| `/api/history/sync/<date>/` | POST | 同步历史数据 |
+| `/api/history/date/<date>/` | GET | 指定日期统计（支持 mode=local/remote） |
+| `/api/history/dates/` | GET | 有数据的可用日期列表 |
+| `/api/history/sync/<date>/` | POST | 同步远程数据到本地 |
+
+### 图表与排行 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/dashboard/monthly-trend/` | GET | 当月每日总产量趋势 |
+| `/api/dashboard/process-compare/` | GET | 工序 × 生产线产量对比 |
+| `/api/dashboard/heatmap/` | GET | 工时 × 生产线热力图 |
+| `/api/dashboard/station-ranking/` | GET | 工站产量排行 |
+
+### 目标产量 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/dashboard/set-targets/` | POST | 设定员工日目标产量 |
 
 ### SSE实时推送
 
@@ -96,7 +111,7 @@ curl -X GET http://localhost:8000/api/dashboard/workorders/ \
 ### 获取历史数据
 
 ```bash
-curl -X GET http://localhost:8000/api/history/stats/2026-06-08/ \
+curl -X GET "http://localhost:8000/api/history/date/2026-06-08/?mode=local" \
   -H "Content-Type: application/json"
 ```
 
@@ -179,7 +194,7 @@ class IworkClient:
     
     def get_history_stats(self, date):
         """获取历史统计"""
-        response = requests.get(f"{self.base_url}/api/history/stats/{date}/")
+        response = requests.get(f"{self.base_url}/api/history/date/{date}/")
         return response.json()
 
 # 使用示例

@@ -1,51 +1,55 @@
 # iwork - 生产看板系统
 
-基于 Django 5.2 的生产流水线实时看板系统，支持多数据库连接和实时数据展示。
+基于 Django 5.2 的生产流水线实时看板系统，支持双数据库架构、SSE 实时推送和历史数据回溯。
 
 ## 功能特性
 
 - 🔌 **双数据库架构**: Django 系统库 + 业务生产库分离
 - 🔒 **只读安全**: 业务数据库只读访问，防止误操作
-- 📊 **实时看板**: WebSocket 实时推送生产数据
+- 📊 **实时看板**: SSE 实时推送生产数据，每60秒自动刷新
 - 🔄 **数据核对**: 生产流水线打卡记录核对功能
-- ⏰ **定时任务**: Celery Beat 定时同步统计数据
+- 🎯 **目标管理**: 员工日产量目标设定与达标追踪
+- ⏰ **定时任务**: Celery Beat 定时同步统计数据到 Redis 缓存
 
 ## 技术栈
 
-- Python 3.14
+- Python 3.11.6
 - Django 5.2
-- Django Channels (WebSocket)
+- Uvicorn (ASGI 服务器，SSE 推送)
 - Celery + Celery Beat (定时任务)
-- Daphne (ASGI 服务器)
-- Redis (消息队列/缓存)
+- Redis (缓存层，SSE 数据源)
 - MySQL 8.0+
 - django-environ（环境变量管理）
+- Django REST Framework (API)
 
 ## 项目结构
 
 ```
 iwork/
 ├── docs/                          # 文档目录
-│   └── superpowers/
-│       ├── specs/                 # 设计文档
-│       └── plans/                 # 实施计划
+│   ├── 开发文档/                   # 开发规范与 API 文档
+│   └── 部署文档/                   # 部署运维文档
 ├── iwork/                         # Django 项目配置
 │   ├── .env                       # 环境变量（需创建）
 │   ├── .env.example               # 环境变量模板
 │   ├── database_router.py         # 数据库路由器
 │   ├── settings.py                # Django 配置
 │   ├── urls.py                    # URL 路由
+│   ├── history_urls.py            # 历史数据路由
 │   ├── asgi.py                    # ASGI 配置
 │   ├── celery.py                  # Celery 配置
-│   └── routing.py                 # WebSocket 路由
-├── src/                           # 源代码
-│   └── reconcile_data/            # 数据核对模块
+│   ├── api_views.py               # REST API 视图
+│   ├── queries.py                 # 业务查询（远程库）
+│   ├── local_queries.py           # 业务查询（本地库）
+│   ├── statistics.py              # 数据聚合统计
+│   └── forms.py                   # 表单定义
 ├── templates/
 │   └── iwork/
-│       └── dashboard.html         # 看板页面模板
+│       ├── dashboard.html         # 实时/历史看板页面
+│       ├── production_detail.html # 生产详情页面
+│       └── _header.html           # 共用导航栏
 ├── tests/                         # 测试目录
 │   ├── test_api_views.py          # API 测试
-│   ├── test_consumers.py          # WebSocket 测试
 │   ├── test_database_router.py    # 路由器测试
 │   ├── test_models.py             # 模型测试
 │   ├── test_statistics.py         # 统计测试
@@ -212,34 +216,48 @@ celery -A iwork worker -l info -P gevent
 celery -A iwork beat -l info
 ```
 
-#### 4. 启动 Daphne（ASGI 服务器）
+#### 4. 启动 Uvicorn（ASGI 服务器，含 SSE 推送）
 
 ```bash
-daphne -b 0.0.0.0 -p 8000 iwork.asgi:application
+uvicorn iwork.asgi:application --host 0.0.0.0 --port 8000
 ```
 
 ### 访问看板
 
-- **看板地址**: http://localhost:8000/dashboard/
-- **WebSocket 端点**: ws://localhost:8000/ws/dashboard/
+- **看板地址**: http://localhost:8000/
+- **历史看板**: http://localhost:8000/history/
+- **生产详情**: http://localhost:8000/production/detail-data/
+- **SSE 推送端点**: http://localhost:8000/api/dashboard/stream/
 
 ### API 接口
 
-| 接口                      | 方法 | 说明         |
-| ------------------------- | ---- | ------------ |
-| `/api/stats/realtime/`  | GET  | 实时统计数据 |
-| `/api/stats/hourly/`    | GET  | 小时统计     |
-| `/api/stats/flow/`      | GET  | 流水线效率   |
-| `/api/workorders/`      | GET  | 工单列表     |
-| `/api/workorders/{id}/` | GET  | 工单详情     |
+| 接口 | 方法 | 说明 |
+| ---- | ---- | ---- |
+| `/api/dashboard/realtime/` | GET | 实时统计数据 |
+| `/api/dashboard/hourly/` | GET | 每小时产量趋势 |
+| `/api/dashboard/processes/` | GET | 可用工序列表 |
+| `/api/dashboard/flow/<flow>/` | GET | 指定 Flow 汇总 |
+| `/api/dashboard/workorders/` | GET | 工单分页列表 |
+| `/api/dashboard/stream/` | GET | SSE 实时推送 |
+| `/api/dashboard/set-targets/` | POST | 设定员工日目标 |
+| `/api/dashboard/monthly-trend/` | GET | 月产量趋势 |
+| `/api/dashboard/process-compare/` | GET | 工序产量对比 |
+| `/api/dashboard/heatmap/` | GET | 时段热力图 |
+| `/api/dashboard/station-ranking/` | GET | 工站产量排行 |
+| `/api/dashboard/detail/flows/` | GET | 生产线概览 |
+| `/api/dashboard/detail/flow/<flow>/` | GET | 生产线员工明细 |
+| `/api/dashboard/detail/stepno/<stepno>/` | GET | 工序员工明细 |
+| `/api/history/date/<date>/` | GET | 历史日期数据 |
+| `/api/history/sync/<date>/` | POST | 远程数据同步 |
 
 ### 定时任务
 
 Celery Beat 配置：
 
-| 任务名                             | 间隔 | 说明             |
-| ---------------------------------- | ---- | ---------------- |
-| `sync-dashboard-stats-every-60s` | 60秒 | 同步看板统计数据 |
+| 任务名 | 间隔 | 说明 |
+| ------ | ---- | ---- |
+| `sync-dashboard-stats-every-60s` | 60秒 | 同步看板统计数据到 Redis 缓存（SSE 数据源） |
+| `sync-production-detail-stats-every-60s` | 60秒 | 同步生产详情统计数据到 Redis 缓存 |
 
 ### 一键启动脚本（PowerShell）
 
@@ -255,8 +273,8 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "celery -A iwork w
 # 启动 Celery Beat
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "celery -A iwork beat -l info"
 
-# 启动 Daphne
-daphne -b 0.0.0.0 -p 8000 iwork.asgi:application
+# 启动 Uvicorn（ASGI + SSE 推送）
+uvicorn iwork.asgi:application --host 0.0.0.0 --port 8000
 ```
 
 ## 数据库路由器
@@ -321,16 +339,21 @@ python scripts/export_pytckreg3.py --date 2026-04-21 --output D:\data.csv
 
 - [X] 创建 iwork app 业务模型
 - [X] 实现 Redis 缓存层
-- [X] 实现 WebSocket 实时推送
+- [X] 实现 SSE 实时推送（WebSocket → SSE 迁移完成）
 - [X] 创建生产看板前端页面
+- [X] 实现历史数据查询
+- [X] 实现生产详情模块（生产线/工序概览 → 员工明细）
+- [X] 实现目标产量管理与效率追踪
 - [ ] 添加用户权限分组（按流水线/班组）
 - [ ] 添加看板数据导出功能
-- [ ] 实现历史数据查询
 
 ## 文档
 
-- [数据库配置设计文档](docs/superpowers/specs/2026-04-21-database-config-design.md)
-- [数据库配置实施计划](docs/superpowers/plans/2026-04-21-database-config.md)
+- [开发规范手册](docs/开发文档/iwork规范手册.md)
+- [API 接口文档](docs/开发文档/API接口文档.md)
+- [API 接口清单](docs/部署文档/API接口清单.md)
+- [Docker 部署指南](docs/部署文档/docker-deployment.md)
+- [SSE 迁移数据流设计](docs/开发文档/SSE迁移数据流设计.md)
 
 ## 贡献指南
 

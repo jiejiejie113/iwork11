@@ -1,23 +1,24 @@
 # iWork 项目 API 接口文档
 
-> 最后更新：2026-05-15
+> 最后更新：2026-06-11
 
 ## 一、架构概览
 
 ```
 浏览器
-  ├── GET /                              → HTML 页面（实时看板 + WebSocket）
-  ├── GET /history/                      → HTML 页面（历史看板，无 WebSocket）
+  ├── GET /                              → HTML 页面（实时看板 + SSE 推送）
+  ├── GET /history/                      → HTML 页面（历史看板）
   ├── GET /production/detail-data/       → HTML 页面（生产详情模块）
   ├── GET /api/dashboard/*               → 实时数据 API（来源：api_views.py）
   ├── GET /api/history/*                 → 历史数据 API（来源：api_views_local.py）
   ├── POST /api/history/sync/*           → 同步触发
-  └── ws/dashboard/                      → WebSocket 双向通信
+  ├── GET /api/dashboard/stream/         → SSE 实时推送
+  └── POST /api/dashboard/set-targets/   → 目标产量设置
 
 Celery Beat (每 60s)
   ├── get_batch_stats()           → 工序聚合数据 → Redis 缓存
   ├── get_batch_detail_stats()    → Flow/StepNo 员工明细 → Redis 缓存
-  └── WebSocket 推送 dashboard_update → 浏览器
+  └── SSE 端点从 Redis 读取 → 推送 dashboard_update → 浏览器
 ```
 
 **数据源路由：**
@@ -38,7 +39,7 @@ Celery Beat (每 60s)
 ### `GET /`
 
 - **文件：** `iwork/views.py` → `dashboard()`
-- **说明：** 实时看板主页。渲染 `dashboard.html`，预填 Redis 缓存的实时统计数据，启用 WebSocket 连接。
+- **说明：** 实时看板主页。渲染 `dashboard.html`，预填 Redis 缓存的实时统计数据，启用 SSE 实时推送。
 - **参数：** 无
 
 ### `GET /history/`
@@ -288,26 +289,21 @@ Celery Beat (每 60s)
 
 ---
 
-## 六、WebSocket（`ws/dashboard/`）
+## 六、SSE 实时推送（`/api/dashboard/stream/`）
 
-- **Consumer：** `iwork/consumers.py` → `DashboardConsumer`（继承 `AsyncJsonWebsocketConsumer`）
-- **协议：** WebSocket（ASGI）
-- **Channel Group：** `"dashboard"`
+- **视图：** `iwork/api_views.py` → `dashboard_stream`
+- **协议：** Server-Sent Events（SSE，text/event-stream）
+- **数据源：** 从 Redis 缓存读取 Celery 预计算结果
+- **推送间隔：** 每 60 秒推送一次
 
-**服务端 → 客户端（推送）：**
+**服务端 → 客户端（推送事件）：**
 
-| 消息 type             | 说明                         |
-| --------------------- | ---------------------------- |
-| `dashboard_update`  | 实时数据更新（Celery 触发）  |
-| `targets_updated`   | 目标产量已保存（广播确认）   |
+| 事件类型 | 说明 |
+| -------- | ---- |
+| `dashboard_update` | 实时数据更新（Celery 写 Redis → SSE 读推送） |
+| `targets_updated` | 目标产量已保存（广播确认） |
 
-**客户端 → 服务端（接收）：**
-
-| 消息 type       | payload                                        | 说明               |
-| --------------- | ---------------------------------------------- | ------------------ |
-| `set_targets` | `{ "flow": "L01", "targets": {"1001": 100} }` | 保存员工目标产量   |
-
-`set_targets` 处理流程：接收 → 写入 Redis `targets:{date}:{flow}` → 广播 `targets_updated` → 所有在线客户端更新效率计算。
+**客户端：** 前端使用 `EventSource` 连接 `/api/dashboard/stream/`，收到 `dashboard_update` 后更新页面数据。
 
 ---
 
@@ -319,49 +315,40 @@ Celery Beat (每 60s)
   1. `get_batch_stats()` 一次性计算所有工序的 6 个维度统计数据
   2. `get_batch_detail_stats()` 并行计算 Flow/StepNo 员工明细
   3. `cache_batch_to_redis()` + `cache_detail_batch_to_redis()` 写入 Redis，TTL 到午夜
-  4. 通过 WebSocket 推送默认工序（70）给所有在线客户端
-- **重试：** 最多 3 次，间隔 10 秒
-
----
-
-## 六、Celery 定时任务
-
-- **任务：** `iwork/tasks.py` → `sync_dashboard_stats`
-- **调度：** 每 60 秒（`iwork/celery.py` 配置）
-- **流程：**
-  1. `get_batch_stats()` 一次性计算所有工序的 6 个维度统计数据
-  2. `cache_batch_to_redis()` 写入 Redis，TTL 到午夜
-  3. 通过 WebSocket 推送默认工序（70）给所有在线客户端
+  4. SSE 端点从 Redis 读取，推送给所有在线客户端
 - **重试：** 最多 3 次，间隔 10 秒
 
 ---
 
 ## 八、接口速查表
 
-| #  | 方法 | URL                                 | 视图函数              | 所属文件               | 关键参数                            |
-| -- | ---- | ----------------------------------- | --------------------- | ---------------------- | ----------------------------------- |
-| 1  | GET  | `/`                               | `dashboard`         | `views.py`           | -                                   |
-| 2  | GET  | `/history/`                       | `history_dashboard` | `views.py`           | -                                   |
-| 3  | GET  | `/api/dashboard/realtime/`        | `realtime_stats`    | `api_views.py`       | `stepno`                          |
-| 4  | GET  | `/api/dashboard/hourly/`          | `hourly_stats`      | `api_views.py`       | `date`, `stepno`                |
-| 5  | GET  | `/api/dashboard/flow/<name>/`     | `flow_stats`        | `api_views.py`       | -                                   |
-| 6  | GET  | `/api/dashboard/workorders/`      | `workorder_list`    | `api_views.py`       | `page`, `page_size`, `stepno` |
-| 7  | GET  | `/api/dashboard/workorders/<wo>/` | `workorder_detail`  | `api_views.py`       | `date`                            |
-| 8  | GET  | `/api/dashboard/monthly-trend/`   | `monthly_trend`     | `api_views.py`       | `date`, `stepno`                |
-| 9  | GET  | `/api/dashboard/process-compare/` | `process_compare`   | `api_views.py`       | `date`, `stepnos`               |
-| 10 | GET  | `/api/dashboard/heatmap/`         | `heatmap`           | `api_views.py`       | `date`, `stepno`                |
-| 11 | GET  | `/api/dashboard/station-ranking/` | `station_ranking`   | `api_views.py`       | `date`, `limit`, `stepno`     |
-| 12 | GET  | `/api/history/date/<date>/`       | `local_date_stats`  | `api_views_local.py` | `mode`, `stepno`                |
-| 13 | GET  | `/api/history/dates/`             | `available_dates`   | `api_views_local.py` | `mode`                            |
-| 14 | GET  | `/api/history/processes/`         | `process_list`      | `api_views_local.py` | `mode`, `date`                  |
-| 15 | POST | `/api/history/sync/<date>/`       | `sync_date`         | `api_views_local.py` | -                                   |
-| 16 | WS   | `ws/dashboard/`                            | `DashboardConsumer`      | `consumers.py`       | `set_targets`（客户端→服务端）  |
-| 17 | GET  | `/production/detail-data/`                | `production_detail`    | `views.py`           | -                                   |
-| 18 | GET  | `/production/detail-data/flow/<name>/`    | `production_detail_flow` | `views.py`           | -                                   |
-| 19 | GET  | `/production/detail-data/stepno/<n>/`     | `production_detail_stepno` | `views.py`           | -                                   |
-| 20 | GET  | `/api/dashboard/detail/flows/`            | `flow_overview`        | `api_views.py`       | `date`, `mode`                   |
-| 21 | GET  | `/api/dashboard/detail/flow/<name>/`      | `flow_detail`          | `api_views.py`       | `date`, `mode`                   |
-| 22 | GET  | `/api/dashboard/detail/stepno/<n>/`       | `stepno_detail`        | `api_views.py`       | `date`, `mode`                   |
+| # | 方法 | URL | 视图函数 | 所属文件 | 关键参数 |
+| -- | ---- | --- | -------- | -------- | -------- |
+| 1 | GET | `/` | `dashboard` | `views.py` | - |
+| 2 | GET | `/history/` | `history_dashboard` | `views.py` | - |
+| 3 | GET | `/api/dashboard/realtime/` | `realtime_stats` | `api_views.py` | `stepno` |
+| 4 | GET | `/api/dashboard/hourly/` | `hourly_stats` | `api_views.py` | `date`, `stepno` |
+| 5 | GET | `/api/dashboard/processes/` | `process_list` | `api_views.py` | - |
+| 6 | GET | `/api/dashboard/flow/<name>/` | `flow_stats` | `api_views.py` | - |
+| 7 | GET | `/api/dashboard/workorders/` | `workorder_list` | `api_views.py` | `page`, `page_size`, `stepno` |
+| 8 | GET | `/api/dashboard/workorders/<wo>/` | `workorder_detail` | `api_views.py` | `date` |
+| 9 | GET | `/api/dashboard/monthly-trend/` | `monthly_trend` | `api_views.py` | `date`, `stepno` |
+| 10 | GET | `/api/dashboard/process-compare/` | `process_compare` | `api_views.py` | `date`, `stepnos` |
+| 11 | GET | `/api/dashboard/heatmap/` | `heatmap` | `api_views.py` | `date`, `stepno` |
+| 12 | GET | `/api/dashboard/station-ranking/` | `station_ranking` | `api_views.py` | `date`, `limit`, `stepno` |
+| 13 | GET | `/api/dashboard/stream/` | `dashboard_stream` | `api_views.py` | SSE 实时推送 |
+| 14 | POST | `/api/dashboard/set-targets/` | `set_targets` | `api_views.py` | `targets` JSON body |
+| 15 | GET | `/api/history/date/<date>/` | `local_date_stats` | `api_views_local.py` | `mode`, `stepno` |
+| 16 | GET | `/api/history/dates/` | `available_dates` | `api_views_local.py` | `mode` |
+| 17 | GET | `/api/history/processes/` | `process_list` | `api_views_local.py` | `mode`, `date` |
+| 18 | POST | `/api/history/sync/<date>/` | `sync_date` | `api_views_local.py` | - |
+| 19 | GET | `/production/detail-data/` | `production_detail` | `views.py` | - |
+| 20 | GET | `/production/detail-data/flow/<name>/` | `production_detail_flow` | `views.py` | - |
+| 21 | GET | `/production/detail-data/stepno/<n>/` | `production_detail_stepno` | `views.py` | - |
+| 22 | GET | `/api/dashboard/detail/stepno-overview/` | `stepno_overview` | `api_views.py` | `date`, `mode` |
+| 23 | GET | `/api/dashboard/detail/flows/` | `flow_overview` | `api_views.py` | `date`, `mode` |
+| 24 | GET | `/api/dashboard/detail/flow/<name>/` | `flow_detail` | `api_views.py` | `date`, `mode` |
+| 25 | GET | `/api/dashboard/detail/stepno/<n>/` | `stepno_detail` | `api_views.py` | `date`, `mode` |
 
 ---
 
