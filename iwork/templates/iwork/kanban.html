@@ -377,7 +377,7 @@ createApp({
       filters.flows.forEach(f => params.append('flow', f));
       if (filters.reg_per_sys_id) params.set('reg_per_sys_id', filters.reg_per_sys_id);
       try {
-        const res = await fetch('/api/kanban/stats/?' + params.toString());
+        const res = await fetch(basePath + 'api/kanban/stats/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         Object.assign(stats, data);
@@ -392,7 +392,7 @@ createApp({
       filters.flows.forEach(f => params.append('flow', f));
       if (filters.reg_per_sys_id) params.set('reg_per_sys_id', filters.reg_per_sys_id);
       try {
-        const res = await fetch('/api/kanban/ranking/?' + params.toString());
+        const res = await fetch(basePath + 'api/kanban/ranking/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         ranking.workers = data.workers;
@@ -404,7 +404,7 @@ createApp({
       const params = new URLSearchParams({ date: date.value });
       filters.flows.forEach(f => params.append('flow', f));
       try {
-        const res = await fetch('/api/kanban/filter-options/?' + params.toString());
+        const res = await fetch(basePath + 'api/kanban/filter-options/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         filterOptions.stepnos = data.stepnos;
