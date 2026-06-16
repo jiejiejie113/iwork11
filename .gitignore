@@ -86,7 +86,10 @@ logs/
 static/
 
 # AI 工具
-.claude/
 .opencode/
 .superpowers/
-claude.md
+.claude/settings.local.json
+
+# 本地数据库文件
+*.sqlite3
+dump.rdb
