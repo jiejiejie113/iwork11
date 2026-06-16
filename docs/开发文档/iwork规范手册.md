@@ -239,3 +239,56 @@ const workorderItems = computed(() => {
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
 - [ ] **隐藏分组**：修改 `HIDDEN_FLOWS` → 更新本手册第 3 节
 - [ ] **重建容器**：`docker compose up -d --build iwork`
+
+---
+
+## 10. 产量看板模块
+
+> 新增于 2026-06-16
+
+### 10.1 架构
+
+| 文件 | 变更 |
+|------|------|
+| `iwork/queries.py` | 新增 `get_kanban_stats`、`get_kanban_ranking`、`get_kanban_filter_options`、`_apply_kanban_filters`、`_merge_worker_rows` |
+| `iwork/local_queries.py` | 镜像新增 5 个函数 |
+| `iwork/api_views.py` | 新增 `kanban_stats`、`kanban_ranking`、`kanban_filter_options`、`_parse_kanban_date` |
+| `iwork/urls.py` | 新增 4 条路由（页面 + 3 API） |
+| `iwork/views.py` | 新增 `kanban_page` |
+| `iwork/templates/iwork/kanban.html` | 产量看板页面（Vue 3 + Tailwind CDN） |
+| `iwork/templates/iwork/_header.html` | 添加"产量看板"标签 |
+| `iwork/settings.py` | 新增 `KANBAN_DEFAULT_STEPNO='70'`、`KANBAN_DEFAULT_PAGE_SIZE=50` |
+
+### 10.2 API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/kanban/` | 页面 |
+| GET | `/api/kanban/stats/` | 统计汇总（worker_count, total_production, avg_production, max_production, max_worker_name） |
+| GET | `/api/kanban/ranking/` | 排行榜分页列表（50条/页） |
+| GET | `/api/kanban/filter-options/` | 筛选项（stepnos, wrk_orders, flows, employees） |
+
+### 10.3 默认配置
+
+```python
+KANBAN_DEFAULT_STEPNO = '70'    # 默认工序
+KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
+```
+
+### 10.4 筛选器
+
+- **工序**：单选，默认 `'70'`
+- **款号**：单选，默认全部（空字符串）
+- **分组（Flow）**：多选下拉，默认全选（空数组）
+- **员工**：单选，默认全部（空字符串），Flow 变化时级联更新
+- **清空按钮**：恢复默认值（stepno='70'，其余全部）
+- **日期**：日期选择器，默认当天
+
+### 10.5 前端技术栈
+
+- Vue 3 CDN（分隔符 `{[` `]}`）
+- Tailwind CSS CDN（darkMode: 'class'）
+- 统计卡片数字滚动动画
+- 表格行滑入动画（rowIn）
+- 柱状图升起动画（barIn）
+- 排名 1/2/3 金银铜徽章
