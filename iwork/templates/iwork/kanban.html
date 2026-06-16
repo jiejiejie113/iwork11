@@ -324,7 +324,10 @@ const DropdownFilter = {
     const open = ref(false);
     const search = ref('');
 
-    function getKey(item) { return props.optionKey ? item[props.optionKey] : item; }
+    function getKey(item) {
+      const raw = props.optionKey ? item[props.optionKey] : item;
+      return String(raw);
+    }
     function getLabel(item) { return props.optionLabel ? item[props.optionLabel] : String(item); }
 
     const displayLabel = computed(() => {
