@@ -14,6 +14,37 @@ tailwind.config = {
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen overflow-x-hidden">
 
+<!-- dropdown-filter 组件模板 -->
+<template id="dropdownFilterTpl">
+  <div class="relative">
+    <div @click="open = !open"
+         class="bg-slate-700 border text-slate-100 text-sm px-3 py-2 rounded-lg cursor-pointer
+                flex items-center justify-between gap-2 min-w-[130px]"
+         :class="open ? 'border-blue-500 ring ring-blue-500/20' : 'border-slate-600'">
+      <span class="truncate" :class="{'text-slate-400': selected.length === 0}" v-text="displayLabel"></span>
+      <svg class="w-3 h-3 fill-slate-400 flex-shrink-0 transition-transform" :class="open ? 'rotate-180' : ''"
+           viewBox="0 0 12 12"><path d="M2 4l4 4 4-4"/></svg>
+    </div>
+    <div v-if="open" @click.stop
+         class="absolute top-full mt-1 left-0 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50"
+         style="min-width:220px">
+      <input v-model="search" placeholder="搜索..."
+             class="w-full bg-slate-600 border-b border-slate-500 text-slate-100 text-sm px-3 py-2
+                    rounded-t-lg focus:outline-none placeholder-slate-400">
+      <div class="max-h-52 overflow-y-auto">
+        <div v-for="item in displayOptions" :key="getKey(item)"
+             @click="toggle(item)"
+             class="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-600 cursor-pointer text-sm">
+          <input type="checkbox" :checked="selected.includes(getKey(item))"
+                 class="accent-blue-500 w-4 h-4 rounded pointer-events-none flex-shrink-0">
+          <span class="truncate" v-text="getLabel(item)"></span>
+        </div>
+        <div v-if="displayOptions.length === 0" class="px-3 py-4 text-slate-500 text-sm text-center">无匹配项</div>
+      </div>
+    </div>
+  </div>
+</template>
+
 <div id="kanbanApp">
   <!-- 背景光晕 -->
   <div class="fixed top-[-30%] left-[-10%] w-[60%] h-[60%] pointer-events-none z-0"
@@ -283,48 +314,21 @@ const DropdownFilter = {
     label: String,
     options: Array,
     selected: Array,
-    optionKey: { type: String, default: '' },   // 对象数组时取值用
-    optionLabel: { type: String, default: '' }, // 对象数组时显示用
+    optionKey: { type: String, default: '' },
+    optionLabel: { type: String, default: '' },
   },
   emits: ['toggle', 'change'],
-  template: `
-    <div class="relative">
-      <div @click="open = !open"
-           class="bg-slate-700 border text-slate-100 text-sm px-3 py-2 rounded-lg cursor-pointer
-                  flex items-center justify-between gap-2 min-w-[130px]"
-           :class="open ? 'border-blue-500 ring ring-blue-500/20' : 'border-slate-600'">
-        <span class="truncate" :class="{'text-slate-400': selected.length === 0}">
-          {[ selected.length ? label + '(' + selected.length + ')' : label ]}
-        </span>
-        <svg class="w-3 h-3 fill-slate-400 flex-shrink-0 transition-transform" :class="open ? 'rotate-180' : ''"
-             viewBox="0 0 12 12"><path d="M2 4l4 4 4-4"/></svg>
-      </div>
-      <div v-if="open" @click.stop
-           class="absolute top-full mt-1 left-0 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50"
-           style="min-width:220px">
-        <input v-model="search" placeholder="搜索..." @input="filtered"
-               class="w-full bg-slate-600 border-b border-slate-500 text-slate-100 text-sm px-3 py-2
-                      rounded-t-lg focus:outline-none placeholder-slate-400">
-        <div class="max-h-52 overflow-y-auto">
-          <div v-for="item in displayOptions" :key="getKey(item)"
-               @click="toggle(item)"
-               class="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-600 cursor-pointer text-sm">
-            <input type="checkbox" :checked="selected.includes(getKey(item))"
-                   class="accent-blue-500 w-4 h-4 rounded pointer-events-none flex-shrink-0">
-            <span class="truncate">{[ getLabel(item) ]}</span>
-          </div>
-          <div v-if="displayOptions.length === 0" class="px-3 py-4 text-slate-500 text-sm text-center">无匹配项</div>
-        </div>
-      </div>
-    </div>
-  `,
+  template: '#dropdownFilterTpl',
   setup(props, { emit }) {
     const open = ref(false);
     const search = ref('');
-    const filteredList = ref([]);
 
     function getKey(item) { return props.optionKey ? item[props.optionKey] : item; }
     function getLabel(item) { return props.optionLabel ? item[props.optionLabel] : String(item); }
+
+    const displayLabel = computed(() => {
+      return props.selected.length ? props.label + '(' + props.selected.length + ')' : props.label;
+    });
 
     const displayOptions = computed(() => {
       if (!search.value) return props.options;
@@ -332,9 +336,7 @@ const DropdownFilter = {
       return props.options.filter(item => getLabel(item).toLowerCase().includes(q));
     });
 
-    function toggle(item) {
-      emit('toggle', getKey(item));
-    }
+    function toggle(item) { emit('toggle', getKey(item)); }
 
     function close(e) {
       if (open.value && !e.target.closest('.relative')) {
@@ -346,7 +348,7 @@ const DropdownFilter = {
 
     onMounted(() => document.addEventListener('click', close));
 
-    return { open, search, displayOptions, getKey, getLabel, toggle };
+    return { open, search, displayLabel, displayOptions, getKey, getLabel, toggle };
   }
 };
 
