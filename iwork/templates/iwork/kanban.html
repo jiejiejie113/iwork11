@@ -7,8 +7,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
-    darkMode: 'class',
-    theme: { extend: { fontSize: { '2xs': '0.65rem' } } }
+    darkMode: 'class'
 }
 </script>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -33,7 +32,7 @@ tailwind.config = {
         <svg class="w-7 h-7 fill-slate-900" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
       </div>
       <div>
-        <h1 class="text-[28px] font-black tracking-wider leading-tight">
+        <h1 class="text-2xl font-bold tracking-wider leading-tight">
           流水线车间 · <span class="text-blue-400">产量看板</span>
         </h1>
       </div>
@@ -49,23 +48,23 @@ tailwind.config = {
     <div class="grid grid-cols-4 gap-4 mb-8 max-md:grid-cols-2 max-sm:grid-cols-1">
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 relative overflow-hidden">
         <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-transparent"></div>
-        <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">在岗工人数</div>
-        <div class="font-mono text-[28px] font-medium text-slate-100">{[ animatedStats.worker_count ]}</div>
+        <div class="text-sm text-slate-400 uppercase tracking-widest mb-2">在岗工人数</div>
+        <div class="font-mono text-3xl font-bold text-slate-100">{[ animatedStats.worker_count ]}</div>
       </div>
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 relative overflow-hidden">
         <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-transparent"></div>
-        <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">总产量</div>
-        <div class="font-mono text-[28px] font-medium text-slate-100">{[ animatedStats.total_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
+        <div class="text-sm text-slate-400 uppercase tracking-widest mb-2">总产量</div>
+        <div class="font-mono text-3xl font-bold text-slate-100">{[ animatedStats.total_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
       </div>
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 relative overflow-hidden">
         <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-transparent"></div>
-        <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">人均产量</div>
-        <div class="font-mono text-[28px] font-medium text-slate-100">{[ animatedStats.avg_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
+        <div class="text-sm text-slate-400 uppercase tracking-widest mb-2">人均产量</div>
+        <div class="font-mono text-3xl font-bold text-slate-100">{[ animatedStats.avg_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
       </div>
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 relative overflow-hidden">
         <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-transparent"></div>
-        <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">最高产量</div>
-        <div class="font-mono text-[28px] font-medium text-slate-100">{[ animatedStats.max_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
+        <div class="text-sm text-slate-400 uppercase tracking-widest mb-2">最高产量</div>
+        <div class="font-mono text-3xl font-bold text-slate-100">{[ animatedStats.max_production ]}<span class="text-sm text-slate-400 ml-1">件</span></div>
         <div class="text-xs text-slate-400 mt-1">{[ stats.max_worker_name ? '最高: ' + stats.max_worker_name : '' ]}</div>
       </div>
     </div>
@@ -74,14 +73,14 @@ tailwind.config = {
     <div class="flex items-center gap-4 mb-7 flex-wrap max-md:flex-col max-md:items-stretch">
       <!-- 日期 -->
       <div class="flex flex-col gap-1.5">
-        <label class="text-2xs text-slate-400 uppercase tracking-widest font-medium">日期</label>
+        <label class="text-xs text-slate-400 uppercase tracking-widest font-medium">日期</label>
         <input type="date" v-model="date" @change="onFilterChange"
                class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3.5 py-2.5 rounded-lg
                       focus:outline-none focus:border-blue-500 focus:ring focus:ring-blue-500/20 min-w-[160px]">
       </div>
       <!-- 工序 -->
       <div class="flex flex-col gap-1.5">
-        <label class="text-2xs text-slate-400 uppercase tracking-widest font-medium">工序筛选</label>
+        <label class="text-xs text-slate-400 uppercase tracking-widest font-medium">工序筛选</label>
         <select v-model="filters.stepno" @change="onFilterChange"
                 class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3.5 py-2.5 rounded-lg
                        focus:outline-none focus:border-blue-500 min-w-[140px] appearance-none
@@ -92,7 +91,7 @@ tailwind.config = {
       </div>
       <!-- 款号 -->
       <div class="flex flex-col gap-1.5">
-        <label class="text-2xs text-slate-400 uppercase tracking-widest font-medium">款号筛选</label>
+        <label class="text-xs text-slate-400 uppercase tracking-widest font-medium">款号筛选</label>
         <select v-model="filters.wrk_order" @change="onFilterChange"
                 class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3.5 py-2.5 rounded-lg
                        focus:outline-none focus:border-blue-500 min-w-[160px] appearance-none
@@ -103,7 +102,7 @@ tailwind.config = {
       </div>
       <!-- 分组（多选下拉） -->
       <div class="flex flex-col gap-1.5">
-        <label class="text-2xs text-slate-400 uppercase tracking-widest font-medium">分组筛选</label>
+        <label class="text-xs text-slate-400 uppercase tracking-widest font-medium">分组筛选</label>
         <div class="relative">
           <div @click="flowsOpen = !flowsOpen"
                class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3.5 py-2.5 rounded-lg
@@ -128,7 +127,7 @@ tailwind.config = {
       </div>
       <!-- 员工 -->
       <div class="flex flex-col gap-1.5">
-        <label class="text-2xs text-slate-400 uppercase tracking-widest font-medium">员工筛选</label>
+        <label class="text-xs text-slate-400 uppercase tracking-widest font-medium">员工筛选</label>
         <select v-model="filters.reg_per_sys_id" @change="onFilterChange"
                 class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3.5 py-2.5 rounded-lg
                        focus:outline-none focus:border-blue-500 min-w-[160px] appearance-none
@@ -157,7 +156,7 @@ tailwind.config = {
       <!-- 产量排行榜 -->
       <div class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
         <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 class="text-[15px] font-bold flex items-center gap-2.5">
+          <h2 class="text-lg font-semibold flex items-center gap-2.5">
             <span class="w-2 h-2 bg-blue-500 rounded-full"></span>产量排行榜
           </h2>
           <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
@@ -168,11 +167,11 @@ tailwind.config = {
           <table class="w-full border-collapse">
             <thead>
               <tr>
-                <th class="sticky top-0 bg-slate-700 text-2xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap w-[70px]">排名</th>
-                <th class="sticky top-0 bg-slate-700 text-2xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工人姓名</th>
-                <th class="sticky top-0 bg-slate-700 text-2xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工序</th>
-                <th class="sticky top-0 bg-slate-700 text-2xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">款号</th>
-                <th class="sticky top-0 bg-slate-700 text-2xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">日产量</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap w-[70px]">排名</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工人姓名</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工序</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">款号</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">日产量</th>
               </tr>
             </thead>
             <tbody>
@@ -188,12 +187,12 @@ tailwind.config = {
                   class="transition-colors hover:bg-slate-700"
                   :style="{ animation: `rowIn 0.35s ease ${i * 0.04}s both` }">
                 <td class="px-4 py-3.5 border-b border-slate-700">
-                  <span class="inline-flex items-center justify-center w-[30px] h-[30px] rounded-lg font-mono text-[13px] font-medium"
+                  <span class="inline-flex items-center justify-center w-[30px] h-[30px] rounded-lg font-mono text-xs font-medium"
                         :class="getRankClass(w.rank)">{[ w.rank ]}</span>
                 </td>
                 <td class="px-4 py-3.5 border-b border-slate-700">
                   <div class="flex items-center gap-2.5">
-                    <div class="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-bold bg-slate-600 border border-slate-500"
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-slate-600 border border-slate-500"
                          :style="{ color: getColor(i), borderColor: getColor(i) + '33' }">
                       {[ getInitial(w.worker_name) ]}
                     </div>
@@ -244,7 +243,7 @@ tailwind.config = {
       <!-- 产量分布图 -->
       <div class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
         <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 class="text-[15px] font-bold flex items-center gap-2.5">
+          <h2 class="text-lg font-semibold flex items-center gap-2.5">
             <span class="w-2 h-2 bg-blue-500 rounded-full"></span>产量分布图
           </h2>
           <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
@@ -261,7 +260,7 @@ tailwind.config = {
             <div v-for="(w, i) in ranking.workers" :key="'bar-' + w.reg_per_sys_id"
                  class="flex items-center gap-3"
                  :style="{ animation: `barIn 0.5s ease ${i * 0.06}s both` }">
-              <span class="w-[60px] text-[13px] text-right text-slate-400 flex-shrink-0 truncate">{[ w.worker_name ]}</span>
+              <span class="w-[60px] text-xs text-right text-slate-400 flex-shrink-0 truncate">{[ w.worker_name ]}</span>
               <div class="flex-1 h-8 bg-slate-700 rounded-md overflow-hidden relative">
                 <div class="h-full rounded-md flex items-center pl-3 transition-[width] duration-800 ease-in-out"
                      :style="{ width: (w.production / maxProduction * 100).toFixed(1) + '%',
