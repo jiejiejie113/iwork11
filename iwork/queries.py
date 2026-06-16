@@ -706,3 +706,255 @@ def get_batch_stepno_employees(target_date: date) -> dict:
         )
         result[stepno] = employees
     return result
+
+
+# ============================================================================
+# 产量看板模块查询函数
+# ============================================================================
+
+def _apply_kanban_filters(queryset, stepno=None, wrk_order=None,
+                          flows=None, reg_per_sys_id=None):
+    """产量看板通用筛选器（内部工具函数）
+
+    对 QuerySet 依次应用工序、款号、分组、员工筛选。
+    筛选逻辑：传入 None 或空值表示不过滤该维度。
+
+    Args:
+        queryset: Pytckreg3 QuerySet
+        stepno (str|None): 工序号，None 或 '' 表示不过滤
+        wrk_order (str|None): 款号，None 或 '' 表示不过滤
+        flows (list[str]|None): 分组列表，None 或 [] 表示不过滤
+        reg_per_sys_id (str|None): 员工ID，None 或 '' 表示不过滤
+
+    Returns:
+        QuerySet: 应用筛选后的 QuerySet
+    """
+    if stepno:
+        queryset = queryset.filter(StepNo=stepno)
+    if wrk_order:
+        queryset = queryset.filter(WrkOrder=wrk_order)
+    if flows:
+        queryset = queryset.filter(Flow__in=flows)
+    if reg_per_sys_id:
+        queryset = queryset.filter(RegPerSysID=reg_per_sys_id)
+    return queryset
+
+
+def _merge_worker_rows(rows):
+    """合并同一工人在不同 WrkOrder/Flow 下的记录
+
+    输入来自 ORM 四级分组查询：
+        [(RegPerSysID, StepNo, WrkOrder, Flow, qty), ...]
+    输出按工人合并后的列表。
+
+    合并逻辑：
+        - production = SUM(所有 qty)
+        - stepno/wrk_order/flow = 取 qty 最大的那条记录的值
+        - worker_name = str(reg_per_sys_id)
+
+    Args:
+        rows (list[dict]): ORM values() 返回的行列表
+
+    Returns:
+        list[dict]: 合并后的工人列表
+    """
+    from collections import OrderedDict
+
+    worker_map = OrderedDict()
+    for r in rows:
+        eid = r['RegPerSysID']
+        qty = r['qty'] or 0
+        if eid not in worker_map:
+            worker_map[eid] = {
+                'reg_per_sys_id': eid,
+                'worker_name': str(eid),
+                'production': 0,
+                'best_qty': 0,
+                'stepno': r['StepNo'],
+                'wrk_order': r['WrkOrder'] or '',
+                'flow': r['Flow'] or '',
+            }
+        entry = worker_map[eid]
+        entry['production'] += qty
+        # 取产量最大的那条记录的主字段
+        if qty > entry['best_qty']:
+            entry['best_qty'] = qty
+            entry['stepno'] = r['StepNo']
+            entry['wrk_order'] = r['WrkOrder'] or ''
+            entry['flow'] = r['Flow'] or ''
+
+    result = []
+    for eid, entry in worker_map.items():
+        result.append({
+            'reg_per_sys_id': entry['reg_per_sys_id'],
+            'worker_name': entry['worker_name'],
+            'stepno': entry['stepno'],
+            'wrk_order': entry['wrk_order'],
+            'flow': entry['flow'],
+            'production': entry['production'],
+        })
+    return result
+
+
+def get_kanban_stats(target_date, stepno=None, wrk_order=None,
+                     flows=None, reg_per_sys_id=None):
+    """产量看板统计汇总
+
+    按工人聚合产量后，计算工人数、总产、人均、最高产。
+
+    Args:
+        target_date (date): 查询日期
+        stepno (str|None): 工序筛选
+        wrk_order (str|None): 款号筛选
+        flows (list[str]|None): 分组筛选（多选）
+        reg_per_sys_id (str|None): 员工筛选
+
+    Returns:
+        dict: {worker_count, total_production, avg_production, max_production, max_worker_name}
+    """
+    from django.db.models import Sum, Count, Max
+
+    records = get_records_queryset(target_date)
+    records = _apply_kanban_filters(records, stepno, wrk_order, flows, reg_per_sys_id)
+
+    # 按工人聚合产量
+    worker_qs = records.values('RegPerSysID').annotate(production=Sum('Qty'))
+
+    # 二次聚合
+    agg = worker_qs.aggregate(
+        worker_count=Count('RegPerSysID'),
+        total_production=Sum('production'),
+        max_production=Max('production'),
+    )
+
+    count = agg['worker_count'] or 0
+    total = agg['total_production'] or 0
+    max_qty = agg['max_production'] or 0
+
+    # 找最高产工人
+    max_worker = worker_qs.order_by('-production').first()
+    max_name = str(max_worker['RegPerSysID']) if max_worker else ''
+
+    return {
+        'worker_count': count,
+        'total_production': total,
+        'avg_production': round(total / count) if count else 0,
+        'max_production': max_qty,
+        'max_worker_name': max_name,
+    }
+
+
+def get_kanban_ranking(target_date, stepno=None, wrk_order=None,
+                       flows=None, reg_per_sys_id=None,
+                       page=1, page_size=50):
+    """产量看板排行榜
+
+    按工人聚合产量，取主要工序/款号/分组，分页返回。
+
+    Args:
+        target_date (date): 查询日期
+        stepno (str|None): 工序筛选
+        wrk_order (str|None): 款号筛选
+        flows (list[str]|None): 分组筛选（多选）
+        reg_per_sys_id (str|None): 员工筛选
+        page (int): 页码（从1开始）
+        page_size (int): 每页条数，默认50
+
+    Returns:
+        dict: {pagination: {page, page_size, total_pages, total_count},
+               workers: [{rank, reg_per_sys_id, worker_name, stepno, wrk_order, flow, production}]}
+    """
+    from django.db.models import Sum
+
+    records = get_records_queryset(target_date)
+    records = _apply_kanban_filters(records, stepno, wrk_order, flows, reg_per_sys_id)
+
+    # 四级分组：按工人+工序+款号+Flow
+    rows = list(
+        records.values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
+        .annotate(qty=Sum('Qty'))
+        .order_by('RegPerSysID')
+    )
+
+    # Python 层合并同一工人多条记录
+    workers = _merge_worker_rows(rows)
+    # 按产量降序
+    workers.sort(key=lambda x: x['production'], reverse=True)
+
+    total = len(workers)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = (page - 1) * page_size
+    page_data = workers[start:start + page_size]
+
+    # 注入全局排名
+    for i, w in enumerate(page_data):
+        w['rank'] = start + i + 1
+
+    return {
+        'pagination': {
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages,
+            'total_count': total,
+        },
+        'workers': page_data,
+    }
+
+
+def get_kanban_filter_options(target_date, flows=None):
+    """产量看板筛选项
+
+    获取当天可用的工序、款号、分组、员工列表。
+
+    Args:
+        target_date (date): 查询日期
+        flows (list[str]|None): 分组筛选，用于级联员工列表
+
+    Returns:
+        dict: {stepnos, wrk_orders, flows, employees}
+    """
+    from django.db.models import Sum
+
+    records = get_records_queryset(target_date)
+
+    # 工序列表（按值升序）
+    stepnos = list(
+        records.values_list('StepNo', flat=True)
+        .distinct()
+        .order_by('StepNo')
+    )
+
+    # 款号列表（按值升序）
+    wrk_orders = list(
+        records.values_list('WrkOrder', flat=True)
+        .distinct()
+        .order_by('WrkOrder')
+    )
+
+    # 分组列表（非空，按值升序）
+    all_flows = list(
+        records.exclude(Flow='')
+        .values_list('Flow', flat=True)
+        .distinct()
+        .order_by('Flow')
+    )
+
+    # 员工列表（按 RegPerSysID 聚合，若传入 flows 则先筛选）
+    if flows:
+        records = records.filter(Flow__in=flows)
+    employee_qs = (
+        records.values('RegPerSysID')
+        .annotate(qty=Sum('Qty'))
+        .order_by('RegPerSysID')
+    )
+    employees = [
+        {'reg_per_sys_id': r['RegPerSysID'], 'name': str(r['RegPerSysID'])}
+        for r in employee_qs
+    ]
+
+    return {
+        'stepnos': stepnos,
+        'wrk_orders': wrk_orders,
+        'flows': all_flows,
+        'employees': employees,
+    }

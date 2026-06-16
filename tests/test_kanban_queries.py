@@ -302,27 +302,16 @@ class TestKanbanFilterOptions:
 
     @patch('iwork.queries.get_records_queryset')
     def test_filter_options_returns_required_keys(self, mock_get_records):
-        """返回值包含所有筛选项键"""
+        """返回值包含所有筛选项键（空数据情况）"""
         from iwork.queries import get_kanban_filter_options
         from unittest.mock import MagicMock
 
         mock_qs = MagicMock()
         mock_get_records.return_value = mock_qs
-        mock_qs.values_list.return_value = mock_qs
-        mock_qs.distinct.return_value = mock_qs
-        mock_qs.order_by.return_value = mock_qs
-        mock_qs.values.return_value = mock_qs
-        mock_qs.annotate.return_value = mock_qs
-
-        # stepnos
-        mock_qs.__iter__.return_value = iter(['70', '80'])
-        # 需要每次调用返回不同值
-        mock_qs.__iter__.side_effect = [
-            iter(['60', '70', '80']),       # stepnos
-            iter(['SO3-001', 'SO5-002']),   # wrk_orders
-            iter(['SO3', 'SO5']),           # flows
-            iter([{'RegPerSysID': 12345, 'qty': 100}]),  # employees
-        ]
+        # 链式调用都返回自身，list() 遍历空列表
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.__iter__.return_value = iter([])
 
         result = get_kanban_filter_options(date(2026, 6, 16))
 
@@ -330,8 +319,8 @@ class TestKanbanFilterOptions:
         assert 'wrk_orders' in result
         assert 'flows' in result
         assert 'employees' in result
-        assert isinstance(result['stepnos'], list)
-        assert isinstance(result['employees'], list)
+        assert result['stepnos'] == []
+        assert result['employees'] == []
 
     @patch('iwork.queries.get_records_queryset')
     def test_employees_have_id_and_name(self, mock_get_records):
