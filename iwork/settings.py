@@ -219,3 +219,7 @@ QUERY_TIMEOUT = 45
 
 # 月度统计缓存 TTL（30 天）
 MONTHLY_CACHE_TTL = 60 * 60 * 24 * 30
+
+# 产量看板默认配置
+KANBAN_DEFAULT_STEPNO = '70'       # 默认工序筛选值
+KANBAN_DEFAULT_PAGE_SIZE = 50      # 排行榜每页条数

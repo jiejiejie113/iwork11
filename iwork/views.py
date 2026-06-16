@@ -66,3 +66,12 @@ def production_detail_stepno(request, stepno):
         'detail_key': stepno,
     }
     return render(request, 'iwork/production_detail.html', context)
+
+
+@require_http_methods(['GET'])
+def kanban_page(request):
+    """产量看板页面"""
+    context = {
+        'page_title': 'Eastex生产看板 - 产量看板',
+    }
+    return render(request, 'iwork/kanban.html', context)

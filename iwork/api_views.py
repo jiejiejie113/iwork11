@@ -29,6 +29,9 @@ from iwork.queries import (
     get_batch_flow_hourly as remote_get_batch_flow_hourly,
     get_batch_flow_employees as remote_get_batch_flow_employees,
     get_batch_stepno_employees as remote_get_batch_stepno_employees,
+    get_kanban_stats as remote_get_kanban_stats,
+    get_kanban_ranking as remote_get_kanban_ranking,
+    get_kanban_filter_options as remote_get_kanban_filter_options,
 )
 from iwork.local_queries import (
     get_all_stepnos as local_get_all_stepnos,
@@ -36,6 +39,9 @@ from iwork.local_queries import (
     get_batch_flow_hourly as local_get_batch_flow_hourly,
     get_batch_flow_employees as local_get_batch_flow_employees,
     get_batch_stepno_employees as local_get_batch_stepno_employees,
+    get_kanban_stats as local_get_kanban_stats,
+    get_kanban_ranking as local_get_kanban_ranking,
+    get_kanban_filter_options as local_get_kanban_filter_options,
 )
 from iwork.local_models import TargetProduction
 
@@ -569,3 +575,133 @@ def set_targets(request):
     logger.info(f'目标产量已保存到 Redis: {key}')
 
     return Response({'status': 'ok', 'count': len(targets)})
+
+
+# ============================================================================
+# 产量看板 API
+# ============================================================================
+
+def _parse_kanban_date(request):
+    """解析产量看板日期参数，返回 (date对象, None) 或 (None, 错误Response)"""
+    params = getattr(request, 'query_params', request.GET)
+    date_str = params.get('date', '')
+    if not date_str:
+        return None, Response(
+            {'error': '缺少日期参数，格式为 YYYY-MM-DD'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    try:
+        return datetime.strptime(date_str, '%Y-%m-%d').date(), None
+    except ValueError:
+        return None, Response(
+            {'error': '日期格式错误，需为 YYYY-MM-DD'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['GET'])
+def kanban_stats(request):
+    """产量看板统计汇总 API
+
+    Query params:
+        date (str): YYYY-MM-DD（必填）
+        stepno (str): 工序号（选填，默认 '70'）
+        wrk_order (str): 款号（选填，不传=全部）
+        flow (str): 分组（选填，可多传）
+        reg_per_sys_id (str): 员工（选填）
+    """
+    target_date, err = _parse_kanban_date(request)
+    if err:
+        return err
+
+    params = request.query_params
+    stepno = params.get('stepno', '70') or None
+    wrk_order = params.get('wrk_order', '') or None
+    flows = params.getlist('flow') or None
+    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
+
+    try:
+        stats = remote_get_kanban_stats(
+            target_date, stepno=stepno, wrk_order=wrk_order,
+            flows=flows, reg_per_sys_id=reg_per_sys_id,
+        )
+        return Response(stats, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error('GET /api/kanban/stats/ 失败: {}', e)
+        return Response(
+            {'error': '获取统计数据失败'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def kanban_ranking(request):
+    """产量看板排行榜 API
+
+    Query params:
+        date (str): YYYY-MM-DD（必填）
+        stepno (str): 工序号（选填，默认 '70'）
+        wrk_order (str): 款号（选填）
+        flow (str): 分组（选填，可多传）
+        reg_per_sys_id (str): 员工（选填）
+        page (int): 页码（选填，默认 1）
+        page_size (int): 每页条数（选填，默认 50）
+    """
+    target_date, err = _parse_kanban_date(request)
+    if err:
+        return err
+
+    params = request.query_params
+    stepno = params.get('stepno', '70') or None
+    wrk_order = params.get('wrk_order', '') or None
+    flows = params.getlist('flow') or None
+    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
+
+    try:
+        page = int(params.get('page', 1))
+        page_size = int(params.get('page_size', 50))
+    except ValueError:
+        return Response(
+            {'error': 'page 和 page_size 需为整数'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        result = remote_get_kanban_ranking(
+            target_date, stepno=stepno, wrk_order=wrk_order,
+            flows=flows, reg_per_sys_id=reg_per_sys_id,
+            page=page, page_size=page_size,
+        )
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error('GET /api/kanban/ranking/ 失败: {}', e)
+        return Response(
+            {'error': '获取排行榜数据失败'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def kanban_filter_options(request):
+    """产量看板筛选项 API
+
+    Query params:
+        date (str): YYYY-MM-DD（必填）
+        flow (str): 分组（选填，多传时员工列表仅返回这些 Flow 下的员工）
+    """
+    target_date, err = _parse_kanban_date(request)
+    if err:
+        return err
+
+    params = request.query_params
+    flows = params.getlist('flow') or None
+
+    try:
+        options = remote_get_kanban_filter_options(target_date, flows=flows)
+        return Response(options, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error('GET /api/kanban/filter-options/ 失败: {}', e)
+        return Response(
+            {'error': '获取筛选项失败'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

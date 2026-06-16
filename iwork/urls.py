@@ -54,4 +54,10 @@ urlpatterns = [
     path("production/detail-data/", views.production_detail, name="production-detail"),
     path("production/detail-data/flow/<str:flow_name>/", views.production_detail_flow, name="production-detail-flow"),
     path("production/detail-data/stepno/<int:stepno>/", views.production_detail_stepno, name="production-detail-stepno"),
+
+    # 产量看板
+    path("kanban/", views.kanban_page, name="kanban-page"),
+    path("api/kanban/stats/", api_views.kanban_stats, name="kanban-stats"),
+    path("api/kanban/ranking/", api_views.kanban_ranking, name="kanban-ranking"),
+    path("api/kanban/filter-options/", api_views.kanban_filter_options, name="kanban-filter-options"),
 ]
