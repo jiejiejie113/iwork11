@@ -21,7 +21,7 @@ class TestApplyKanbanFilters:
         """None 和空字符串不触发过滤"""
         from iwork.queries import _apply_kanban_filters
         qs = Mock()
-        result = _apply_kanban_filters(qs, stepno=None, wrk_order='', flows=[], reg_per_sys_id=None)
+        result = _apply_kanban_filters(qs, stepnos=None, wrk_orders=[], flows=[], reg_per_sys_ids=None)
         assert result is qs
         qs.filter.assert_not_called()
 
@@ -29,15 +29,15 @@ class TestApplyKanbanFilters:
         """工序筛选正确添加 WHERE 条件"""
         from iwork.queries import _apply_kanban_filters
         qs = Mock()
-        _apply_kanban_filters(qs, stepno='70')
-        qs.filter.assert_called_once_with(StepNo='70')
+        _apply_kanban_filters(qs, stepnos=['70'])
+        qs.filter.assert_called_once_with(StepNo__in=['70'])
 
     def test_wrk_order_filter_applied(self):
         """款号筛选"""
         from iwork.queries import _apply_kanban_filters
         qs = Mock()
-        _apply_kanban_filters(qs, wrk_order='SO3-001')
-        qs.filter.assert_called_once_with(WrkOrder='SO3-001')
+        _apply_kanban_filters(qs, wrk_orders=['SO3-001'])
+        qs.filter.assert_called_once_with(WrkOrder__in=['SO3-001'])
 
     def test_flows_filter_applied(self):
         """分组多选筛选"""
@@ -50,8 +50,8 @@ class TestApplyKanbanFilters:
         """员工筛选"""
         from iwork.queries import _apply_kanban_filters
         qs = Mock()
-        _apply_kanban_filters(qs, reg_per_sys_id='12345')
-        qs.filter.assert_called_once_with(RegPerSysID='12345')
+        _apply_kanban_filters(qs, reg_per_sys_ids=['12345'])
+        qs.filter.assert_called_once_with(RegPerSysID__in=['12345'])
 
     def test_all_filters_chained(self):
         """组合筛选全部生效（链式调用）"""
@@ -59,8 +59,8 @@ class TestApplyKanbanFilters:
         qs = Mock()
         qs.filter.return_value = qs  # 链式调用
         _apply_kanban_filters(
-            qs, stepno='70', wrk_order='SO3-001',
-            flows=['SO3'], reg_per_sys_id='12345'
+            qs, stepnos=['70'], wrk_orders=['SO3-001'],
+            flows=['SO3'], reg_per_sys_ids=['12345']
         )
         assert qs.filter.call_count == 4
 
@@ -170,7 +170,7 @@ class TestKanbanStats:
         mock_worker_qs.order_by.return_value = mock_worker_qs
         mock_worker_qs.first.return_value = {'RegPerSysID': '99999'}
 
-        result = get_kanban_stats(date(2026, 6, 16), stepno='70')
+        result = get_kanban_stats(date(2026, 6, 16), stepnos=['70'])
 
         assert result['worker_count'] == 5
         assert result['total_production'] == 500
@@ -199,7 +199,7 @@ class TestKanbanStats:
         mock_worker_qs.order_by.return_value = mock_worker_qs
         mock_worker_qs.first.return_value = None
 
-        result = get_kanban_stats(date(2026, 6, 16), stepno='99999')
+        result = get_kanban_stats(date(2026, 6, 16), stepnos=['99999'])
 
         assert result['worker_count'] == 0
         assert result['total_production'] == 0
@@ -227,7 +227,7 @@ class TestKanbanRanking:
         mock_qs.__iter__.return_value = iter([])  # 空结果
         mock_merge.return_value = []
 
-        result = get_kanban_ranking(date(2026, 6, 16), stepno='70')
+        result = get_kanban_ranking(date(2026, 6, 16), stepnos=['70'])
 
         assert 'pagination' in result
         assert 'workers' in result
@@ -258,7 +258,7 @@ class TestKanbanRanking:
              'wrk_order': 'W2', 'flow': 'F2', 'production': 80},
         ]
 
-        result = get_kanban_ranking(date(2026, 6, 16), stepno='70')
+        result = get_kanban_ranking(date(2026, 6, 16), stepnos=['70'])
 
         assert result['workers'][0]['rank'] == 1
         assert result['workers'][1]['rank'] == 2
@@ -286,13 +286,13 @@ class TestKanbanRanking:
         mock_merge.return_value = workers
 
         # 第一页
-        result_p1 = get_kanban_ranking(date(2026, 6, 16), stepno='70', page=1, page_size=50)
+        result_p1 = get_kanban_ranking(date(2026, 6, 16), stepnos=['70'], page=1, page_size=50)
         assert len(result_p1['workers']) == 50
         assert result_p1['pagination']['total_pages'] == 2
         assert result_p1['pagination']['total_count'] == 55
 
         # 第二页
-        result_p2 = get_kanban_ranking(date(2026, 6, 16), stepno='70', page=2, page_size=50)
+        result_p2 = get_kanban_ranking(date(2026, 6, 16), stepnos=['70'], page=2, page_size=50)
         assert len(result_p2['workers']) == 5
         assert result_p2['workers'][0]['rank'] == 51
 

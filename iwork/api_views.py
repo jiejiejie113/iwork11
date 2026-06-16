@@ -605,25 +605,25 @@ def kanban_stats(request):
 
     Query params:
         date (str): YYYY-MM-DD（必填）
-        stepno (str): 工序号（选填，默认 '70'）
-        wrk_order (str): 款号（选填，不传=全部）
+        stepno (str): 工序号（选填，可多传，默认 ['70']）
+        wrk_order (str): 款号（选填，可多传）
         flow (str): 分组（选填，可多传）
-        reg_per_sys_id (str): 员工（选填）
+        reg_per_sys_id (str): 员工（选填，可多传）
     """
     target_date, err = _parse_kanban_date(request)
     if err:
         return err
 
     params = request.query_params
-    stepno = params.get('stepno', '70') or None
-    wrk_order = params.get('wrk_order', '') or None
+    stepnos = params.getlist('stepno') or ['70']
+    wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
-    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
+    reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
 
     try:
         stats = remote_get_kanban_stats(
-            target_date, stepno=stepno, wrk_order=wrk_order,
-            flows=flows, reg_per_sys_id=reg_per_sys_id,
+            target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+            flows=flows, reg_per_sys_ids=reg_per_sys_ids,
         )
         return Response(stats, status=status.HTTP_200_OK)
     except Exception as e:
@@ -640,10 +640,10 @@ def kanban_ranking(request):
 
     Query params:
         date (str): YYYY-MM-DD（必填）
-        stepno (str): 工序号（选填，默认 '70'）
-        wrk_order (str): 款号（选填）
+        stepno (str): 工序号（选填，可多传，默认 ['70']）
+        wrk_order (str): 款号（选填，可多传）
         flow (str): 分组（选填，可多传）
-        reg_per_sys_id (str): 员工（选填）
+        reg_per_sys_id (str): 员工（选填，可多传）
         page (int): 页码（选填，默认 1）
         page_size (int): 每页条数（选填，默认 50）
     """
@@ -652,10 +652,10 @@ def kanban_ranking(request):
         return err
 
     params = request.query_params
-    stepno = params.get('stepno', '70') or None
-    wrk_order = params.get('wrk_order', '') or None
+    stepnos = params.getlist('stepno') or ['70']
+    wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
-    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
+    reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
 
     try:
         page = int(params.get('page', 1))
@@ -668,8 +668,8 @@ def kanban_ranking(request):
 
     try:
         result = remote_get_kanban_ranking(
-            target_date, stepno=stepno, wrk_order=wrk_order,
-            flows=flows, reg_per_sys_id=reg_per_sys_id,
+            target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+            flows=flows, reg_per_sys_ids=reg_per_sys_ids,
             page=page, page_size=page_size,
         )
         return Response(result, status=status.HTTP_200_OK)
@@ -687,25 +687,25 @@ def kanban_filter_options(request):
 
     Query params:
         date (str): YYYY-MM-DD（必填）
-        stepno (str): 当前工序（选填，用于级联限定其他选项）
-        wrk_order (str): 当前款号（选填）
+        stepno (str): 当前工序（选填，可多传）
+        wrk_order (str): 当前款号（选填，可多传）
         flow (str): 当前分组（选填，可多传）
-        reg_per_sys_id (str): 当前员工（选填）
+        reg_per_sys_id (str): 当前员工（选填，可多传）
     """
     target_date, err = _parse_kanban_date(request)
     if err:
         return err
 
     params = request.query_params
-    stepno = params.get('stepno', '') or None
-    wrk_order = params.get('wrk_order', '') or None
+    stepnos = params.getlist('stepno') or None
+    wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
-    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
+    reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
 
     try:
         options = remote_get_kanban_filter_options(
-            target_date, stepno=stepno, wrk_order=wrk_order,
-            flows=flows, reg_per_sys_id=reg_per_sys_id,
+            target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+            flows=flows, reg_per_sys_ids=reg_per_sys_ids,
         )
         return Response(options, status=status.HTTP_200_OK)
     except Exception as e:

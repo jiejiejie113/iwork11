@@ -27,7 +27,7 @@ services:
 
   iwork:
     build: .
-    container_name: iwork-app
+    container_name: DKT_iwork
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -41,9 +41,19 @@ services:
       - ./logs:/app/logs
       - ./static:/app/static
     depends_on:
-      - mysql
-      - redis
+      mysql:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - default
+      - dkt-net
 
 volumes:
   mysql_data:
   redis_data:
+
+networks:
+  dkt-net:
+    external: true
+    name: docker_dkt-net

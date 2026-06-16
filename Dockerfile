@@ -33,4 +33,4 @@ RUN chmod +x /app/start.sh
 EXPOSE 8000
 
 # 启动命令
-CMD ["/app/start.sh"]
+CMD ["bash", "/app/start.sh"]

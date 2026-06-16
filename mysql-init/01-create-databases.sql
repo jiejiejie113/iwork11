@@ -13,7 +13,7 @@ CREATE DATABASE IF NOT EXISTS iwork_local
 
 -- 创建应用用户
 CREATE USER IF NOT EXISTS 'iwork_admin'@'%'
-  IDENTIFIED BY '<更换为应用数据库密码>';
+  IDENTIFIED BY 'iwork_db_pwd_2026';
 
 -- 授权
 GRANT ALL PRIVILEGES ON iwork_system.* TO 'iwork_admin'@'%';
