@@ -750,17 +750,30 @@ def get_kanban_ranking(target_date, stepno=None, wrk_order=None,
     }
 
 
-def get_kanban_filter_options(target_date, flows=None):
-    """产量看板筛选项（本地库）"""
+def get_kanban_filter_options(target_date, stepno=None, wrk_order=None,
+                              flows=None, reg_per_sys_id=None):
+    """产量看板筛选项（本地库，级联筛选）"""
     from django.db.models import Sum
-    records = get_records_queryset(target_date)
-    stepnos = list(records.values_list('StepNo', flat=True).distinct().order_by('StepNo'))
-    wrk_orders = list(records.values_list('WrkOrder', flat=True).distinct().order_by('WrkOrder'))
-    all_flows = list(records.exclude(Flow='').values_list('Flow', flat=True).distinct().order_by('Flow'))
-    if flows:
-        records = records.filter(Flow__in=flows)
+    base = get_records_queryset(target_date)
+
+    rec_s = _apply_kanban_filters(base, stepno=None, wrk_order=wrk_order,
+                                   flows=flows, reg_per_sys_id=reg_per_sys_id)
+    stepnos = list(rec_s.values_list('StepNo', flat=True).distinct().order_by('StepNo'))
+
+    rec_w = _apply_kanban_filters(base, stepno=stepno, wrk_order=None,
+                                   flows=flows, reg_per_sys_id=reg_per_sys_id)
+    wrk_orders = list(rec_w.values_list('WrkOrder', flat=True).distinct().order_by('WrkOrder'))
+
+    rec_f = _apply_kanban_filters(base, stepno=stepno, wrk_order=wrk_order,
+                                   flows=None, reg_per_sys_id=reg_per_sys_id)
+    all_flows = list(
+        rec_f.exclude(Flow='').values_list('Flow', flat=True).distinct().order_by('Flow')
+    )
+
+    rec_e = _apply_kanban_filters(base, stepno=stepno, wrk_order=wrk_order,
+                                   flows=flows, reg_per_sys_id=None)
     employee_qs = (
-        records.values('RegPerSysID')
+        rec_e.values('RegPerSysID')
         .annotate(qty=Sum('Qty'))
         .order_by('RegPerSysID')
     )

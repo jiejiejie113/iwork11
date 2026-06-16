@@ -683,21 +683,30 @@ def kanban_ranking(request):
 
 @api_view(['GET'])
 def kanban_filter_options(request):
-    """产量看板筛选项 API
+    """产量看板筛选项 API（级联筛选）
 
     Query params:
         date (str): YYYY-MM-DD（必填）
-        flow (str): 分组（选填，多传时员工列表仅返回这些 Flow 下的员工）
+        stepno (str): 当前工序（选填，用于级联限定其他选项）
+        wrk_order (str): 当前款号（选填）
+        flow (str): 当前分组（选填，可多传）
+        reg_per_sys_id (str): 当前员工（选填）
     """
     target_date, err = _parse_kanban_date(request)
     if err:
         return err
 
     params = request.query_params
+    stepno = params.get('stepno', '') or None
+    wrk_order = params.get('wrk_order', '') or None
     flows = params.getlist('flow') or None
+    reg_per_sys_id = params.get('reg_per_sys_id', '') or None
 
     try:
-        options = remote_get_kanban_filter_options(target_date, flows=flows)
+        options = remote_get_kanban_filter_options(
+            target_date, stepno=stepno, wrk_order=wrk_order,
+            flows=flows, reg_per_sys_id=reg_per_sys_id,
+        )
         return Response(options, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error('GET /api/kanban/filter-options/ 失败: {}', e)

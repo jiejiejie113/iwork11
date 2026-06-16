@@ -901,49 +901,55 @@ def get_kanban_ranking(target_date, stepno=None, wrk_order=None,
     }
 
 
-def get_kanban_filter_options(target_date, flows=None):
-    """产量看板筛选项
+def get_kanban_filter_options(target_date, stepno=None, wrk_order=None,
+                              flows=None, reg_per_sys_id=None):
+    """产量看板筛选项（级联筛选，类似 Excel 高级筛选）
 
-    获取当天可用的工序、款号、分组、员工列表。
+    每个下拉列表仅显示在当前其他筛选条件下有数据的选项：
+    - stepnos：受 wrk_order / flows / reg_per_sys_id 限制，不受 stepno 限制
+    - wrk_orders：受 stepno / flows / reg_per_sys_id 限制，不受 wrk_order 限制
+    - flows：受 stepno / wrk_order / reg_per_sys_id 限制，不受 flows 限制
+    - employees：受 stepno / wrk_order / flows 限制，不受 reg_per_sys_id 限制
 
     Args:
         target_date (date): 查询日期
-        flows (list[str]|None): 分组筛选，用于级联员工列表
+        stepno (str|None): 当前工序筛选
+        wrk_order (str|None): 当前款号筛选
+        flows (list[str]|None): 当前分组筛选
+        reg_per_sys_id (str|None): 当前员工筛选
 
     Returns:
         dict: {stepnos, wrk_orders, flows, employees}
     """
     from django.db.models import Sum
 
-    records = get_records_queryset(target_date)
+    base = get_records_queryset(target_date)
 
-    # 工序列表（按值升序）
-    stepnos = list(
-        records.values_list('StepNo', flat=True)
-        .distinct()
-        .order_by('StepNo')
-    )
+    # 工序列表：受 wrk_order / flows / reg_per_sys_id 限制
+    rec_s = _apply_kanban_filters(base, stepno=None, wrk_order=wrk_order,
+                                   flows=flows, reg_per_sys_id=reg_per_sys_id)
+    stepnos = list(rec_s.values_list('StepNo', flat=True).distinct().order_by('StepNo'))
 
-    # 款号列表（按值升序）
-    wrk_orders = list(
-        records.values_list('WrkOrder', flat=True)
-        .distinct()
-        .order_by('WrkOrder')
-    )
+    # 款号列表：受 stepno / flows / reg_per_sys_id 限制
+    rec_w = _apply_kanban_filters(base, stepno=stepno, wrk_order=None,
+                                   flows=flows, reg_per_sys_id=reg_per_sys_id)
+    wrk_orders = list(rec_w.values_list('WrkOrder', flat=True).distinct().order_by('WrkOrder'))
 
-    # 分组列表（非空，按值升序）
+    # 分组列表：受 stepno / wrk_order / reg_per_sys_id 限制
+    rec_f = _apply_kanban_filters(base, stepno=stepno, wrk_order=wrk_order,
+                                   flows=None, reg_per_sys_id=reg_per_sys_id)
     all_flows = list(
-        records.exclude(Flow='')
+        rec_f.exclude(Flow='')
         .values_list('Flow', flat=True)
         .distinct()
         .order_by('Flow')
     )
 
-    # 员工列表（按 RegPerSysID 聚合，若传入 flows 则先筛选）
-    if flows:
-        records = records.filter(Flow__in=flows)
+    # 员工列表：受 stepno / wrk_order / flows 限制
+    rec_e = _apply_kanban_filters(base, stepno=stepno, wrk_order=wrk_order,
+                                   flows=flows, reg_per_sys_id=None)
     employee_qs = (
-        records.values('RegPerSysID')
+        rec_e.values('RegPerSysID')
         .annotate(qty=Sum('Qty'))
         .order_by('RegPerSysID')
     )

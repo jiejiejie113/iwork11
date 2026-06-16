@@ -401,7 +401,11 @@ createApp({
 
     async function fetchFilterOptions() {
       const params = new URLSearchParams({ date: date.value });
+      // 级联筛选：传当前所有筛选值，后端自动排除各自对应的维度
+      if (filters.stepno) params.set('stepno', filters.stepno);
+      if (filters.wrk_order) params.set('wrk_order', filters.wrk_order);
       filters.flows.forEach(f => params.append('flow', f));
+      if (filters.reg_per_sys_id) params.set('reg_per_sys_id', filters.reg_per_sys_id);
       try {
         const res = await fetch(basePath + 'api/kanban/filter-options/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
