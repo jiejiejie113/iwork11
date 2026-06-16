@@ -651,6 +651,10 @@ def _apply_kanban_filters(queryset, stepnos=None, wrk_orders=None,
                           flows=None, reg_per_sys_ids=None):
     """产量看板通用筛选器（内部工具函数）"""
     if stepnos:
+        try:
+            stepnos = [int(s) for s in stepnos]
+        except (ValueError, TypeError):
+            pass
         queryset = queryset.filter(StepNo__in=stepnos)
     if wrk_orders:
         queryset = queryset.filter(WrkOrder__in=wrk_orders)
