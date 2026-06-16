@@ -16,8 +16,8 @@ tailwind.config = {
 
 <!-- dropdown-filter 组件模板 -->
 <template id="dropdownFilterTpl">
-  <div class="relative">
-    <div @click="open = !open"
+  <div ref="root" class="relative">
+    <div @click="toggleOpen"
          class="bg-slate-700 border text-slate-100 text-sm px-3 py-2 rounded-lg cursor-pointer
                 flex items-center justify-between gap-2 min-w-[130px]"
          :class="open ? 'border-blue-500 ring ring-blue-500/20' : 'border-slate-600'">
@@ -320,6 +320,7 @@ const DropdownFilter = {
   emits: ['toggle', 'change'],
   template: '#dropdownFilterTpl',
   setup(props, { emit }) {
+    const root = ref(null);
     const open = ref(false);
     const search = ref('');
 
@@ -336,19 +337,21 @@ const DropdownFilter = {
       return props.options.filter(item => getLabel(item).toLowerCase().includes(q));
     });
 
+    function toggleOpen() { open.value = !open.value; }
+
     function toggle(item) { emit('toggle', getKey(item)); }
 
-    function close(e) {
-      if (open.value && !e.target.closest('.relative')) {
+    function onClickOutside(e) {
+      if (open.value && root.value && !root.value.contains(e.target)) {
         open.value = false;
         emit('change');
         search.value = '';
       }
     }
 
-    onMounted(() => document.addEventListener('click', close));
+    onMounted(() => document.addEventListener('click', onClickOutside));
 
-    return { open, search, displayLabel, displayOptions, getKey, getLabel, toggle };
+    return { root, open, search, displayLabel, displayOptions, getKey, getLabel, toggleOpen, toggle };
   }
 };
 
