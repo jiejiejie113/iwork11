@@ -22,7 +22,12 @@ tailwind.config = {
 
   <div class="relative z-10 max-w-[1320px] mx-auto px-7 py-10 pb-20">
 
-    <!-- Header -->
+    <!-- 共用头部导航 -->
+    <header class="flex items-start justify-between mb-6 flex-wrap gap-4">
+      {% include 'iwork/_header.html' %}
+    </header>
+
+    <!-- 自定义 Header（标题 + 时钟）
     <div class="flex items-end gap-5 mb-11 pb-7 border-b border-slate-700">
       <div class="w-[52px] h-[52px] bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-[0_0_30px_rgba(59,130,246,0.3)]">
         <svg class="w-7 h-7 fill-slate-900" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
@@ -300,11 +305,20 @@ tailwind.config = {
 </style>
 
 <script>
+// 与 dashboard.html 一致的 basePath 逻辑
+(function() {
+  const _p = window.location.pathname;
+  window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
+})();
+
 const { createApp, ref, reactive, computed, onMounted } = Vue;
 
 createApp({
   delimiters: ['{[', ']}'],
   setup() {
+    const basePath = window.basePath;
+    const currentView = ref('kanban');
+
     const colors = [
       '#3b82f6','#22c55e','#ef4444','#8b5cf6','#ec4899',
       '#06b6d4','#84cc16','#f59e0b','#f97316','#6366f1',
@@ -468,6 +482,7 @@ createApp({
     });
 
     return {
+      basePath, currentView,
       clock, date, filters, filterOptions, stats, animatedStats, ranking,
       flowsOpen, maxProduction, filterBadgeText,
       getColor, getInitial, getRankClass,
