@@ -34,3 +34,9 @@ djangorestframework>=3.15.0
 
 # ASGI 服务器
 uvicorn[standard]>=0.34.0
+
+# GUI 桌面应用
+customtkinter>=5.2.0
+
+# 打包
+pyinstaller>=6.0.0
