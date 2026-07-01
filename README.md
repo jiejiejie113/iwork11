@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- 🔌 **双数据库架构**: Django 系统库 + 业务生产库分离
+- 🔌 **三数据库架构**: Django 系统库 + 业务生产库 + 本地业务库分离
 - 🔒 **只读安全**: 业务数据库只读访问，防止误操作
 - 📊 **实时看板**: SSE 实时推送生产数据，每60秒自动刷新
 - 🔄 **数据核对**: 生产流水线打卡记录核对功能
@@ -62,10 +62,11 @@ iwork/
 
 ## 数据库架构
 
-| 数据库别名  | 用途          | 位置         | 权限 |
-| ----------- | ------------- | ------------ | ---- |
-| `default` | Django 系统库 | localhost    | 读写 |
-| `iwork`   | 业务生产库    | 192.168.3.15 | 只读 |
+| 数据库别名      | 用途          | 位置            | 权限 |
+| --------------- | ------------- | --------------- | ---- |
+| `default`       | Django 系统库  | localhost       | 读写 |
+| `iwork`         | 业务生产库     | 192.168.3.15    | 只读 |
+| `iwork_local`   | 本地业务库     | localhost       | 读写 |
 
 ### 业务数据表
 
@@ -168,6 +169,27 @@ python manage.py runserver
 ```
 
 访问 http://localhost:8000
+
+## Docker 快速启动
+
+```bash
+# 启动所有服务（MySQL + Redis + Django）
+docker compose up -d --build
+
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f django
+
+# 执行数据库迁移
+docker compose exec django python manage.py migrate
+
+# 进入容器
+docker compose exec django bash
+```
+
+> 生产环境通过 Portal 的 `docker-compose.keycloak.yml`（`D:\DM\DTD_nginx\docker\`）统一编排，容器名 `DKT_iwork`。
 
 ## 生产看板启动指南
 
