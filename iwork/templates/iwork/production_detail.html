@@ -75,8 +75,7 @@
         {% include 'iwork/_header.html' %}
         <input v-if="currentView === 'overview'" v-model="searchQuery" placeholder="搜索员工ID..."
             class="flex-1 min-w-[120px] max-w-[200px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
-        <input v-if="currentView === 'overview'" type="date" v-model="selectedDate" @change="loadOverview"
-            class="bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
+
         <div v-if="currentView === 'overview'" class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
             <button @click="groupMode = 'flow'; loadOverview()"
                 :class="groupMode === 'flow' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"

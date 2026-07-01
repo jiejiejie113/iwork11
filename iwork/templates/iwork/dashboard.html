@@ -519,13 +519,13 @@ createApp({
                 if (currentView.value === 'realtime') {
                     currentHour.value = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false }));
                     const hourlyForStep = (data.monthly_hourly_stats || [])
-                        .filter(s => s.step === stepnoFilter.value && s.hour <= currentHour.value);
+                        .filter(s => s.step === stepnoFilter.value && s.hour <= currentHour.value + 1);
                     const lineData = mpDates.map(d => {
                         const dayHours = hourlyForStep.filter(s => s.date === d);
                         return dayHours.length > 0 ? dayHours.reduce((sum, s) => sum + s.qty, 0) : null;
                     });
                     mpDatasets.push({
-                        label: `工序${stepnoFilter.value} 累积至第${currentHour.value}小时`,
+                        label: `工序${stepnoFilter.value} 累积至第${currentHour.value + 1}小时`,
                         data: lineData,
                         type: 'line',
                         borderColor: '#22c55e',

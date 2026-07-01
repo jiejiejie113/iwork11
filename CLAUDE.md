@@ -51,15 +51,27 @@ queries.py          ← 远程数据库查询（iwork 只读）
 local_queries.py    ← 本地数据库查询（iwork_local 读写），与 queries.py 函数签名镜像
 statistics.py       ← 缓存编排层：批量构建 + Redis 读写 + 回退逻辑
 sync.py             ← 远程→本地数据同步（逐日、逐条对比变更）
-tasks.py            ← Celery 定时任务：每 60s 批量构建统计 → Redis → WebSocket 推送
-consumers.py        ← WebSocket：dashboard 组广播 + 目标产量保存
+tasks.py            ← Celery 定时任务：每 60s 批量构建统计 → Redis → SSE 推送
 api_views.py        ← 实时看板 API + 生产详情 API
 api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同步 API
 ```
 
+## 认证架构
+
+本项目**不实现应用内认证**，完全依赖 Portal 层注入的认证信息：
+
+```
+用户 → Nginx (auth_request) → oauth2-proxy (OIDC 验证) → 注入 Remote-User header
+       → iwork TrustedProxyMiddleware (IP 校验) → Django request.user
+```
+
+- **TrustedProxyMiddleware** (`iwork/middleware.py`)：仅接受来自 Docker 内网 IP（172.x、10.x、192.168.x、127.x）的请求，外部请求直接返回 403。这是纵深防御的最后一层——即使 Nginx 的 Remote-* header 清理被误改，此中间件仍能阻止外部伪造请求到达应用层。
+- **不读取 Remote-User header**：iwork 采用"信任 Nginx 认证边界"策略，认证完全由 Nginx + oauth2-proxy + Keycloak 保证，应用层只做 IP 校验，不做用户身份解析。
+- **安全边界**：iwork 应用端口不对外暴露，仅通过 Nginx 反向代理访问。
+
 ### 数据流
 
-- **实时视图**：Celery Beat (60s) → `sync_dashboard_stats` → `get_batch_stats()`（6 线程并行）→ Redis → WebSocket push + API 读缓存
+- **实时视图**：Celery Beat (60s) → `sync_dashboard_stats` → `get_batch_stats()`（6 线程并行）→ Redis → SSE push + API 读缓存
 - **历史视图**：API 请求 → `statistics.get_date_stats()` → `queries.py` 直接查远程库（无缓存，每次实时查询）
 - **本地历史视图**：API 请求 → `statistics.get_local_date_stats()` → `local_queries.py` 查本地库
 - **数据同步**：`POST /api/history/sync/{date}/` → `sync_date_data()` → 逐条对比 → 新增/更新本地记录
@@ -167,13 +179,13 @@ celery -A iwork worker -l info -P eventlet
 # 3. 启动 Celery Beat（定时调度）
 celery -A iwork beat -l info
 
-# 4. 启动 Daphne（ASGI，支持 WebSocket）
-daphne -b 0.0.0.0 -p 8000 iwork.asgi:application
+# 4. 启动 Uvicorn（ASGI，支持 SSE 推送）
+uvicorn iwork.asgi:application --host 0.0.0.0 --port 8000
 ```
 
 ## 日志系统
 
-所有进程（Django / Celery / Channels）通过 `iwork/logger_config.py` 统一日志配置。
+所有进程（Django / Celery）通过 `iwork/logger_config.py` 统一日志配置。
 - 入口调用：`setup_logging('DJANGO')` / `'CELERY'` / `'CHANNELS'`
 - stdout：DEBUG 级别，格式 `时间 | 级别 | [组件名] | 消息`
 - 文件：`logs/all_YYYY-MM-DD.log`（保留 7 天）+ `logs/error_YYYY-MM-DD.log`（保留 30 天）

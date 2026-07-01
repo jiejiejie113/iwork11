@@ -4,6 +4,8 @@
 
 本文档指导如何从 Windows 服务部署迁移到 Docker 部署。
 
+> **当前生产部署**: iwork 通过 Portal 的 `docker-compose.keycloak.yml`（位于 `D:\DM\DTD_nginx\docker\`）统一编排部署，容器名为 `DKT_iwork`，端口 8000，网络 `docker_dkt-net`。本文件适用于独立部署或开发环境。
+
 ## 前置条件
 
 - Docker Desktop 已安装并运行
@@ -46,10 +48,10 @@ docker compose logs -f django
 curl http://localhost:8000/
 
 # 检查 MySQL 连接
-docker compose exec mysql mysql -u root -p -e "SHOW DATABASES;"
+docker exec iwork-mysql mysql -u root -p -e "SHOW DATABASES;"
 
 # 检查 Redis 连接
-docker compose exec redis redis-cli ping
+docker exec iwork-redis redis-cli ping
 ```
 
 ### 4. 表结构迁移
@@ -93,22 +95,21 @@ server {
 
 ### 6. 停止旧服务
 
-如果之前使用 Windows 服务（NSSM），需要停止并删除：
+生产环境已迁移至 Docker（容器名 `DKT_iwork`），不再使用 NSSM Windows 服务。
+
+如果旧服务器上仍有 NSSM 服务残留，可用以下命令清理：
 
 ```powershell
-# 停止服务
-.\stop_services.ps1
+# 停止 NSSM 服务（如存在）
+Get-Service -Name "iwork-*" -ErrorAction SilentlyContinue | Stop-Service
 
-# 或手动停止
-nssm stop iwork-django
-nssm stop iwork-celery-worker
-nssm stop iwork-celery-beat
-
-# 删除服务
-nssm remove iwork-django confirm
-nssm remove iwork-celery-worker confirm
-nssm remove iwork-celery-beat confirm
+# 删除 NSSM 服务注册
+nssm remove iwork-django confirm 2>$null
+nssm remove iwork-celery-worker confirm 2>$null
+nssm remove iwork-celery-beat confirm 2>$null
 ```
+
+> 注意：当前生产环境通过 Portal 的 `docker-compose.keycloak.yml`（位于 `D:\DM\DTD_nginx\docker\`）统一编排部署，不再使用独立的 Windows 服务或独立的 docker-compose.yml。
 
 ## 常用命令
 
@@ -155,20 +156,20 @@ docker compose exec django env
 
 ```bash
 # 检查 MySQL 状态
-docker compose ps mysql
+docker ps --filter name=iwork-mysql
 
 # 测试连接
-docker compose exec mysql mysql -u root -p
+docker exec iwork-mysql mysql -u root -p
 ```
 
 ### Redis 连接失败
 
 ```bash
 # 检查 Redis 状态
-docker compose ps redis
+docker ps --filter name=iwork-redis
 
 # 测试连接
-docker compose exec redis redis-cli ping
+docker exec iwork-redis redis-cli ping
 ```
 
 ## 回滚方案
