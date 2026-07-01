@@ -3,23 +3,39 @@
     "PreToolUse": [
       {
         "matcher": "Bash\\(git push.*\\)",
-        "hook": "command",
-        "command": "echo 'BLOCKED: git push 被禁用。请通过 PR/MR 提交代码。' && exit 1"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'BLOCKED: git push 被禁用。请通过 PR/MR 提交代码。' && exit 1"
+          }
+        ]
       },
       {
         "matcher": "Bash\\(git reset --hard.*\\)",
-        "hook": "command",
-        "command": "echo 'BLOCKED: git reset --hard 被禁用。使用 git stash 或分支隔离。' && exit 1"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'BLOCKED: git reset --hard 被禁用。使用 git stash 或分支隔离。' && exit 1"
+          }
+        ]
       },
       {
         "matcher": "Bash\\(git clean -f.*\\)",
-        "hook": "command",
-        "command": "echo 'BLOCKED: git clean -f 被禁用。使用 git stash 代替。' && exit 1"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'BLOCKED: git clean -f 被禁用。使用 git stash 代替。' && exit 1"
+          }
+        ]
       },
       {
         "matcher": "Bash\\(git branch -D.*\\)",
-        "hook": "command",
-        "command": "echo 'WARNING: git branch -D 强制删除分支。确认要执行？' && exit 0"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'WARNING: git branch -D 强制删除分支。确认要执行？' && exit 0"
+          }
+        ]
       }
     ]
   },
@@ -62,8 +78,7 @@
       "Bash(d:/DM/Python代码/Seamus/iwork/.venv/Scripts/python.exe -c \"import redis; print\\('redis module:', redis.__version__\\); r=redis.Redis\\(host='127.0.0.1',port=6379,db=0,socket_connect_timeout=5,socket_keepalive=False\\); print\\('connect...'\\); print\\('PING:', r.ping\\(\\)\\)\")",
       "Bash(d:/DM/Python代码/Seamus/iwork/.venv/Scripts/python.exe --version)",
       "Bash(d:/DM/Python代码/Seamus/iwork/.venv/Scripts/python.exe -m pip install -r \"d:/DM/Python代码/Seamus/iwork/requirements.txt\" -i https://pypi.tuna.tsinghua.edu.cn/simple)",
-      "Bash(powershell -Command \"Get-ChildItem 'd:\\\\DM\\\\Python代码\\\\Seamus\\\\iwork\\\\logs\\\\' | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize\")",
-      "Bash(git checkout *)"
+      "Bash(powershell -Command \"Get-ChildItem 'd:\\\\DM\\\\Python代码\\\\Seamus\\\\iwork\\\\logs\\\\' | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize\")"
     ]
   }
 }
