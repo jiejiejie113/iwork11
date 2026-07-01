@@ -76,7 +76,16 @@ tailwind.config = {
     </div>
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-4 gap-4 mb-8 max-md:grid-cols-2 max-sm:grid-cols-1">
+    <div class="relative">
+      <!-- 加载蒙版 -->
+      <div v-if="loading" class="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm rounded-lg">
+        <div class="flex flex-col items-center gap-3">
+          <div class="loading-spinner"></div>
+          <span class="text-slate-300 text-sm">查 询 中...</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-4 gap-4 mb-8 max-md:grid-cols-2 max-sm:grid-cols-1">
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 relative overflow-hidden">
         <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-transparent"></div>
         <div class="text-sm text-slate-400 uppercase tracking-widest mb-2">在岗工人数</div>
@@ -103,30 +112,37 @@ tailwind.config = {
     <!-- Filters (Excel 风格) -->
     <div class="flex items-center gap-3 mb-4 flex-wrap max-md:flex-col max-md:items-stretch">
       <!-- 日期 -->
-      <input type="date" v-model="date" @change="onFilterChange"
+      <input type="date" v-model="date"
              class="bg-slate-700 border border-slate-600 text-slate-100 text-sm px-3 py-2 rounded-lg
                     focus:outline-none focus:border-blue-500 min-w-[150px]">
 
       <!-- 工序下拉 -->
       <dropdown-filter label="工序" :options="filterOptions.stepnos" :selected="filters.stepnos"
-                       @toggle="(v) => toggleFilter('stepnos', v)" @change="onFilterChange">
+                       @toggle="(v) => toggleFilter('stepnos', v)">
       </dropdown-filter>
 
       <!-- 款号下拉 -->
       <dropdown-filter label="款号" :options="filterOptions.wrk_orders" :selected="filters.wrk_orders"
-                       @toggle="(v) => toggleFilter('wrk_orders', v)" @change="onFilterChange">
+                       @toggle="(v) => toggleFilter('wrk_orders', v)">
       </dropdown-filter>
 
       <!-- 分组下拉 -->
       <dropdown-filter label="分组" :options="filterOptions.flows" :selected="filters.flows"
-                       @toggle="(v) => toggleFilter('flows', v)" @change="onFlowFilterChange">
+                       @toggle="(v) => toggleFilter('flows', v)">
       </dropdown-filter>
 
       <!-- 员工下拉 -->
       <dropdown-filter label="员工" :options="filterOptions.employees" :selected="filters.reg_per_sys_ids"
                        option-key="reg_per_sys_id" option-label="name"
-                       @toggle="(v) => toggleFilter('reg_per_sys_ids', v)" @change="onFilterChange">
+                       @toggle="(v) => toggleFilter('reg_per_sys_ids', v)">
       </dropdown-filter>
+
+      <!-- 查询 -->
+      <button @click="onFilterChange"
+              class="px-6 py-2 bg-blue-600 text-white text-sm rounded-lg
+                     hover:bg-blue-500 transition-colors self-end font-medium">
+        &#128269; 查询
+      </button>
 
       <!-- 清空 -->
       <button @click="clearFilters"
@@ -272,6 +288,7 @@ tailwind.config = {
       </div>
 
     </div>
+    </div>
   </div>
 </div>
 
@@ -279,6 +296,17 @@ tailwind.config = {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.loading-spinner {
+  width: 36px; height: 36px;
+  border: 3px solid rgba(59, 130, 246, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 @keyframes rowIn {
   from { opacity: 0; transform: translateX(-10px); }
@@ -382,6 +410,7 @@ const app = createApp({
 
     const clock = ref('');
     const date = ref(new Date().toISOString().slice(0, 10));
+    const loading = ref(false);
     const filters = reactive({
       stepnos: ['70'], wrk_orders: [], flows: [], reg_per_sys_ids: [],
     });
@@ -419,7 +448,6 @@ const app = createApp({
       const arr = filters[chip.field];
       const idx = arr.indexOf(chip.value);
       if (idx >= 0) arr.splice(idx, 1);
-      onFilterChange();
     }
 
     async function fetchStats() {
@@ -477,7 +505,16 @@ const app = createApp({
       else arr.push(value);
     }
 
-    function onFilterChange() { fetchStats(); fetchRanking(1); fetchFilterOptions(); }
+    async function queryData() {
+      loading.value = true;
+      try {
+        await Promise.all([fetchStats(), fetchRanking(1), fetchFilterOptions()]);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    function onFilterChange() { queryData(); }
 
     function onFlowFilterChange() {
       // Flow 变化后级联刷新员工列表，并清除不在范围内的员工
@@ -498,8 +535,7 @@ const app = createApp({
       filters.wrk_orders = [];
       filters.flows = [];
       filters.reg_per_sys_ids = [];
-      fetchFilterOptions();
-      onFilterChange();
+      queryData();
     }
 
     function animateStats(target) {
@@ -527,14 +563,12 @@ const app = createApp({
     onMounted(() => {
       updateClock();
       setInterval(updateClock, 1000);
-      fetchFilterOptions();
-      fetchStats();
-      fetchRanking(1);
+      queryData();
     });
 
     return {
       basePath, currentView,
-      clock, date, filters, filterOptions, stats, animatedStats, ranking,
+      clock, date, loading, filters, filterOptions, stats, animatedStats, ranking,
       maxProduction, activeFilterChips,
       getColor, getInitial, getRankClass,
       toggleFilter, removeChip, onFilterChange, onFlowFilterChange, onPageChange, clearFilters,
