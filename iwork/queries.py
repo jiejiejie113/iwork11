@@ -911,22 +911,28 @@ def get_kanban_filter_options(target_date, stepnos=None, wrk_orders=None,
 
     base = get_records_queryset(target_date)
 
-    rec_s = _apply_kanban_filters(base, stepnos=None, wrk_orders=wrk_orders,
-                                   flows=flows, reg_per_sys_ids=reg_per_sys_ids)
+    # 保存用户当前选择的筛选值（用于级联，避免被查询结果覆盖）
+    sel_stepnos = stepnos
+    sel_wrk_orders = wrk_orders
+    sel_flows = flows
+    sel_reg_per_sys_ids = reg_per_sys_ids
+
+    rec_s = _apply_kanban_filters(base, stepnos=None, wrk_orders=sel_wrk_orders,
+                                   flows=sel_flows, reg_per_sys_ids=sel_reg_per_sys_ids)
     stepnos = list(rec_s.values_list('StepNo', flat=True).distinct().order_by('StepNo'))
 
-    rec_w = _apply_kanban_filters(base, stepnos=stepnos, wrk_orders=None,
-                                   flows=flows, reg_per_sys_ids=reg_per_sys_ids)
+    rec_w = _apply_kanban_filters(base, stepnos=sel_stepnos, wrk_orders=None,
+                                   flows=sel_flows, reg_per_sys_ids=sel_reg_per_sys_ids)
     wrk_orders_list = list(rec_w.values_list('WrkOrder', flat=True).distinct().order_by('WrkOrder'))
 
-    rec_f = _apply_kanban_filters(base, stepnos=stepnos, wrk_orders=wrk_orders,
-                                   flows=None, reg_per_sys_ids=reg_per_sys_ids)
+    rec_f = _apply_kanban_filters(base, stepnos=sel_stepnos, wrk_orders=sel_wrk_orders,
+                                   flows=None, reg_per_sys_ids=sel_reg_per_sys_ids)
     all_flows = list(
         rec_f.exclude(Flow='').values_list('Flow', flat=True).distinct().order_by('Flow')
     )
 
-    rec_e = _apply_kanban_filters(base, stepnos=stepnos, wrk_orders=wrk_orders,
-                                   flows=flows, reg_per_sys_ids=None)
+    rec_e = _apply_kanban_filters(base, stepnos=sel_stepnos, wrk_orders=sel_wrk_orders,
+                                   flows=sel_flows, reg_per_sys_ids=None)
     employee_qs = (
         rec_e.values('RegPerSysID')
         .annotate(qty=Sum('Qty'))

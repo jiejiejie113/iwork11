@@ -141,7 +141,7 @@ tailwind.config = {
       <button @click="onFilterChange"
               class="px-6 py-2 bg-blue-600 text-white text-sm rounded-lg
                      hover:bg-blue-500 transition-colors self-end font-medium">
-        &#128269; 查询
+        查询
       </button>
 
       <!-- 清空 -->
@@ -495,6 +495,12 @@ const app = createApp({
         filterOptions.wrk_orders = data.wrk_orders;
         filterOptions.flows = data.flows;
         filterOptions.employees = data.employees;
+        // 清理不在可用选项中的已选值（日期切换后可能选项集变化）
+        filters.stepnos = filters.stepnos.filter(v => filterOptions.stepnos.includes(Number(v)));
+        filters.wrk_orders = filters.wrk_orders.filter(v => filterOptions.wrk_orders.includes(v));
+        filters.flows = filters.flows.filter(v => filterOptions.flows.includes(v));
+        const validEmpIds = new Set(filterOptions.employees.map(e => e.reg_per_sys_id));
+        filters.reg_per_sys_ids = filters.reg_per_sys_ids.filter(id => validEmpIds.has(id));
       } catch (e) { console.error('fetchFilterOptions 失败:', e); }
     }
 
