@@ -71,11 +71,26 @@ def get_db_config(host: str | None = None) -> dict:
     Args:
         host: 数据库主机地址，默认使用 IWORK_DB_HOST
     """
-    # 按优先级查找 .env：项目目录 > exe 同目录 > 当前目录
-    env_paths = [Path(__file__).parent.parent / "iwork" / ".env"]
+    # 按优先级查找专用 .env
     if getattr(sys, 'frozen', False):
-        env_paths.insert(0, Path(sys.executable).parent / ".env")
-    env_paths.append(Path.cwd() / ".env")
+        exe_dir = Path(sys.executable).parent
+        env_paths = [
+            exe_dir / "export.env",
+            Path.cwd() / "export.env",
+        ]
+        # 调试：写入日志文件确认路径
+        debug_log = exe_dir / "debug_paths.log"
+        with open(debug_log, "w", encoding="utf-8") as dl:
+            dl.write(f"sys.executable = {sys.executable}\n")
+            dl.write(f"Path.cwd() = {Path.cwd()}\n")
+            for i, p in enumerate(env_paths):
+                dl.write(f"env_paths[{i}] = {p} (exists={p.exists()})\n")
+    else:
+        env_paths = [
+            Path(__file__).parent / "export.env",
+            Path.cwd() / "export.env",
+            Path(__file__).parent.parent / "iwork" / ".env",
+        ]
 
     config = {}
     for env_path in env_paths:
@@ -128,10 +143,23 @@ def export_to_xlsx(
     filter_info = f" | StepNo in {stepno_filter}" if stepno_filter else ""
     logger.info(f"连接: {config['host']}/{config['database']} | 日期: {target_date}{filter_info}")
 
+    # 调试：记录连接信息（密码脱敏）
+    if getattr(sys, 'frozen', False):
+        exe_dir = Path(sys.executable).parent
+        with open(exe_dir / "debug_paths.log", "a", encoding="utf-8") as dl:
+            dl.write(f"\n--- export_to_xlsx ---\n")
+            dl.write(f"host={config['host']}, port={config['port']}, db={config['database']}\n")
+            dl.write(f"user={config['user']}, password={'***' if config['password'] else '(empty)'}\n")
+            dl.write(f"target_date={target_date}, stepno_filter={stepno_filter}\n")
+
     try:
         conn = pymysql.connect(**config, cursorclass=SSCursor)
     except pymysql.Error as e:
         logger.error(f"连接失败: {e}")
+        if getattr(sys, 'frozen', False):
+            exe_dir = Path(sys.executable).parent
+            with open(exe_dir / "debug_paths.log", "a", encoding="utf-8") as dl:
+                dl.write(f"CONNECTION FAILED: {e}\n")
         return 0
 
     try:
@@ -182,10 +210,18 @@ def export_to_xlsx(
             wb.save(output_file)
             wb.close()
             logger.success(f"导出完成: {output_file} ({count} 条)")
+            if getattr(sys, 'frozen', False):
+                exe_dir = Path(sys.executable).parent
+                with open(exe_dir / "debug_paths.log", "a", encoding="utf-8") as dl:
+                    dl.write(f"SUCCESS: {count} 条, file={output_file}\n")
             return count
 
     except pymysql.Error as e:
         logger.error(f"查询失败: {e}")
+        if getattr(sys, 'frozen', False):
+            exe_dir = Path(sys.executable).parent
+            with open(exe_dir / "debug_paths.log", "a", encoding="utf-8") as dl:
+                dl.write(f"QUERY FAILED: {e}\n")
         return 0
     finally:
         try:
@@ -196,8 +232,8 @@ def export_to_xlsx(
 
 def export_month_to_xlsx(
     target_month: str,
-    stepno_filter: list[int],
     output_dir: Path,
+    stepno_filter: list[int] | None = None,
     db_host: str | None = None,
     progress_callback: Callable[[int], None] | None = None,
     cancel_event: threading.Event | None = None,
@@ -220,7 +256,12 @@ def export_month_to_xlsx(
         int: 导出的总记录数（取消时为负数）
     """
     parts = target_month.split("-")
-    stepno_str = "_".join(str(s) for s in stepno_filter)
+    if stepno_filter:
+        stepno_str = "_".join(str(s) for s in stepno_filter)
+        file_suffix = f"_step{stepno_str}"
+    else:
+        stepno_str = "all"
+        file_suffix = ""
 
     if len(parts) == 3:
         target_date = datetime.strptime(target_month, "%Y-%m-%d").date()
@@ -230,7 +271,7 @@ def export_month_to_xlsx(
             target_date=target_date,
             output_dir=output_dir,
             stepno_filter=stepno_filter,
-            file_prefix=f"pytckreg3_{target_date.strftime('%Y%m%d')}_step{stepno_str}",
+            file_prefix=f"pytckreg3_{target_date.strftime('%Y%m%d')}{file_suffix}",
             db_host=db_host,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
@@ -249,7 +290,7 @@ def export_month_to_xlsx(
             conn = pymysql.connect(**config, cursorclass=SSCursor)
         except pymysql.Error as e:
             logger.error(f"连接失败: {e}")
-            return 0
+            raise
 
         try:
             with conn.cursor() as cursor:
@@ -264,7 +305,7 @@ def export_month_to_xlsx(
                 output_dir.mkdir(parents=True, exist_ok=True)
                 month_str = target_month.replace("-", "")
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = output_dir / f"pytckreg3_{month_str}_step{stepno_str}_{timestamp}.xlsx"
+                output_file = output_dir / f"pytckreg3_{month_str}{file_suffix}_{timestamp}.xlsx"
 
                 wb = Workbook(write_only=True)
                 ws = wb.create_sheet()
@@ -343,7 +384,7 @@ def main():
         export_to_xlsx(target_date, OUTPUT_DIR)
 
     elif MODE == "export_month":
-        export_month_to_xlsx(TARGET_MONTH, STEPNO_FILTER, OUTPUT_DIR)
+        export_month_to_xlsx(TARGET_MONTH, OUTPUT_DIR, STEPNO_FILTER)
 
     else:
         logger.error(f"未知模式: {MODE}，可选值: export_date / export_month")
