@@ -182,13 +182,14 @@ tailwind.config = {
                 <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap w-[70px]">排名</th>
                 <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工人姓名</th>
                 <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">工序</th>
+                <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">分组</th>
                 <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">款号</th>
                 <th class="sticky top-0 bg-slate-700 text-xs font-medium text-slate-400 uppercase tracking-widest px-4 py-3 text-left border-b border-slate-600 z-10 whitespace-nowrap">日产量</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="ranking.workers.length === 0">
-                <td colspan="5">
+                <td colspan="6">
                   <div class="flex flex-col items-center justify-center py-16 text-slate-500 gap-3">
                     <svg class="w-12 h-12 fill-slate-600" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
                     <p class="text-sm">没有匹配的工人数据</p>
@@ -203,19 +204,19 @@ tailwind.config = {
                         :class="getRankClass(w.rank)">{[ w.rank ]}</span>
                 </td>
                 <td class="px-4 py-3.5 border-b border-slate-700">
-                  <div class="flex items-center gap-2.5">
-                    <div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-slate-600 border border-slate-500"
-                         :style="{ color: getColor(i), borderColor: getColor(i) + '33' }">
-                      {[ getInitial(w.worker_name) ]}
-                    </div>
-                    <span class="font-medium text-sm">{[ w.worker_name ]}</span>
-                  </div>
+                  <span class="font-medium text-sm">{[ w.worker_name ]}</span>
                 </td>
                 <td class="px-4 py-3.5 border-b border-slate-700">
                   <span class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-slate-700 text-slate-400 border border-slate-600">{[ w.stepno ]}</span>
                 </td>
                 <td class="px-4 py-3.5 border-b border-slate-700">
-                  <span class="inline-block font-mono text-xs text-blue-400 bg-blue-600/10 px-2.5 py-0.5 rounded-full font-medium">{[ w.wrk_order ]}</span>
+                  <span class="text-xs text-slate-400">{[ w.flow ]}</span>
+                </td>
+                <td class="px-4 py-3.5 border-b border-slate-700">
+                  <div class="flex flex-wrap gap-1">
+                    <span v-for="wo in w.wrk_orders" :key="wo"
+                          class="inline-block font-mono text-xs text-blue-400 bg-blue-600/10 px-2.5 py-0.5 rounded-full font-medium">{[ wo ]}</span>
+                  </div>
                 </td>
                 <td class="px-4 py-3.5 border-b border-slate-700">
                   <div class="flex items-center gap-3 min-w-[200px]">
@@ -270,18 +271,33 @@ tailwind.config = {
           </div>
           <div v-else class="flex flex-col gap-2">
             <div v-for="(w, i) in ranking.workers" :key="'bar-' + w.reg_per_sys_id"
-                 class="flex items-center gap-3"
+                 class="group flex items-center gap-2.5 relative"
                  :style="{ animation: `barIn 0.5s ease ${i * 0.06}s both` }">
-              <span class="w-[60px] text-xs text-right text-slate-400 flex-shrink-0 truncate">{[ w.worker_name ]}</span>
-              <div class="flex-1 h-8 bg-slate-700 rounded-md overflow-hidden relative">
-                <div class="h-full rounded-md flex items-center pl-3 transition-[width] duration-800 ease-in-out"
-                     :style="{ width: (w.production / maxProduction * 100).toFixed(1) + '%',
-                               background: `linear-gradient(90deg, ${getColor(i)}, ${getColor(i)}88)` }">
-                  <span class="font-mono text-xs font-medium text-slate-900 whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity duration-300">
-                    {[ w.production ]}
-                  </span>
-                </div>
+              <!-- Hover 浮层 -->
+              <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20
+                          opacity-0 group-hover:opacity-100 transition-opacity duration-200
+                          pointer-events-none
+                          bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 shadow-xl
+                          flex items-center gap-1.5 whitespace-nowrap">
+                <span class="text-xs text-slate-300">{[ w.stepno ]} · {[ w.flow ]}</span>
+                <span v-for="wo in w.wrk_orders" :key="wo"
+                      class="font-mono text-xs text-blue-400 bg-blue-600/10 px-1.5 py-0.5 rounded-full">{[ wo ]}</span>
               </div>
+              <!-- 排名徽章 -->
+              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full font-mono text-[10px] font-bold flex-shrink-0"
+                    :class="getRankClass(w.rank)">{[ w.rank ]}</span>
+              <!-- 工人名 -->
+              <span class="text-xs text-slate-300 flex-shrink-0 w-[50px] text-left">{[ w.worker_name ]}</span>
+              <!-- 分组 -->
+              <span class="text-[10px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded flex-shrink-0 w-[72px] truncate text-center border border-slate-700" :title="w.flow">{[ w.flow ]}</span>
+              <!-- 柱状条 -->
+              <div class="flex-1 h-7 bg-slate-700 rounded-md overflow-hidden">
+                <div class="h-full rounded-md transition-[width] duration-800 ease-in-out"
+                     :style="{ width: (w.production / maxProduction * 100).toFixed(1) + '%',
+                               background: `linear-gradient(90deg, ${getColor(i)}, ${getColor(i)}88)` }"></div>
+              </div>
+              <!-- 产量数字 -->
+              <span class="font-mono text-sm font-medium text-white flex-shrink-0 w-[48px] text-right">{[ w.production ]}</span>
             </div>
           </div>
         </div>

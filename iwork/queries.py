@@ -752,7 +752,7 @@ def _merge_worker_rows(rows):
 
     合并逻辑：
         - production = SUM(所有 qty)
-        - stepno/wrk_order/flow = 取 qty 最大的那条记录的值
+        - stepno/wrk_order/flow = 收集所有不重复值，用"、"连接
         - worker_name = str(reg_per_sys_id)
 
     Args:
@@ -772,28 +772,26 @@ def _merge_worker_rows(rows):
                 'reg_per_sys_id': eid,
                 'worker_name': str(eid),
                 'production': 0,
-                'best_qty': 0,
-                'stepno': r['StepNo'],
-                'wrk_order': r['WrkOrder'] or '',
-                'flow': r['Flow'] or '',
+                'stepnos': set(),
+                'wrk_orders': set(),
+                'flows': set(),
             }
         entry = worker_map[eid]
         entry['production'] += qty
-        # 取产量最大的那条记录的主字段
-        if qty > entry['best_qty']:
-            entry['best_qty'] = qty
-            entry['stepno'] = r['StepNo']
-            entry['wrk_order'] = r['WrkOrder'] or ''
-            entry['flow'] = r['Flow'] or ''
+        entry['stepnos'].add(str(r['StepNo']))
+        if r['WrkOrder']:
+            entry['wrk_orders'].add(r['WrkOrder'])
+        if r['Flow']:
+            entry['flows'].add(r['Flow'])
 
     result = []
     for eid, entry in worker_map.items():
         result.append({
             'reg_per_sys_id': entry['reg_per_sys_id'],
             'worker_name': entry['worker_name'],
-            'stepno': entry['stepno'],
-            'wrk_order': entry['wrk_order'],
-            'flow': entry['flow'],
+            'stepno': '、'.join(sorted(entry['stepnos'])),
+            'wrk_orders': sorted(entry['wrk_orders']),
+            'flow': '、'.join(sorted(entry['flows'])),
             'production': entry['production'],
         })
     return result

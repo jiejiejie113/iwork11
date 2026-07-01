@@ -675,25 +675,24 @@ def _merge_worker_rows(rows):
         if eid not in worker_map:
             worker_map[eid] = {
                 'reg_per_sys_id': eid, 'worker_name': str(eid),
-                'production': 0, 'best_qty': 0,
-                'stepno': r['StepNo'], 'wrk_order': r['WrkOrder'] or '',
-                'flow': r['Flow'] or '',
+                'production': 0, 'stepnos': set(),
+                'wrk_orders': set(), 'flows': set(),
             }
         entry = worker_map[eid]
         entry['production'] += qty
-        if qty > entry['best_qty']:
-            entry['best_qty'] = qty
-            entry['stepno'] = r['StepNo']
-            entry['wrk_order'] = r['WrkOrder'] or ''
-            entry['flow'] = r['Flow'] or ''
+        entry['stepnos'].add(str(r['StepNo']))
+        if r['WrkOrder']:
+            entry['wrk_orders'].add(r['WrkOrder'])
+        if r['Flow']:
+            entry['flows'].add(r['Flow'])
     result = []
     for eid, entry in worker_map.items():
         result.append({
             'reg_per_sys_id': entry['reg_per_sys_id'],
             'worker_name': entry['worker_name'],
-            'stepno': entry['stepno'],
-            'wrk_order': entry['wrk_order'],
-            'flow': entry['flow'],
+            'stepno': '、'.join(sorted(entry['stepnos'])),
+            'wrk_orders': sorted(entry['wrk_orders']),
+            'flow': '、'.join(sorted(entry['flows'])),
             'production': entry['production'],
         })
     return result
