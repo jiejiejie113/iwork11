@@ -173,23 +173,27 @@ python manage.py runserver
 ## Docker 快速启动
 
 ```bash
-# 启动所有服务（MySQL + Redis + Django）
+# 1. 启动基础设施（MySQL + Redis），在 DTD_nginx/docker 目录下
+cd ../DTD_nginx/docker
+docker compose up -d mysql redis iwork-redis
+
+# 2. 启动 iwork 应用
+cd ../../iwork
+
+# 生产环境（默认读取 iwork/.env）
 docker compose up -d --build
 
-# 查看服务状态
-docker compose ps
+# 本地开发环境（读取 iwork/.env.local）
+docker compose --env-file .env.local up -d --build
 
-# 查看日志
-docker compose logs -f django
+# 3. 查看日志
+docker compose logs -f iwork
 
-# 执行数据库迁移
-docker compose exec django python manage.py migrate
-
-# 进入容器
-docker compose exec django bash
+# 4. 进入容器
+docker compose exec iwork bash
 ```
 
-> 生产环境通过 Portal 的 `docker-compose.keycloak.yml`（`D:\DM\DTD_nginx\docker\`）统一编排，容器名 `DKT_iwork`。
+> **分层架构说明**：MySQL（DKT_mysql）、Redis（DKT_redis）、iwork专用Redis（DKT_iwork_redis）由 DTD_nginx 基础设施 compose 统一管理。iwork 仅管理自己的应用容器（DKT_iwork），通过 `docker_dkt-net` 网络与基础设施通信。认证层（Keycloak + oauth2-proxy + Nginx）由 `docker-compose.keycloak.yml` 独立编排。
 
 ## 生产看板启动指南
 

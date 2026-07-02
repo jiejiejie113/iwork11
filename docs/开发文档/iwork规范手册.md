@@ -238,7 +238,7 @@ const workorderItems = computed(() => {
 - [ ] **图表变更**：字体/颜色/数据源 → 更新本手册第 6 节
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
 - [ ] **隐藏分组**：修改 `HIDDEN_FLOWS` → 更新本手册第 3 节
-- [ ] **重建容器**：`docker compose up -d --build iwork`
+- [ ] **重建容器**：`docker compose up -d --build`
 
 ---
 
