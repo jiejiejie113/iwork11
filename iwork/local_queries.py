@@ -699,11 +699,13 @@ def _merge_worker_rows(rows):
 
 
 def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
-                     flows=None, reg_per_sys_ids=None):
+                     flows=None, reg_per_sys_ids=None, show_all_flows=False):
     """产量看板统计汇总（本地库）"""
     from django.db.models import Sum, Count, Max
     records = get_records_queryset(target_date)
     records = _apply_kanban_filters(records, stepnos, wrk_orders, flows, reg_per_sys_ids)
+    if not show_all_flows:
+        records = records.exclude(Flow__in=settings.HIDDEN_FLOWS)
     worker_qs = records.values('RegPerSysID').annotate(production=Sum('Qty'))
     agg = worker_qs.aggregate(
         worker_count=Count('RegPerSysID'),
@@ -726,11 +728,13 @@ def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
 
 def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
                        flows=None, reg_per_sys_ids=None,
-                       page=1, page_size=50):
+                       page=1, page_size=50, show_all_flows=False):
     """产量看板排行榜（本地库）"""
     from django.db.models import Sum
     records = get_records_queryset(target_date)
     records = _apply_kanban_filters(records, stepnos, wrk_orders, flows, reg_per_sys_ids)
+    if not show_all_flows:
+        records = records.exclude(Flow__in=settings.HIDDEN_FLOWS)
     rows = list(
         records.values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
         .annotate(qty=Sum('Qty'))
@@ -754,10 +758,13 @@ def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
 
 
 def get_kanban_filter_options(target_date, stepnos=None, wrk_orders=None,
-                              flows=None, reg_per_sys_ids=None):
+                              flows=None, reg_per_sys_ids=None,
+                              show_all_flows=False):
     """产量看板筛选项（本地库，级联筛选）"""
     from django.db.models import Sum
     base = get_records_queryset(target_date)
+    if not show_all_flows:
+        base = base.exclude(Flow__in=settings.HIDDEN_FLOWS)
 
     rec_s = _apply_kanban_filters(base, stepnos=None, wrk_orders=wrk_orders,
                                    flows=flows, reg_per_sys_ids=reg_per_sys_ids)

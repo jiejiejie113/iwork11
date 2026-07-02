@@ -615,15 +615,17 @@ def kanban_stats(request):
         return err
 
     params = request.query_params
-    stepnos = params.getlist('stepno') or ['70']
+    stepnos = params.getlist('stepno') or None
     wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
     reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
+    show_all_flows = params.get('show_all_flows', 'false').lower() == 'true'
 
     try:
         stats = remote_get_kanban_stats(
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
+            show_all_flows=show_all_flows,
         )
         return Response(stats, status=status.HTTP_200_OK)
     except Exception as e:
@@ -652,10 +654,11 @@ def kanban_ranking(request):
         return err
 
     params = request.query_params
-    stepnos = params.getlist('stepno') or ['70']
+    stepnos = params.getlist('stepno') or None
     wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
     reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
+    show_all_flows = params.get('show_all_flows', 'false').lower() == 'true'
 
     try:
         page = int(params.get('page', 1))
@@ -671,6 +674,7 @@ def kanban_ranking(request):
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
             page=page, page_size=page_size,
+            show_all_flows=show_all_flows,
         )
         return Response(result, status=status.HTTP_200_OK)
     except Exception as e:
@@ -701,11 +705,13 @@ def kanban_filter_options(request):
     wrk_orders = params.getlist('wrk_order') or None
     flows = params.getlist('flow') or None
     reg_per_sys_ids = params.getlist('reg_per_sys_id') or None
+    show_all_flows = params.get('show_all_flows', 'false').lower() == 'true'
 
     try:
         options = remote_get_kanban_filter_options(
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
+            show_all_flows=show_all_flows,
         )
         return Response(options, status=status.HTTP_200_OK)
     except Exception as e:

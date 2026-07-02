@@ -150,6 +150,16 @@ tailwind.config = {
                      hover:border-red-500 hover:text-red-400 transition-colors self-end">
         &#10005; 清空
       </button>
+
+      <!-- 吊挂线开关 -->
+      <label class="flex items-center gap-2 self-end cursor-pointer select-none">
+        <span class="text-xs text-slate-400">吊挂线</span>
+        <div class="relative">
+          <input type="checkbox" v-model="showAllFlows" class="sr-only peer">
+          <div class="w-9 h-5 rounded-full bg-slate-600 peer-checked:bg-blue-600 transition-colors"></div>
+          <div class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform peer-checked:translate-x-4"></div>
+        </div>
+      </label>
     </div>
 
     <!-- 已选筛选标签 -->
@@ -427,6 +437,7 @@ const app = createApp({
     const clock = ref('');
     const date = ref(new Date().toISOString().slice(0, 10));
     const loading = ref(false);
+    const showAllFlows = ref(false);
     const filters = reactive({
       stepnos: ['70'], wrk_orders: [], flows: [], reg_per_sys_ids: [],
     });
@@ -472,6 +483,7 @@ const app = createApp({
       filters.wrk_orders.forEach(v => params.append('wrk_order', v));
       filters.flows.forEach(v => params.append('flow', v));
       filters.reg_per_sys_ids.forEach(v => params.append('reg_per_sys_id', v));
+      if (showAllFlows.value) params.append('show_all_flows', 'true');
       try {
         const res = await fetch(basePath + 'api/kanban/stats/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -487,6 +499,7 @@ const app = createApp({
       filters.wrk_orders.forEach(v => params.append('wrk_order', v));
       filters.flows.forEach(v => params.append('flow', v));
       filters.reg_per_sys_ids.forEach(v => params.append('reg_per_sys_id', v));
+      if (showAllFlows.value) params.append('show_all_flows', 'true');
       try {
         const res = await fetch(basePath + 'api/kanban/ranking/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -503,6 +516,7 @@ const app = createApp({
       filters.wrk_orders.forEach(v => params.append('wrk_order', v));
       filters.flows.forEach(v => params.append('flow', v));
       filters.reg_per_sys_ids.forEach(v => params.append('reg_per_sys_id', v));
+      if (showAllFlows.value) params.append('show_all_flows', 'true');
       try {
         const res = await fetch(basePath + 'api/kanban/filter-options/?' + params.toString());
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -590,7 +604,7 @@ const app = createApp({
 
     return {
       basePath, currentView,
-      clock, date, loading, filters, filterOptions, stats, animatedStats, ranking,
+      clock, date, loading, showAllFlows, filters, filterOptions, stats, animatedStats, ranking,
       maxProduction, activeFilterChips,
       getColor, getInitial, getRankClass,
       toggleFilter, removeChip, onFilterChange, onFlowFilterChange, onPageChange, clearFilters,

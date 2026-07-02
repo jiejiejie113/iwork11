@@ -798,7 +798,7 @@ def _merge_worker_rows(rows):
 
 
 def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
-                     flows=None, reg_per_sys_ids=None):
+                     flows=None, reg_per_sys_ids=None, show_all_flows=False):
     """产量看板统计汇总
 
     按工人聚合产量后，计算工人数、总产、人均、最高产。
@@ -809,6 +809,7 @@ def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
         wrk_orders (list[str]|None): 款号筛选（多选）
         flows (list[str]|None): 分组筛选（多选）
         reg_per_sys_ids (list[str]|None): 员工筛选（多选）
+        show_all_flows (bool): 是否显示全部 Flow（含隐藏分组），默认 False
 
     Returns:
         dict: {worker_count, total_production, avg_production, max_production, max_worker_name}
@@ -817,6 +818,8 @@ def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
 
     records = get_records_queryset(target_date)
     records = _apply_kanban_filters(records, stepnos, wrk_orders, flows, reg_per_sys_ids)
+    if not show_all_flows:
+        records = records.exclude(Flow__in=settings.HIDDEN_FLOWS)
 
     # 按工人聚合产量
     worker_qs = records.values('RegPerSysID').annotate(production=Sum('Qty'))
@@ -847,7 +850,7 @@ def get_kanban_stats(target_date, stepnos=None, wrk_orders=None,
 
 def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
                        flows=None, reg_per_sys_ids=None,
-                       page=1, page_size=50):
+                       page=1, page_size=50, show_all_flows=False):
     """产量看板排行榜
 
     按工人聚合产量，取主要工序/款号/分组，分页返回。
@@ -860,6 +863,7 @@ def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
         reg_per_sys_ids (list[str]|None): 员工筛选（多选）
         page (int): 页码（从1开始）
         page_size (int): 每页条数，默认50
+        show_all_flows (bool): 是否显示全部 Flow（含隐藏分组），默认 False
 
     Returns:
         dict: {pagination: {page, page_size, total_pages, total_count},
@@ -869,6 +873,8 @@ def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
 
     records = get_records_queryset(target_date)
     records = _apply_kanban_filters(records, stepnos, wrk_orders, flows, reg_per_sys_ids)
+    if not show_all_flows:
+        records = records.exclude(Flow__in=settings.HIDDEN_FLOWS)
 
     # 四级分组：按工人+工序+款号+Flow
     rows = list(
@@ -903,11 +909,14 @@ def get_kanban_ranking(target_date, stepnos=None, wrk_orders=None,
 
 
 def get_kanban_filter_options(target_date, stepnos=None, wrk_orders=None,
-                              flows=None, reg_per_sys_ids=None):
+                              flows=None, reg_per_sys_ids=None,
+                              show_all_flows=False):
     """产量看板筛选项（级联筛选，类似 Excel 高级筛选）"""
     from django.db.models import Sum
 
     base = get_records_queryset(target_date)
+    if not show_all_flows:
+        base = base.exclude(Flow__in=settings.HIDDEN_FLOWS)
 
     # 保存用户当前选择的筛选值（用于级联，避免被查询结果覆盖）
     sel_stepnos = stepnos
