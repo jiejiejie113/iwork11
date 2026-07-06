@@ -596,35 +596,19 @@ def set_targets(request):
 
     # 1. 保存工单级目标到数据库
     if wo_targets:
-        # 收集涉及的员工，先清除当日旧工单目标
-        emp_ids = set()
-        for key in wo_targets:
-            emp_id = key.split('@')[0]
-            emp_ids.add(emp_id)
-        TargetProduction.objects.filter(
-            target_date=today,
-            employee_id__in=list(emp_ids),
-        ).exclude(workorder='').delete()
-
-        # 批量写入工单目标
-        records = []
         for key, qty in wo_targets.items():
             parts = key.split('@', 1)
             if len(parts) != 2:
                 continue
             emp_id, workorder = parts
             qty_int = int(qty) if qty else 0
-            if qty_int <= 0:
-                continue
-            records.append(TargetProduction(
+            TargetProduction.objects.update_or_create(
                 target_date=today,
                 employee_id=str(emp_id),
                 workorder=workorder,
-                target_qty=qty_int,
-            ))
-        if records:
-            TargetProduction.objects.bulk_create(records)
-        logger.info(f'工单目标已保存: {len(records)} 条')
+                defaults={'target_qty': qty_int},
+            )
+        logger.info(f'工单目标已保存: {len(wo_targets)} 条')
 
         # 自动聚合计算员工总目标
         targets = {}

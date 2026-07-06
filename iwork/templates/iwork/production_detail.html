@@ -705,6 +705,7 @@ createApp({
             const map = {};
             (emp.steps || []).forEach(s => {
                 const wo = s.workorder || '无工单';
+                if (wrkOrderFilter.value && wo !== wrkOrderFilter.value) return;
                 map[wo] = (map[wo] || 0) + (s.qty || 0);
             });
             return Object.entries(map).sort((a, b) => b[1] - a[1]);
