@@ -287,6 +287,7 @@
                                     @click="sortBy('qty')">
                                     总产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
+                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工单</th>
                                 <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
                                 <th class="px-3 py-3 text-center sticky top-0 bg-slate-800 z-10">达标</th>
                                 <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">效率</th>
@@ -298,6 +299,13 @@
                                 <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
                                 <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
                                     {[ fmtNum(emp.qty) ]}
+                                </td>
+                                <td class="py-2 px-3 text-xs text-slate-400 max-w-[180px]">
+                                    <span v-for="(wo, idx) in getWorkorderItems(emp)" :key="wo[0]"
+                                          class="inline-block mr-1.5">
+                                        <span class="text-blue-400">{[ wo[0] ]}</span><span class="text-slate-500">({[ wo[1] ]}件)</span><span v-if="idx < getWorkorderItems(emp).length - 1">,</span>
+                                    </span>
+                                    <span v-if="getWorkorderItems(emp).length === 0" class="text-slate-600">--</span>
                                 </td>
                                 <td class="py-2 px-3">
                                     <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
@@ -318,7 +326,7 @@
                                 </td>
                             </tr>
                             <tr v-if="employeeSummary.length === 0">
-                                <td colspan="5" class="py-4 text-slate-500 text-center">暂无数据</td>
+                                <td colspan="6" class="py-4 text-slate-500 text-center">暂无数据</td>
                             </tr>
                         </tbody>
                     </table>
@@ -627,6 +635,16 @@ createApp({
                 if ((emp.workorders || []).includes(wrkOrderFilter.value)) return true;
                 return (emp.steps || []).some(s => s.workorder === wrkOrderFilter.value);
             });
+        }
+
+        // 获取员工的工单明细 [ [workorder, qty], ... ]
+        function getWorkorderItems(emp) {
+            const map = {};
+            (emp.steps || []).forEach(s => {
+                const wo = s.workorder || '无工单';
+                map[wo] = (map[wo] || 0) + (s.qty || 0);
+            });
+            return Object.entries(map).sort((a, b) => b[1] - a[1]);
         }
 
         // 工序汇总（左表数据源）
@@ -1118,7 +1136,7 @@ createApp({
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,
-            stepSummary, employeeSummary, filterByWorkOrder,
+            stepSummary, employeeSummary, filterByWorkOrder, getWorkorderItems,
             isEditing, draft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
