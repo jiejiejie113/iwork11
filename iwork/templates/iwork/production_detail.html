@@ -191,12 +191,13 @@
 
     <!-- ===== 详情页 ===== -->
     <div v-if="currentView === 'detail'" class="flex-1 flex flex-col overflow-hidden">
-        <!-- 面包屑 -->
-        <div class="flex-shrink-0 flex items-center gap-2 mb-4 text-sm">
+        <!-- 工具栏：面包屑 + 控件组（单行） -->
+        <div class="flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap text-sm">
+            <!-- 左侧：面包屑 -->
             <a :href="basePath + 'production/detail-data/'" class="text-blue-400 hover:underline">生产详情</a>
             <span class="text-slate-600">/</span>
             <span class="font-semibold">{[ detailTitle ]}</span>
-            <span class="ml-auto text-slate-400">
+            <span class="text-slate-400">
                 👤 {[ detailSummary.worker_count ]}人
                 <span v-if="detailSummary.target_total > 0">
                     · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
@@ -207,112 +208,122 @@
                     </span>
                 </span>
             </span>
-        </div>
 
-        <!-- Tab + 搜索 -->
-        <div class="flex-shrink-0 flex items-center gap-3 mb-4">
-            <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-                <button @click="detailLayout = 'table'"
-                    :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-3 py-1 rounded-md text-xs transition-colors">表格视图</button>
-                <button @click="detailLayout = 'cards'"
-                    :class="detailLayout === 'cards' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-3 py-1 rounded-md text-xs transition-colors">卡片视图</button>
+            <!-- 右侧：控件组 -->
+            <div class="flex items-center gap-3 ml-auto flex-wrap">
+                <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                    <button @click="detailLayout = 'table'"
+                        :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                        class="px-3 py-1 rounded-md text-xs transition-colors">表格视图</button>
+                    <button @click="detailLayout = 'cards'"
+                        :class="detailLayout === 'cards' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                        class="px-3 py-1 rounded-md text-xs transition-colors">卡片视图</button>
+                </div>
+                <select v-if="detailType === 'flow'" v-model="wrkOrderFilter"
+                        class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
+                    <option value="">全部工单</option>
+                    <option v-for="wo in workorderOptions" :key="wo" :value="wo">{[ wo ]}</option>
+                </select>
+                <input v-model="tableSearch" placeholder="搜索员工ID..."
+                    class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                <button v-if="detailLayout === 'table' && !isEditing" @click="startEditing"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
+                <button v-if="detailLayout === 'table' && isEditing" @click="cancelEditing"
+                    class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
+                <button v-if="detailLayout === 'table' && isEditing" @click="saveTargets"
+                    class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
             </div>
-            <input v-model="tableSearch" placeholder="搜索员工ID..."
-                class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-            <button v-if="detailLayout === 'table' && !isEditing" @click="startEditing"
-                class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
-            <button v-if="detailLayout === 'table' && isEditing" @click="cancelEditing"
-                class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
-            <button v-if="detailLayout === 'table' && isEditing" @click="saveTargets"
-                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
         </div>
 
-        <!-- ===== 版面1：表格视图 ===== -->
-        <div v-if="detailLayout === 'table'" class="bg-slate-800 border border-slate-700 rounded-lg flex-1 overflow-y-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="text-left text-slate-400 border-b border-slate-700">
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white whitespace-nowrap sticky left-0 top-0 bg-slate-800 z-30" @click="sortBy('reg_per_sys_id')">员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-slate-500 whitespace-nowrap sticky top-0 bg-slate-800 z-10">工单</th>
-                        <th v-if="detailType === 'flow'" v-for="(sn, i) in detailStepnos" :key="sn"
-                            class="px-3 py-3 text-center whitespace-nowrap cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
-                            @click="sortBy('stepno')">工序{[ sn ]} {[ sortKey === 'stepno' && i === 0 ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-else class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('qty')">实时产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th v-if="detailType === 'flow'" class="px-3 py-3 text-center text-slate-500 sticky top-0 bg-slate-800 z-10">合计</th>
-                        <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('efficiency')">达标 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                        <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10" @click="sortBy('efficiency')">效率 {[ sortKey === 'efficiency' ? (sortAsc ? '▲' : '▼') : '' ]}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr v-for="emp in filteredEmployees" :key="emp.reg_per_sys_id"
-                        class="border-b border-slate-700 group hover:bg-slate-700/50">
-                        <td class="py-2 px-3 text-slate-300 sticky left-0 bg-slate-800 group-hover:bg-slate-700/50 z-20">{[ emp.reg_per_sys_id ]}</td>
-                        <!-- Flow 详情：工单列 -->
-                        <td v-if="detailType === 'flow'" class="py-2 px-3 text-xs text-slate-400 max-w-[200px]">
-                            <span v-if="emp.workorders && emp.workorders.length > 0">{[ emp.workorders.join(', ') ]}</span>
-                            <span v-else class="text-slate-600">--</span>
-                        </td>
-                        <!-- Flow 详情：每工序一列 -->
-                        <td v-if="detailType === 'flow'" v-for="sn in detailStepnos" :key="sn"
-                            class="py-2 px-3 text-center tabular-nums"
-                            :class="getStepQty(emp, sn) > 0 ? 'text-emerald-400 font-bold' : 'text-slate-600'">
-                            {[ getStepQty(emp, sn) || '--' ]}
-                        </td>
-                        <!-- 工序详情：单一产量列 -->
-                        <td v-else class="py-2 px-3 text-emerald-400 font-bold tabular-nums">{[ fmtNum(emp.qty) ]}</td>
-                        <!-- Flow 详情：行合计 -->
-                        <td v-if="detailType === 'flow'" class="py-2 px-3 text-center text-slate-300 font-bold tabular-nums">{[ fmtNum(emp.qty) ]}</td>
-                        <td class="py-2 px-3">
-                            <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
-                                class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                            <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
-                        </td>
-                        <td class="py-2 px-3">
-                            <span v-if="emp.target > 0" :class="emp.qty >= emp.target ? 'text-emerald-400' : 'text-red-400'">
-                                {[ emp.qty >= emp.target ? '✓' : '✗' ]}
-                            </span>
-                            <span v-else class="text-slate-500">--</span>
-                        </td>
-                        <td class="py-2 px-3">
-                            <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                {[ emp.efficiency.toFixed(1) ]}%
-                            </span>
-                            <span v-else class="text-slate-500">--</span>
-                        </td>
-                    </tr>
-                    <tr v-if="filteredEmployees.length === 0">
-                        <td :colspan="detailType === 'flow' ? 6 + detailStepnos.length : 5" class="py-4 text-slate-500 text-center">暂无数据</td>
-                    </tr>
-                </tbody>
-                <!-- 竖轴汇总：Flow 详情 -->
-                <tfoot v-if="detailType === 'flow' && filteredEmployees.length > 0">
-                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold sticky bottom-0 z-30">
-                        <td class="py-2 px-3 text-slate-400 sticky left-0 bottom-0 bg-slate-800 z-40">合计</td>
-                        <td class="py-2 px-3"></td>
-                        <td v-for="sn in detailStepnos" :key="sn"
-                            class="py-2 px-3 text-center text-emerald-400 tabular-nums">
-                            {[ fmtNum(stepnoColumnTotals[sn] || 0) ]}
-                        </td>
-                        <td class="py-2 px-3 text-center text-emerald-400 tabular-nums">{[ fmtNum(columnGrandTotal) ]}</td>
-                        <td class="py-2 px-3 text-slate-400 tabular-nums">{[ fmtNum(columnTargetTotal) ]}</td>
-                        <td class="py-2 px-3"></td>
-                        <td class="py-2 px-3"></td>
-                    </tr>
-                </tfoot>
-                <!-- 竖轴汇总：工序详情 -->
-                <tfoot v-if="detailType === 'stepno' && filteredEmployees.length > 0">
-                    <tr class="border-t-2 border-slate-600 bg-slate-800 text-sm font-bold sticky bottom-0 z-30">
-                        <td class="py-2 px-3 text-slate-400 sticky left-0 bottom-0 bg-slate-800 z-40">合计</td>
-                        <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums">{[ fmtNum(columnGrandTotal) ]}</td>
-                        <td class="py-2 px-3 text-slate-400 tabular-nums">{[ fmtNum(columnTargetTotal) ]}</td>
-                        <td class="py-2 px-3"></td>
-                        <td class="py-2 px-3"></td>
-                    </tr>
-                </tfoot>
-            </table>
+        <!-- ===== 版面1：表格视图 — 左右双表汇总 ===== -->
+        <div v-if="detailLayout === 'table'" class="flex gap-4 max-lg:flex-col flex-1 overflow-hidden">
+            <!-- 左表：工序汇总 -->
+            <div class="w-1/2 max-lg:w-full bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+                <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0">
+                    <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-blue-500 rounded-full"></span>工序汇总
+                    </h3>
+                </div>
+                <div class="overflow-y-auto flex-1">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-slate-400 border-b border-slate-700">
+                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序号</th>
+                                <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总数量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="s in stepSummary" :key="'step-' + s.stepno" class="border-b border-slate-700 hover:bg-slate-700/50">
+                                <td class="py-2 px-3 text-slate-300">工序{[ s.stepno ]}</td>
+                                <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">{[ fmtNum(s.total) ]} 件</td>
+                            </tr>
+                            <tr v-if="stepSummary.length === 0">
+                                <td colspan="2" class="py-4 text-slate-500 text-center">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 右表：员工汇总（保留编辑目标） -->
+            <div class="w-1/2 max-lg:w-full bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+                <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0 flex items-center justify-between">
+                    <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>员工汇总
+                    </h3>
+                    <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
+                        {[ employeeSummary.length ]} 人
+                    </span>
+                </div>
+                <div class="overflow-y-auto flex-1">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-slate-400 border-b border-slate-700">
+                                <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
+                                    @click="sortBy('reg_per_sys_id')">
+                                    员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                </th>
+                                <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
+                                    @click="sortBy('qty')">
+                                    总产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                </th>
+                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
+                                <th class="px-3 py-3 text-center sticky top-0 bg-slate-800 z-10">达标</th>
+                                <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">效率</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="emp in employeeSummary" :key="emp.reg_per_sys_id"
+                                class="border-b border-slate-700 hover:bg-slate-700/50">
+                                <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
+                                <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
+                                    {[ fmtNum(emp.qty) ]}
+                                </td>
+                                <td class="py-2 px-3">
+                                    <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
+                                        class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
+                                    <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
+                                </td>
+                                <td class="py-2 px-3 text-center">
+                                    <span v-if="emp.target > 0" :class="emp.qty >= emp.target ? 'text-emerald-400' : 'text-red-400'">
+                                        {[ emp.qty >= emp.target ? '✓' : '✗' ]}
+                                    </span>
+                                    <span v-else class="text-slate-500">--</span>
+                                </td>
+                                <td class="py-2 px-3 text-right">
+                                    <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                        {[ emp.efficiency.toFixed(1) ]}%
+                                    </span>
+                                    <span v-else class="text-slate-500">--</span>
+                                </td>
+                            </tr>
+                            <tr v-if="employeeSummary.length === 0">
+                                <td colspan="5" class="py-4 text-slate-500 text-center">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
@@ -406,6 +417,7 @@ createApp({
         const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
         const searchQuery = ref('');
         const tableSearch = ref('');
+        const wrkOrderFilter = ref('');  // '' = 全部工单
         const selectedDate = ref(new Date().toISOString().split('T')[0]);
         const isLoading = ref(false);
         const loadingProgress = ref(0);
@@ -585,7 +597,7 @@ createApp({
             return '#ef4444';                                         // 红色
         }
 
-        // 提取所有员工明细中涉及的工序号（用于动态表头列）
+        // 提取所有员工明细中涉及的工序号（卡片视图排序用）
         const detailStepnos = computed(() => {
             const stepnoSet = new Set();
             employees.value.forEach(emp => {
@@ -598,61 +610,63 @@ createApp({
             return (emp.steps || []).reduce((sum, s) => s.stepno === stepno ? sum + (s.qty || 0) : sum, 0);
         }
 
-        // 各工序列产量汇总（基于筛选后的员工）
-        const stepnoColumnTotals = computed(() => {
-            const totals = {};
-            const emps = filteredEmployees.value;
-            detailStepnos.value.forEach(sn => {
-                totals[sn] = emps.reduce((s, e) => s + getStepQty(e, sn), 0);
+        // 工单筛选下拉选项
+        const workorderOptions = computed(() => {
+            const set = new Set();
+            employees.value.forEach(emp => {
+                (emp.workorders || []).forEach(wo => set.add(wo));
+                (emp.steps || []).forEach(s => { if (s.workorder) set.add(s.workorder); });
             });
-            return totals;
+            return [...set].sort((a, b) => naturalCompare(a, b));
         });
 
-        // 筛选后员工产量总计
-        const columnGrandTotal = computed(() => {
-            return filteredEmployees.value.reduce((s, e) => s + (e.qty || 0), 0);
+        // 按工单筛选员工列表
+        function filterByWorkOrder(emps) {
+            if (!wrkOrderFilter.value) return emps;
+            return emps.filter(emp => {
+                if ((emp.workorders || []).includes(wrkOrderFilter.value)) return true;
+                return (emp.steps || []).some(s => s.workorder === wrkOrderFilter.value);
+            });
+        }
+
+        // 工序汇总（左表数据源）
+        const stepSummary = computed(() => {
+            const map = {};
+            const emps = filterByWorkOrder(employees.value);
+            emps.forEach(emp => {
+                (emp.steps || []).forEach(s => {
+                    if (!wrkOrderFilter.value || s.workorder === wrkOrderFilter.value) {
+                        map[s.stepno] = (map[s.stepno] || 0) + (s.qty || 0);
+                    }
+                });
+            });
+            return Object.entries(map)
+                .map(([stepno, total]) => ({ stepno: Number(stepno), total }))
+                .sort((a, b) => a.stepno - b.stepno);
         });
 
-        // 筛选后员工目标总计
-        const columnTargetTotal = computed(() => {
-            return filteredEmployees.value.reduce((s, e) => s + (e.target || 0), 0);
-        });
-
-        const filteredEmployees = computed(() => {
-            let emps = [...employees.value];
+        // 员工汇总（右表数据源）
+        const employeeSummary = computed(() => {
+            let emps = filterByWorkOrder(employees.value);
             if (tableSearch.value) {
                 const q = String(tableSearch.value).toLowerCase();
                 emps = emps.filter(e => String(e.reg_per_sys_id).includes(q));
             }
             const key = sortKey.value;
             const asc = sortAsc.value;
-            // 工序优先级映射（用于 stepno 排序）
-            const stepnoOrder = {};
-            detailStepnos.value.forEach((sn, i) => { stepnoOrder[sn] = i; });
-            emps.sort((a, b) => {
+            return [...emps].sort((a, b) => {
                 let va, vb;
-                if (key === 'stepno') {
-                    // 按工序出现顺序优先：找每个员工第一个有数据的工序
-                    const aFirst = (a.steps || []).find(s => s.qty > 0);
-                    const bFirst = (b.steps || []).find(s => s.qty > 0);
-                    const aIdx = aFirst ? (stepnoOrder[aFirst.stepno] ?? 999) : 999;
-                    const bIdx = bFirst ? (stepnoOrder[bFirst.stepno] ?? 999) : 999;
-                    if (aIdx !== bIdx) return asc ? aIdx - bIdx : bIdx - aIdx;
-                    // 同工序内按产量降序
-                    va = aFirst ? aFirst.qty : 0;
-                    vb = bFirst ? bFirst.qty : 0;
-                    return vb - va;  // 同工序内始终降序排列
-                }
                 if (key === 'reg_per_sys_id') {
-                    va = Number(a.reg_per_sys_id) || 0; vb = Number(b.reg_per_sys_id) || 0;
+                    va = Number(a.reg_per_sys_id) || 0;
+                    vb = Number(b.reg_per_sys_id) || 0;
                 } else if (key === 'qty') {
-                    va = a.qty || 0; vb = b.qty || 0;
-                } else if (key === 'efficiency') {
-                    va = a.efficiency || 0; vb = b.efficiency || 0;
+                    va = a.qty || 0;
+                    vb = b.qty || 0;
+                } else {
+                    return 0;
                 }
                 return asc ? va - vb : vb - va;
             });
-            return emps;
         });
 
         function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
@@ -852,6 +866,7 @@ createApp({
             showLoading();
             detailType.value = type;
             detailKey.value = key;
+            wrkOrderFilter.value = '';
             try {
                 let resp;
                 if (type === 'flow') {
@@ -1098,11 +1113,12 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            searchQuery, tableSearch, selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
+            searchQuery, tableSearch, wrkOrderFilter, workorderOptions,
+            selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
-            detailTitle, detailSummary, detailStepnos, getStepQty,
-            stepnoColumnTotals, columnGrandTotal, columnTargetTotal,
-            filteredFlowCards, filteredStepnoCards, filteredEmployees,
+            detailTitle, detailSummary, detailStepnos,
+            filteredFlowCards, filteredStepnoCards,
+            stepSummary, employeeSummary, filterByWorkOrder,
             isEditing, draft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
