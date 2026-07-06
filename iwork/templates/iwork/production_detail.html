@@ -1254,6 +1254,15 @@ createApp({
                         localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
                     }
                     targets[detailKey.value] = t;
+                    // 回写工单目标到 employees，确保展开模式立即显示
+                    employees.value.forEach(emp => {
+                        const empWo = {};
+                        const prefix = emp.reg_per_sys_id + '@';
+                        Object.entries(wo).forEach(([k, v]) => {
+                            if (k.startsWith(prefix)) empWo[k.slice(prefix.length)] = v;
+                        });
+                        emp.wo_targets = empWo;
+                    });
                 } else {
                     alert('保存失败: ' + resp.statusText);
                 }
@@ -1265,6 +1274,15 @@ createApp({
                     localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
                 }
                 targets[detailKey.value] = t;
+                // 回写工单目标到 employees
+                employees.value.forEach(emp => {
+                    const empWo = {};
+                    const prefix = emp.reg_per_sys_id + '@';
+                    Object.entries(wo).forEach(([k, v]) => {
+                        if (k.startsWith(prefix)) empWo[k.slice(prefix.length)] = v;
+                    });
+                    emp.wo_targets = empWo;
+                });
             }
             isEditing.value = false;
         }
