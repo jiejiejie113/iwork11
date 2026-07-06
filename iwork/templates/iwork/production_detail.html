@@ -235,41 +235,41 @@
             </div>
         </div>
 
-        <!-- ===== 版面1：表格视图 — 左右双表汇总 ===== -->
+        <!-- ===== 版面1：表格视图 — 侧边栏布局 ===== -->
         <div v-if="detailLayout === 'table'" class="flex gap-4 max-lg:flex-col flex-1 overflow-hidden">
-            <!-- 左表：工序汇总 -->
-            <div class="w-1/2 max-lg:w-full bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
-                <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0">
-                    <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                        <span class="w-2 h-2 bg-blue-500 rounded-full"></span>工序汇总
-                    </h3>
+            <!-- 左侧边栏：工序列表 -->
+            <div class="w-[220px] max-lg:w-full flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+                <div class="px-3 py-2 border-b border-slate-700 flex-shrink-0">
+                    <button @click="selectedStep = null"
+                            :class="selectedStep === null ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors">
+                        全部工序
+                    </button>
                 </div>
                 <div class="overflow-y-auto flex-1">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="text-left text-slate-400 border-b border-slate-700">
-                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序号</th>
-                                <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总数量</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="s in stepSummary" :key="'step-' + s.stepno" class="border-b border-slate-700 hover:bg-slate-700/50">
-                                <td class="py-2 px-3 text-slate-300">工序{[ s.stepno ]}</td>
-                                <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">{[ fmtNum(s.total) ]} 件</td>
-                            </tr>
-                            <tr v-if="stepSummary.length === 0">
-                                <td colspan="2" class="py-4 text-slate-500 text-center">暂无数据</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                    <button v-for="s in stepSummary" :key="'side-' + s.stepno"
+                            @click="selectedStep = s.stepno"
+                            :class="selectedStep === s.stepno ? 'bg-slate-700 border-l-2 border-blue-500' : 'border-l-2 border-transparent hover:bg-slate-700/50'"
+                            class="w-full text-left px-4 py-3 text-sm flex items-center justify-between transition-colors border-b border-slate-700/50">
+                        <span class="text-slate-300">工序{[ s.stepno ]}</span>
+                        <span class="text-xs flex items-center gap-1.5">
+                            <span class="text-emerald-400 font-mono">{[ fmtNum(s.total) ]}</span>
+                            <span class="text-slate-500">{[ s.workorder_count ]}单</span>
+                        </span>
+                    </button>
+                    <div v-if="stepSummary.length === 0" class="py-8 text-slate-500 text-center text-sm">
+                        暂无数据
+                    </div>
                 </div>
             </div>
 
-            <!-- 右表：员工汇总（保留编辑目标） -->
-            <div class="w-1/2 max-lg:w-full bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+            <!-- 右侧：员工明细表 -->
+            <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
                 <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0 flex items-center justify-between">
                     <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                        <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>员工汇总
+                        <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                        <span v-if="selectedStep === null">员工汇总</span>
+                        <span v-else>工序{[ selectedStep ]} · 员工明细</span>
                     </h3>
                     <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
                         {[ employeeSummary.length ]} 人
@@ -285,7 +285,7 @@
                                 </th>
                                 <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                                     @click="sortBy('qty')">
-                                    总产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                    产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
                                 <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工单</th>
                                 <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
@@ -426,6 +426,7 @@ createApp({
         const searchQuery = ref('');
         const tableSearch = ref('');
         const wrkOrderFilter = ref('');  // '' = 全部工单
+        const selectedStep = ref(null);  // null = 全部工序
         const selectedDate = ref(new Date().toISOString().split('T')[0]);
         const isLoading = ref(false);
         const loadingProgress = ref(0);
@@ -647,25 +648,41 @@ createApp({
             return Object.entries(map).sort((a, b) => b[1] - a[1]);
         }
 
-        // 工序汇总（左表数据源）
+        // 工序侧边栏数据源
         const stepSummary = computed(() => {
             const map = {};
             const emps = filterByWorkOrder(employees.value);
             emps.forEach(emp => {
                 (emp.steps || []).forEach(s => {
                     if (!wrkOrderFilter.value || s.workorder === wrkOrderFilter.value) {
-                        map[s.stepno] = (map[s.stepno] || 0) + (s.qty || 0);
+                        if (!map[s.stepno]) map[s.stepno] = { total: 0, workorders: new Set() };
+                        map[s.stepno].total += (s.qty || 0);
+                        if (s.workorder) map[s.stepno].workorders.add(s.workorder);
                     }
                 });
             });
             return Object.entries(map)
-                .map(([stepno, total]) => ({ stepno: Number(stepno), total }))
+                .map(([stepno, data]) => ({
+                    stepno: Number(stepno),
+                    total: data.total,
+                    workorder_count: data.workorders.size,
+                }))
                 .sort((a, b) => a.stepno - b.stepno);
         });
 
-        // 员工汇总（右表数据源）
+        // 员工明细（右侧表数据源，响应侧边栏工序选择）
         const employeeSummary = computed(() => {
             let emps = filterByWorkOrder(employees.value);
+            if (selectedStep.value !== null) {
+                emps = emps
+                    .filter(emp => (emp.steps || []).some(s => s.stepno === selectedStep.value && s.qty > 0))
+                    .map(emp => {
+                        const stepSteps = (emp.steps || []).filter(s => s.stepno === selectedStep.value);
+                        const qty = stepSteps.reduce((sum, s) => sum + (s.qty || 0), 0);
+                        const workorders = [...new Set(stepSteps.map(s => s.workorder).filter(Boolean))];
+                        return { ...emp, qty, workorders, steps: stepSteps };
+                    });
+            }
             if (tableSearch.value) {
                 const q = String(tableSearch.value).toLowerCase();
                 emps = emps.filter(e => String(e.reg_per_sys_id).includes(q));
@@ -885,6 +902,7 @@ createApp({
             detailType.value = type;
             detailKey.value = key;
             wrkOrderFilter.value = '';
+            selectedStep.value = null;
             try {
                 let resp;
                 if (type === 'flow') {
@@ -1131,7 +1149,7 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            searchQuery, tableSearch, wrkOrderFilter, workorderOptions,
+            searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep,
             selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
