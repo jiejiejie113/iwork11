@@ -236,7 +236,7 @@
         </div>
 
         <!-- ===== 版面1：表格视图 — 侧边栏布局 ===== -->
-        <div v-if="detailLayout === 'table'" class="flex gap-4 max-lg:flex-col flex-1 overflow-hidden">
+        <div v-if="detailLayout === 'table'" class="flex gap-0 max-lg:flex-col flex-1 overflow-hidden">
             <!-- 左侧边栏：工序列表 -->
             <div class="w-[220px] max-lg:w-full flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
                 <div class="px-3 py-2 border-b border-slate-700 flex-shrink-0">
@@ -246,7 +246,7 @@
                         全部工序
                     </button>
                 </div>
-                <div class="overflow-y-auto flex-1">
+                <div class="overflow-y-auto flex-1 hide-scrollbar">
                     <button v-for="s in stepSummary" :key="'side-' + s.stepno"
                             @click="selectedStep = s.stepno"
                             :class="selectedStep === s.stepno ? 'bg-slate-700 border-l-2 border-blue-500' : 'border-l-2 border-transparent hover:bg-slate-700/50'"
@@ -275,7 +275,7 @@
                         {[ employeeSummary.length ]} 人
                     </span>
                 </div>
-                <div class="overflow-y-auto flex-1">
+                <div class="overflow-y-auto flex-1 hide-scrollbar">
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="text-left text-slate-400 border-b border-slate-700">
