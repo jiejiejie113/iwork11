@@ -48,22 +48,43 @@ iwork 项目的 Docker 编排存在三个问题：
 
 ### 配置拆分
 
-iwork 的 `.env` 拆为两个：
+iwork 采用**两层 `.env` 机制**：
 
-| 文件 | 用途 | DEBUG | ALLOWED_HOSTS |
-|------|------|-------|---------------|
-| `iwork/.env` | 生产部署 | False | dktportal.dongming.local,... |
-| `iwork/.env.local` | 本地开发 | True | localhost,127.0.0.1,... |
+| 层级 | 文件 | 用途 | 内容 |
+|------|------|------|------|
+| **Compose 层**（项目根目录） | `.env` | 为 `docker compose` 提供变量插值 | `IWORK_ENV_FILE=iwork/.env` |
+| **Compose 层**（项目根目录） | `.env.local` | 本地开发时覆盖 compose 变量 | `IWORK_ENV_FILE=iwork/.env.local` |
+| **容器层**（`iwork/` 目录） | `iwork/.env` | 生产环境 → 容器内环境变量 | `DEBUG=False`, 完整域名白名单 |
+| **容器层**（`iwork/` 目录） | `iwork/.env.local` | 本地开发 → 容器内环境变量 | `DEBUG=True`, localhost 白名单 |
 
-通过 compose 变量 `IWORK_ENV_FILE` 切换：
+**切换流程**：
 
 ```bash
-# 生产
+# 生产：compose 读取根 .env → IWORK_ENV_FILE=iwork/.env → 容器加载 iwork/.env
 docker compose up -d
 
-# 本地
+# 本地：compose 读取根 .env.local → IWORK_ENV_FILE=iwork/.env.local → 容器加载 iwork/.env.local
 docker compose --env-file .env.local up -d
 ```
+
+`docker-compose.yml` 中的关键行：
+```yaml
+env_file:
+  - ${IWORK_ENV_FILE:-iwork/.env}
+```
+
+根 `.env` 和 `.env.local` 仅包含 `IWORK_ENV_FILE` 一个变量，职责单一：告诉 compose 去哪个路径找容器的 env 文件。
+
+**容器环境变量对比**：
+
+| 变量 | `iwork/.env`（生产） | `iwork/.env.local`（本地） |
+|------|---------------------|--------------------------|
+| `DJANGO_DEBUG` | `False` | `True` |
+| `DJANGO_ALLOWED_HOSTS` | `dktportal.dongming.local,...` | `localhost,127.0.0.1,...` |
+| `ACCESS_DB_HOST` | `mysql` | `mysql` |
+| `REDIS_HOST` | `iwork-redis` | `iwork-redis` |
+
+> 注：`ACCESS_DB_HOST=mysql` 和 `REDIS_HOST=iwork-redis` 使用的是 DTD_nginx compose 中的 **服务名**（非容器名 `DKT_mysql`/`DKT_iwork_redis`）。同一 `docker_dkt-net` 网络下，Docker 内置 DNS 可通过服务名或容器名互相解析，两种写法等价。这里统一用服务名，与 DTD_nginx 的 compose 定义保持一致。
 
 ## 影响
 
@@ -71,6 +92,8 @@ docker compose --env-file .env.local up -d
 - MySQL 和 Redis 端口不再暴露到宿主机（本地调试需额外配置）
 - 本地开发时 iwork 加入 `docker_dkt-net`，与生产网络拓扑一致
 - 数据库初始化脚本（`02-init-iwork.sql`）密码需与 iwork `.env` 保持一致
+- 新增项目根目录 `.env` / `.env.local` 文件（仅含 `IWORK_ENV_FILE` 变量），`.gitignore` 需忽略根 `.env.local`
+- 容器间通信主机名使用 DTD_nginx compose 的**服务名**（`mysql`、`iwork-redis`），而非容器名（`DKT_mysql`、`DKT_iwork_redis`），两种写法在 `docker_dkt-net` 中等价
 
 ## 关联
 
