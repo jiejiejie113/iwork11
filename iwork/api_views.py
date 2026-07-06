@@ -274,7 +274,7 @@ def _get_targets_with_fallback(target_date):
     # 2. Redis 未命中，读数据库
     try:
         targets = TargetProduction.objects.filter(
-            target_date=target_date
+            target_date=target_date, workorder=''
         ).values_list('employee_id', 'target_qty')
         targets_dict = {eid: qty for eid, qty in targets}
 
@@ -285,6 +285,37 @@ def _get_targets_with_fallback(target_date):
         return targets_dict
     except Exception as e:
         logger.error(f'从数据库读取目标产量失败: {e}')
+        return {}
+
+
+def _get_wo_targets_with_fallback(target_date):
+    """
+    获取工单级目标产量（优先 Redis → 回退数据库）
+
+    Args:
+        target_date (date): 目标日期
+
+    Returns:
+        dict: {f"{employee_id}@{workorder}": target_qty}
+    """
+    date_str = target_date.isoformat()
+    key = f'wo_targets:{date_str}'
+    cached = cache.get(key)
+    if cached:
+        return json.loads(cached)
+
+    try:
+        rows = TargetProduction.objects.filter(
+            target_date=target_date
+        ).exclude(workorder='').values_list('employee_id', 'workorder', 'target_qty')
+        result = {}
+        for eid, wo, qty in rows:
+            result[f'{eid}@{wo}'] = qty
+        if result:
+            cache.set(key, json.dumps(result), timeout=_seconds_to_midnight())
+        return result
+    except Exception as e:
+        logger.error(f'从数据库读取工单目标产量失败: {e}')
         return {}
 
 
@@ -312,8 +343,11 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
 
     # 读取已保存的目标产量并注入到员工数据中
     targets_dict = _get_targets_with_fallback(target_date)
+    wo_targets_dict = _get_wo_targets_with_fallback(target_date)
     for emp in employees:
-        emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
+        eid = str(emp['reg_per_sys_id'])
+        emp['target'] = int(targets_dict.get(eid, 0))
+        emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
 
     return {
         'flow': flow_name,
@@ -452,8 +486,11 @@ def flow_detail(request, flow_name):
                 targets_key = f'targets:{target_date.isoformat()}:{flow_name}'
                 cached_targets = cache.get(targets_key)
                 targets_dict = json.loads(cached_targets) if cached_targets else {}
+                wo_targets_dict = _get_wo_targets_with_fallback(target_date)
                 for emp in cached_employees:
-                    emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
+                    eid = str(emp['reg_per_sys_id'])
+                    emp['target'] = int(targets_dict.get(eid, 0))
+                    emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
                 return Response({
                     'flow': flow_name,
                     'date': target_date.isoformat(),
@@ -546,35 +583,81 @@ def set_targets(request):
     """
     设置目标产量（HTTP POST）
 
-    请求体：
-        targets (dict): {reg_per_sys_id: target_qty}
+    请求体（支持两种格式，向后兼容）：
+        targets (dict): {reg_per_sys_id: target_qty}（旧格式，仍支持）
+        wo_targets (dict): {"1001@WO-001": 150, "1001@WO-002": 150}（新格式）
 
-    采用全局员工日目标模型，每个员工每天只有一个总目标
-    同时写入数据库（持久化）和 Redis（缓存）
+    工单级目标：每个工单独立一行存储
+    员工总目标：由工单目标自动聚合计算
     """
     targets = request.data.get('targets', {})
+    wo_targets = request.data.get('wo_targets', {})
     today = date.today()
 
-    # 1. 写入数据库（持久化存储）
-    try:
-        for emp_id, qty in targets.items():
+    # 1. 保存工单级目标到数据库
+    if wo_targets:
+        # 收集涉及的员工，先清除当日旧工单目标
+        emp_ids = set()
+        for key in wo_targets:
+            emp_id = key.split('@')[0]
+            emp_ids.add(emp_id)
+        TargetProduction.objects.filter(
+            target_date=today,
+            employee_id__in=list(emp_ids),
+        ).exclude(workorder='').delete()
+
+        # 批量写入工单目标
+        records = []
+        for key, qty in wo_targets.items():
+            parts = key.split('@', 1)
+            if len(parts) != 2:
+                continue
+            emp_id, workorder = parts
             qty_int = int(qty) if qty else 0
-            if qty_int > 0:
-                TargetProduction.objects.update_or_create(
-                    target_date=today,
-                    employee_id=str(emp_id),
-                    defaults={'target_qty': qty_int}
-                )
-        logger.info(f'目标产量已保存到数据库: {len(targets)} 条')
-    except Exception as e:
-        logger.error(f'目标产量保存到数据库失败: {e}')
+            if qty_int <= 0:
+                continue
+            records.append(TargetProduction(
+                target_date=today,
+                employee_id=str(emp_id),
+                workorder=workorder,
+                target_qty=qty_int,
+            ))
+        if records:
+            TargetProduction.objects.bulk_create(records)
+        logger.info(f'工单目标已保存: {len(records)} 条')
 
-    # 2. 写入 Redis（缓存）
-    key = f'targets:{today.isoformat()}'
-    cache.set(key, json.dumps(targets), timeout=_seconds_to_midnight())
-    logger.info(f'目标产量已保存到 Redis: {key}')
+        # 自动聚合计算员工总目标
+        targets = {}
+        for key, qty in wo_targets.items():
+            emp_id = key.split('@')[0]
+            targets[emp_id] = targets.get(emp_id, 0) + (int(qty) or 0)
 
-    return Response({'status': 'ok', 'count': len(targets)})
+    # 2. 保存员工总目标到数据库（兼容旧格式 + 工单聚合结果）
+    if targets:
+        try:
+            for emp_id, qty in targets.items():
+                qty_int = int(qty) if qty else 0
+                if qty_int > 0:
+                    TargetProduction.objects.update_or_create(
+                        target_date=today,
+                        employee_id=str(emp_id),
+                        workorder='',
+                        defaults={'target_qty': qty_int}
+                    )
+            logger.info(f'员工总目标已保存: {len(targets)} 条')
+        except Exception as e:
+            logger.error(f'目标产量保存到数据库失败: {e}')
+
+    # 3. 写入 Redis 缓存
+    if targets:
+        key = f'targets:{today.isoformat()}'
+        cache.set(key, json.dumps(targets), timeout=_seconds_to_midnight())
+    if wo_targets:
+        key = f'wo_targets:{today.isoformat()}'
+        cache.set(key, json.dumps(wo_targets), timeout=_seconds_to_midnight())
+        logger.info(f'工单目标已缓存到 Redis: {key}')
+
+    return Response({'status': 'ok', 'count': len(targets), 'wo_count': len(wo_targets)})
 
 
 # ============================================================================

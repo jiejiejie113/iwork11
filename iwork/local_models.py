@@ -41,10 +41,13 @@ class LocalPytckreg3(models.Model):
 class TargetProduction(models.Model):
     """
     目标产量（本地持久化存储）
-    采用全局员工日目标模型，每个员工每天只有一个总目标
+    支持员工级总目标和工单级分目标：
+    - workorder='' 表示员工总目标（兼容旧数据）
+    - workorder='WO-001' 表示该工单的分目标
     """
     target_date = models.DateField('目标日期')
     employee_id = models.CharField('员工ID', max_length=50)
+    workorder = models.CharField('工单号', max_length=100, blank=True, default='')
     target_qty = models.IntegerField('目标产量', default=0)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
@@ -52,10 +55,11 @@ class TargetProduction(models.Model):
     class Meta:
         app_label = 'iwork'
         db_table = 'target_production'
-        unique_together = ('target_date', 'employee_id')
+        unique_together = ('target_date', 'employee_id', 'workorder')
         managed = True
         verbose_name = '目标产量'
         verbose_name_plural = '目标产量'
 
     def __str__(self) -> str:
-        return f'{self.target_date} - {self.employee_id}: {self.target_qty}'
+        wo_tag = f' @ {self.workorder}' if self.workorder else ''
+        return f'{self.target_date} - {self.employee_id}{wo_tag}: {self.target_qty}'

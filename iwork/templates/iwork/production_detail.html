@@ -317,10 +317,10 @@
                                         class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right border-r border-slate-700">
                                         {[ fmtNum(row._total_qty) ]}
                                     </td>
-                                    <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3">
-                                        <input v-if="isEditing" v-model.number="draft[row.emp.reg_per_sys_id]" type="number" min="0"
+                                    <td class="py-2 px-3">
+                                        <input v-if="isEditing" v-model.number="woDraft[row.emp.reg_per_sys_id + '@' + row._wo_name]" type="number" min="0"
                                             class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                        <span v-else class="tabular-nums">{[ row.emp.target > 0 ? fmtNum(row.emp.target) : '--' ]}</span>
+                                        <span v-else class="tabular-nums">{[ getWoTarget(row.emp, row._wo_name) > 0 ? fmtNum(getWoTarget(row.emp, row._wo_name)) : '--' ]}</span>
                                     </td>
                                     <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3 text-right">
                                         <span v-if="row.emp.target > 0" :class="row.emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
@@ -348,10 +348,10 @@
                                     <td class="py-2 px-3">
                                         <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
                                             class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                        <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
+                                        <span v-else class="tabular-nums">{[ getCombinedTarget(emp) > 0 ? fmtNum(getCombinedTarget(emp)) : (emp.target > 0 ? fmtNum(emp.target) : '--') ]}</span>
                                     </td>
                                     <td class="py-2 px-3 text-right">
-                                        <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                        <span v-if="(getCombinedTarget(emp) || emp.target) > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
                                             {[ emp.efficiency.toFixed(1) ]}%
                                         </span>
                                         <span v-else class="text-slate-500">--</span>
@@ -490,6 +490,7 @@ createApp({
 
         const isEditing = ref(false);
         const draft = reactive({});
+        const woDraft = reactive({});   // 工单级目标: {"1001@WO-001": 150}
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
 
@@ -497,6 +498,31 @@ createApp({
             // 深拷贝当前目标值到 draft
             employees.value.forEach(emp => {
                 draft[emp.reg_per_sys_id] = emp.target || 0;
+                // 工单目标：已有保存的恢复，否则按产量比例分摊
+                const wo_targets = emp.wo_targets || {};
+                const woItems = getWorkorderItems(emp);
+                if (Object.keys(wo_targets).length > 0) {
+                    woItems.forEach(([wo]) => {
+                        woDraft[emp.reg_per_sys_id + '@' + wo] = wo_targets[wo] || 0;
+                    });
+                } else if (woItems.length > 0 && emp.target > 0) {
+                    // 无历史记录：按当前产量比例分摊目标
+                    const totalQty = emp.qty || 1;
+                    let remaining = emp.target;
+                    woItems.forEach(([wo, woQty], idx) => {
+                        if (idx === woItems.length - 1) {
+                            woDraft[emp.reg_per_sys_id + '@' + wo] = remaining;
+                        } else {
+                            const share = Math.round(emp.target * woQty / totalQty);
+                            woDraft[emp.reg_per_sys_id + '@' + wo] = share;
+                            remaining -= share;
+                        }
+                    });
+                } else {
+                    woItems.forEach(([wo]) => {
+                        woDraft[emp.reg_per_sys_id + '@' + wo] = 0;
+                    });
+                }
             });
             isEditing.value = true;
         }
@@ -507,6 +533,8 @@ createApp({
                 emp.target = t[String(emp.reg_per_sys_id)] || 0;
                 emp.efficiency = emp.target > 0 ? (emp.qty / emp.target * 100) : null;
             });
+            // 清除 woDraft
+            Object.keys(woDraft).forEach(k => delete woDraft[k]);
             isEditing.value = false;
         }
 
@@ -680,6 +708,27 @@ createApp({
                 map[wo] = (map[wo] || 0) + (s.qty || 0);
             });
             return Object.entries(map).sort((a, b) => b[1] - a[1]);
+        }
+
+        // 获取员工在指定工单上的目标产量
+        function getWoTarget(emp, workorder) {
+            const key = emp.reg_per_sys_id + '@' + workorder;
+            if (isEditing.value && key in woDraft) return woDraft[key] || 0;
+            const wo_targets = emp.wo_targets || {};
+            return wo_targets[workorder] || 0;
+        }
+
+        // 获取员工的合并目标（所有工单目标之和）
+        function getCombinedTarget(emp) {
+            if (isEditing.value) {
+                let total = 0;
+                const prefix = emp.reg_per_sys_id + '@';
+                Object.entries(woDraft).forEach(([k, v]) => {
+                    if (k.startsWith(prefix)) total += (Number(v) || 0);
+                });
+                return total;
+            }
+            return emp.target || 0;
         }
 
         // 工序侧边栏数据源
@@ -1166,35 +1215,55 @@ createApp({
 
         async function saveTargets() {
             const t = {};
-            employees.value.forEach(emp => {
-                const v = Number(draft[emp.reg_per_sys_id]) || 0;
-                if (v > 0) t[String(emp.reg_per_sys_id)] = v;
-                emp.target = v;
-                emp.efficiency = v > 0 ? (emp.qty / v * 100) : null;
+            const wo = {};
+            const empTotals = {};
+
+            // 收集工单级目标，聚合为员工总目标
+            Object.entries(woDraft).forEach(([key, qty]) => {
+                const v = Number(qty) || 0;
+                if (v > 0) {
+                    wo[key] = v;
+                    const empId = key.split('@')[0];
+                    empTotals[empId] = (empTotals[empId] || 0) + v;
+                }
             });
+
+            // 更新 employees 的 target 为工单聚合值
+            employees.value.forEach(emp => {
+                const total = empTotals[emp.reg_per_sys_id] || Number(draft[emp.reg_per_sys_id]) || 0;
+                emp.target = total;
+                emp.efficiency = total > 0 ? (emp.qty / total * 100) : null;
+                if (total > 0) t[String(emp.reg_per_sys_id)] = total;
+            });
+
             try {
+                const payload = { targets: t };
+                if (Object.keys(wo).length > 0) payload.wo_targets = wo;
                 const resp = await fetch(basePath + 'api/dashboard/set-targets/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRFToken': getCookie('csrftoken'),
                     },
-                    body: JSON.stringify({ targets: t }),
+                    body: JSON.stringify(payload),
                 });
                 if (resp.ok) {
-                    // 保存到 localStorage 兜底
                     const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
                     localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
-                    // 更新本地 targets 对象
+                    if (Object.keys(wo).length > 0) {
+                        localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
+                    }
                     targets[detailKey.value] = t;
                 } else {
                     alert('保存失败: ' + resp.statusText);
                 }
             } catch (e) {
                 console.error('保存目标失败:', e);
-                // 网络失败时保存到 localStorage
                 const dateStr = selectedDate.value || new Date().toISOString().split('T')[0];
                 localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
+                if (Object.keys(wo).length > 0) {
+                    localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
+                }
                 targets[detailKey.value] = t;
             }
             isEditing.value = false;
@@ -1235,7 +1304,8 @@ createApp({
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,
-            stepSummary, employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty, filterByWorkOrder, getWorkorderItems,
+            stepSummary, employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
+            filterByWorkOrder, getWorkorderItems, getWoTarget, getCombinedTarget,
             isEditing, draft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
