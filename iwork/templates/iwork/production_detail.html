@@ -272,7 +272,7 @@
                         <span v-else>工序{[ selectedStep ]} · 员工明细</span>
                     </h3>
                     <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
-                        {[ employeeSummary.length ]} 人
+                        {[ employeeCount ]} 人
                     </span>
                 </div>
                 <div class="overflow-y-auto flex-1 hide-scrollbar">
@@ -283,49 +283,45 @@
                                     @click="sortBy('reg_per_sys_id')">
                                     员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
+                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工单</th>
                                 <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                                     @click="sortBy('qty')">
                                     产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
-                                <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工单</th>
+                                <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总产量</th>
                                 <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
-                                <th class="px-3 py-3 text-center sticky top-0 bg-slate-800 z-10">达标</th>
                                 <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">效率</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="emp in employeeSummary" :key="emp.reg_per_sys_id"
-                                class="border-b border-slate-700 hover:bg-slate-700/50">
-                                <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
+                            <tr v-for="(row, idx) in employeeRows" :key="row.emp.reg_per_sys_id + '-' + row._wo_name + '-' + idx"
+                                class="border-b border-slate-700 hover:bg-slate-700/50"
+                                :class="{ 'border-t border-slate-600': row._first && idx > 0 }">
+                                <td v-if="row._first" :rowspan="row._rowspan"
+                                    class="py-2 px-3 text-slate-300 border-r border-slate-700">{[ row.emp.reg_per_sys_id ]}</td>
+                                <td class="py-2 px-3 text-xs">
+                                    <span class="text-blue-400">{[ row._wo_name ]}</span>
+                                </td>
                                 <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
-                                    {[ fmtNum(emp.qty) ]}
+                                    {[ fmtNum(row._wo_qty) ]}
                                 </td>
-                                <td class="py-2 px-3 text-xs text-slate-400 max-w-[180px]">
-                                    <span v-for="(wo, idx) in getWorkorderItems(emp)" :key="wo[0]"
-                                          class="inline-block mr-1.5">
-                                        <span class="text-blue-400">{[ wo[0] ]}</span><span class="text-slate-500">({[ wo[1] ]}件)</span><span v-if="idx < getWorkorderItems(emp).length - 1">,</span>
-                                    </span>
-                                    <span v-if="getWorkorderItems(emp).length === 0" class="text-slate-600">--</span>
+                                <td v-if="row._first" :rowspan="row._rowspan"
+                                    class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right border-r border-slate-700">
+                                    {[ fmtNum(row._total_qty) ]}
                                 </td>
-                                <td class="py-2 px-3">
-                                    <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
+                                <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3">
+                                    <input v-if="isEditing" v-model.number="draft[row.emp.reg_per_sys_id]" type="number" min="0"
                                         class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                    <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
+                                    <span v-else class="tabular-nums">{[ row.emp.target > 0 ? fmtNum(row.emp.target) : '--' ]}</span>
                                 </td>
-                                <td class="py-2 px-3 text-center">
-                                    <span v-if="emp.target > 0" :class="emp.qty >= emp.target ? 'text-emerald-400' : 'text-red-400'">
-                                        {[ emp.qty >= emp.target ? '✓' : '✗' ]}
-                                    </span>
-                                    <span v-else class="text-slate-500">--</span>
-                                </td>
-                                <td class="py-2 px-3 text-right">
-                                    <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                        {[ emp.efficiency.toFixed(1) ]}%
+                                <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3 text-right">
+                                    <span v-if="row.emp.target > 0" :class="row.emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                        {[ row.emp.efficiency.toFixed(1) ]}%
                                     </span>
                                     <span v-else class="text-slate-500">--</span>
                                 </td>
                             </tr>
-                            <tr v-if="employeeSummary.length === 0">
+                            <tr v-if="employeeRows.length === 0">
                                 <td colspan="6" class="py-4 text-slate-500 text-center">暂无数据</td>
                             </tr>
                         </tbody>
@@ -670,8 +666,8 @@ createApp({
                 .sort((a, b) => a.stepno - b.stepno);
         });
 
-        // 员工明细（右侧表数据源，响应侧边栏工序选择）
-        const employeeSummary = computed(() => {
+        // 员工明细行（按工单拆分为多行，支持 rowspan）
+        const employeeRows = computed(() => {
             let emps = filterByWorkOrder(employees.value);
             if (selectedStep.value !== null) {
                 emps = emps
@@ -689,7 +685,7 @@ createApp({
             }
             const key = sortKey.value;
             const asc = sortAsc.value;
-            return [...emps].sort((a, b) => {
+            emps = [...emps].sort((a, b) => {
                 let va, vb;
                 if (key === 'reg_per_sys_id') {
                     va = Number(a.reg_per_sys_id) || 0;
@@ -702,6 +698,26 @@ createApp({
                 }
                 return asc ? va - vb : vb - va;
             });
+
+            const rows = [];
+            emps.forEach(emp => {
+                const woItems = getWorkorderItems(emp);
+                if (woItems.length === 0) {
+                    rows.push({ emp, _wo_name: '--', _wo_qty: emp.qty, _total_qty: emp.qty, _rowspan: 1, _first: true });
+                } else {
+                    woItems.forEach(([wo, woQty], idx) => {
+                        rows.push({ emp, _wo_name: wo, _wo_qty: woQty, _total_qty: emp.qty, _rowspan: woItems.length, _first: idx === 0 });
+                    });
+                }
+            });
+            return rows;
+        });
+
+        // 去重员工数（用于表头计数）
+        const employeeCount = computed(() => {
+            const ids = new Set();
+            employeeRows.value.forEach(r => ids.add(r.emp.reg_per_sys_id));
+            return ids.size;
         });
 
         function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
@@ -1154,7 +1170,7 @@ createApp({
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,
-            stepSummary, employeeSummary, filterByWorkOrder, getWorkorderItems,
+            stepSummary, employeeRows, employeeCount, filterByWorkOrder, getWorkorderItems,
             isEditing, draft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
