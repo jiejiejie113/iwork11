@@ -271,9 +271,15 @@
                         <span v-if="selectedStep === null">员工汇总</span>
                         <span v-else>工序{[ selectedStep ]} · 员工明细</span>
                     </h3>
-                    <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
-                        {[ employeeCount ]} 人
-                    </span>
+                    <div class="flex items-center gap-3">
+                        <button @click="collapsed = !collapsed"
+                                class="text-xs text-slate-400 hover:text-white px-2 py-1 rounded border border-slate-600 hover:border-slate-400 transition-colors">
+                            {[ collapsed ? '展开' : '收起' ]}
+                        </button>
+                        <span class="font-mono text-xs text-slate-400 bg-slate-700 px-2.5 py-1 rounded-full">
+                            {[ employeeCount ]} 人
+                        </span>
+                    </div>
                 </div>
                 <div class="overflow-y-auto flex-1 hide-scrollbar">
                     <table class="w-full text-sm">
@@ -284,7 +290,7 @@
                                     员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
                                 <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工单</th>
-                                <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
+                                <th v-if="!collapsed" class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                                     @click="sortBy('qty')">
                                     产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
@@ -294,35 +300,66 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="(row, idx) in employeeRows" :key="row.emp.reg_per_sys_id + '-' + row._wo_name + '-' + idx"
-                                class="border-b border-slate-700 hover:bg-slate-700/50"
-                                :class="{ 'border-t border-slate-600': row._first && idx > 0 }">
-                                <td v-if="row._first" :rowspan="row._rowspan"
-                                    class="py-2 px-3 text-slate-300 border-r border-slate-700">{[ row.emp.reg_per_sys_id ]}</td>
-                                <td class="py-2 px-3 text-xs">
-                                    <span class="text-blue-400">{[ row._wo_name ]}</span>
-                                </td>
-                                <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
-                                    {[ fmtNum(row._wo_qty) ]}
-                                </td>
-                                <td v-if="row._first" :rowspan="row._rowspan"
-                                    class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right border-r border-slate-700">
-                                    {[ fmtNum(row._total_qty) ]}
-                                </td>
-                                <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3">
-                                    <input v-if="isEditing" v-model.number="draft[row.emp.reg_per_sys_id]" type="number" min="0"
-                                        class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                    <span v-else class="tabular-nums">{[ row.emp.target > 0 ? fmtNum(row.emp.target) : '--' ]}</span>
-                                </td>
-                                <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3 text-right">
-                                    <span v-if="row.emp.target > 0" :class="row.emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                        {[ row.emp.efficiency.toFixed(1) ]}%
-                                    </span>
-                                    <span v-else class="text-slate-500">--</span>
-                                </td>
-                            </tr>
-                            <tr v-if="employeeRows.length === 0">
-                                <td colspan="6" class="py-4 text-slate-500 text-center">暂无数据</td>
+                            <!-- 展开模式：每工单一行的 rowspan 视图 -->
+                            <template v-if="!collapsed">
+                                <tr v-for="(row, idx) in employeeRows" :key="row.emp.reg_per_sys_id + '-' + row._wo_name + '-' + idx"
+                                    class="border-b border-slate-700 hover:bg-slate-700/50"
+                                    :class="{ 'border-t border-slate-600': row._first && idx > 0 }">
+                                    <td v-if="row._first" :rowspan="row._rowspan"
+                                        class="py-2 px-3 text-slate-300 border-r border-slate-700">{[ row.emp.reg_per_sys_id ]}</td>
+                                    <td class="py-2 px-3 text-xs">
+                                        <span class="text-blue-400">{[ row._wo_name ]}</span>
+                                    </td>
+                                    <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
+                                        {[ fmtNum(row._wo_qty) ]}
+                                    </td>
+                                    <td v-if="row._first" :rowspan="row._rowspan"
+                                        class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right border-r border-slate-700">
+                                        {[ fmtNum(row._total_qty) ]}
+                                    </td>
+                                    <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3">
+                                        <input v-if="isEditing" v-model.number="draft[row.emp.reg_per_sys_id]" type="number" min="0"
+                                            class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
+                                        <span v-else class="tabular-nums">{[ row.emp.target > 0 ? fmtNum(row.emp.target) : '--' ]}</span>
+                                    </td>
+                                    <td v-if="row._first" :rowspan="row._rowspan" class="py-2 px-3 text-right">
+                                        <span v-if="row.emp.target > 0" :class="row.emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                            {[ row.emp.efficiency.toFixed(1) ]}%
+                                        </span>
+                                        <span v-else class="text-slate-500">--</span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <!-- 收起模式：每员工一行，工单合并显示 -->
+                            <template v-else>
+                                <tr v-for="emp in employeeRowsCollapsed" :key="emp.reg_per_sys_id"
+                                    class="border-b border-slate-700 hover:bg-slate-700/50">
+                                    <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
+                                    <td class="py-2 px-3 text-xs text-slate-400 max-w-[200px]">
+                                        <span v-for="(wo, idx) in getWorkorderItems(emp)" :key="wo[0]"
+                                              class="inline-block mr-1.5">
+                                            <span class="text-blue-400">{[ wo[0] ]}</span><span class="text-slate-500">({[ wo[1] ]}件)</span><span v-if="idx < getWorkorderItems(emp).length - 1">,</span>
+                                        </span>
+                                        <span v-if="getWorkorderItems(emp).length === 0" class="text-slate-600">--</span>
+                                    </td>
+                                    <td class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right">
+                                        {[ fmtNum(emp.qty) ]}
+                                    </td>
+                                    <td class="py-2 px-3">
+                                        <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
+                                            class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
+                                        <span v-else class="tabular-nums">{[ emp.target > 0 ? fmtNum(emp.target) : '--' ]}</span>
+                                    </td>
+                                    <td class="py-2 px-3 text-right">
+                                        <span v-if="emp.target > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                            {[ emp.efficiency.toFixed(1) ]}%
+                                        </span>
+                                        <span v-else class="text-slate-500">--</span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="displayRowsEmpty">
+                                <td :colspan="collapsed ? 5 : 6" class="py-4 text-slate-500 text-center">暂无数据</td>
                             </tr>
                         </tbody>
                     </table>
@@ -423,6 +460,7 @@ createApp({
         const tableSearch = ref('');
         const wrkOrderFilter = ref('');  // '' = 全部工单
         const selectedStep = ref(null);  // null = 全部工序
+        const collapsed = ref(false);   // false = 展开，true = 收起
         const selectedDate = ref(new Date().toISOString().split('T')[0]);
         const isLoading = ref(false);
         const loadingProgress = ref(0);
@@ -718,6 +756,33 @@ createApp({
             const ids = new Set();
             employeeRows.value.forEach(r => ids.add(r.emp.reg_per_sys_id));
             return ids.size;
+        });
+
+        // 收起模式：每员工一行，工单合并在一个单元格
+        const employeeRowsCollapsed = computed(() => {
+            const map = new Map();
+            employeeRows.value.forEach(row => {
+                const eid = row.emp.reg_per_sys_id;
+                if (!map.has(eid)) map.set(eid, row.emp);
+            });
+            const emps = [...map.values()];
+            const key = sortKey.value;
+            const asc = sortAsc.value;
+            return emps.sort((a, b) => {
+                let va, vb;
+                if (key === 'reg_per_sys_id') {
+                    va = Number(a.reg_per_sys_id) || 0;
+                    vb = Number(b.reg_per_sys_id) || 0;
+                } else if (key === 'qty') {
+                    va = a.qty || 0;
+                    vb = b.qty || 0;
+                }
+                return asc ? va - vb : vb - va;
+            });
+        });
+
+        const displayRowsEmpty = computed(() => {
+            return collapsed.value ? employeeRowsCollapsed.value.length === 0 : employeeRows.value.length === 0;
         });
 
         function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
@@ -1165,12 +1230,12 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep,
+            searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,
-            stepSummary, employeeRows, employeeCount, filterByWorkOrder, getWorkorderItems,
+            stepSummary, employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty, filterByWorkOrder, getWorkorderItems,
             isEditing, draft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, goDetail, saveTargets,
