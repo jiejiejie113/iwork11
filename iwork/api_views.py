@@ -29,6 +29,7 @@ from iwork.queries import (
     get_batch_flow_hourly as remote_get_batch_flow_hourly,
     get_batch_flow_employees as remote_get_batch_flow_employees,
     get_batch_stepno_employees as remote_get_batch_stepno_employees,
+    get_batch_product_overview as remote_get_batch_product_overview,
     get_kanban_stats as remote_get_kanban_stats,
     get_kanban_ranking as remote_get_kanban_ranking,
     get_kanban_filter_options as remote_get_kanban_filter_options,
@@ -39,6 +40,7 @@ from iwork.local_queries import (
     get_batch_flow_hourly as local_get_batch_flow_hourly,
     get_batch_flow_employees as local_get_batch_flow_employees,
     get_batch_stepno_employees as local_get_batch_stepno_employees,
+    get_batch_product_overview as local_get_batch_product_overview,
     get_kanban_stats as local_get_kanban_stats,
     get_kanban_ranking as local_get_kanban_ranking,
     get_kanban_filter_options as local_get_kanban_filter_options,
@@ -528,8 +530,42 @@ def stepno_detail(request, stepno):
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['GET'])
+def product_overview(request):
+    """
+    获取按产品名称分组的概览数据（今日优先读取 Redis 缓存）
+
+    支持参数：
+        ?date=...    目标日期（默认今日）
+        ?mode=local  历史视图模式
+    """
+    try:
+        date_str = request.query_params.get('date', date.today().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = request.query_params.get('mode', 'remote')
+
+        if target_date == date.today() and mode == 'remote':
+            cached = cache.get('stats:detail:product_overview')
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
+        if mode == 'local':
+            result = local_get_batch_product_overview(target_date)
+        else:
+            result = remote_get_batch_product_overview(target_date)
+
+        if target_date == date.today() and mode == 'remote':
+            cache.set('stats:detail:product_overview', result, 3600)
+
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f'获取产品概览失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ============================================================================
 # SSE 实时推送 + 目标产量设置
+# ============================================================================
 
 
 @csrf_exempt

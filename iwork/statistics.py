@@ -337,26 +337,30 @@ def cache_batch_to_redis(batch: dict) -> None:
 
 
 def get_batch_detail_stats(q=None) -> dict:
-    """批量构建生产详情数据 → {flow_overview, flow_hourly, flow_employees, stepno_employees}"""
+    """批量构建生产详情数据 → {flow_overview, flow_hourly, flow_employees, stepno_employees, product_overview}"""
     if q is None:
         q = remote_q
     today = date.today()
 
-    logger.info('生产详情：4线程并行查询开始')
+    logger.info('生产详情：5线程并行查询开始')
     t1 = time.time()
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         f_overview = pool.submit(q.get_batch_flow_overview, today)
         f_hourly = pool.submit(q.get_batch_flow_hourly, today)
         f_employees = pool.submit(q.get_batch_flow_employees, today)
         f_stepno = pool.submit(q.get_batch_stepno_employees, today)
+        f_product = pool.submit(q.get_batch_product_overview, today)
 
         result = {
             'flow_overview': _result_or_cancel(f_overview, 'flow_overview'),
             'flow_hourly': _result_or_cancel(f_hourly, 'flow_hourly'),
             'flow_employees': _result_or_cancel(f_employees, 'flow_employees'),
             'stepno_employees': _result_or_cancel(f_stepno, 'stepno_employees'),
+            'product_overview': _result_or_cancel(f_product, 'product_overview'),
         }
-    logger.info('生产详情查询完成，耗时 {:.1f}s，{} 个 Flow', time.time() - t1, len(result['flow_overview']))
+    logger.info('生产详情查询完成，耗时 {:.1f}s，{} 个 Flow，{} 个产品',
+                time.time() - t1, len(result['flow_overview']),
+                len(result.get('product_overview', {}).get('products', [])))
     return result
 
 
@@ -368,11 +372,12 @@ def cache_detail_batch_to_redis(detail_batch: dict) -> None:
     cache.set('stats:detail:flow_overview', detail_batch['flow_overview'], ttl)
     cache.set('stats:detail:flow_hourly', detail_batch['flow_hourly'], ttl)
     cache.set('stats:detail:stepno_overview', detail_batch['stepno_employees'], ttl)
+    cache.set('stats:detail:product_overview', detail_batch.get('product_overview', {}), ttl)
 
     flow_count = len(detail_batch['flow_employees'])
     for flow_name, employees in detail_batch['flow_employees'].items():
         cache.set(f'stats:detail:flow:{flow_name}', employees, ttl)
-    logger.info('详情 Redis 缓存写入完成，{} 个 key，耗时 {:.1f}s', flow_count + 3, time.time() - t1)
+    logger.info('详情 Redis 缓存写入完成，{} 个 key，耗时 {:.1f}s', flow_count + 4, time.time() - t1)
 
 
 # ============================================================================

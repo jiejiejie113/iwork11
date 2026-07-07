@@ -737,6 +737,120 @@ def get_batch_stepno_employees(target_date: date) -> dict:
     return result
 
 
+def get_batch_product_overview(target_date: date) -> dict:
+    """
+    按产品名称分组的三层结构（Product → Flow → StepNo）
+    通过 WrkOrder[:6] 匹配 production_orders.style_no 获取产品信息
+
+    Args:
+        target_date (date): 目标日期
+
+    Returns:
+        dict: {
+            products: [{
+                product_name: str, order_no: str, total_qty: int,
+                worker_count: int, flow_count: int,
+                flows: [{
+                    flow: str, qty: int, workers: int,
+                    stepnos: [{stepno: int, qty: int, workers: int}, ...]
+                }, ...]
+            }, ...]
+        }
+        按产品总产量降序排列，未匹配到的 WrkOrder 归入"未分类"
+    """
+    records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
+
+    rows = list(
+        records.values('WrkOrder', 'Flow', 'StepNo')
+        .annotate(
+            qty=Sum('Qty'),
+            workers=Count('RegPerSysID', distinct=True),
+        )
+        .order_by('WrkOrder', 'Flow', 'StepNo')
+    )
+
+    target_wo = set()
+    for r in rows:
+        wo = r['WrkOrder'] or ''
+        if len(wo) >= 6:
+            target_wo.add(wo[:6])
+
+    lookup = {}
+    if target_wo:
+        matches = (
+            ProductionOrder.objects.using('iwork_local')
+            .filter(style_no__in=target_wo)
+            .values('style_no', 'product_name', 'order_no')
+            .distinct()
+        )
+        for m in matches:
+            if m['style_no'] not in lookup:
+                lookup[m['style_no']] = (m['product_name'] or '', m['order_no'] or '')
+
+    product_map: dict[str, dict] = {}
+    unmatched_flows: dict[str, dict] = {}
+
+    for r in rows:
+        wo = r['WrkOrder'] or ''
+        prefix = wo[:6] if len(wo) >= 6 else ''
+        info = lookup.get(prefix, ('', ''))
+        product_name = info[0] if info[0] else '未分类'
+        order_no = info[1]
+
+        if product_name == '未分类':
+            flow_data = unmatched_flows
+        elif product_name not in product_map:
+            product_map[product_name] = {'order_no': order_no, 'flows': {}}
+            flow_data = product_map[product_name]['flows']
+        else:
+            flow_data = product_map[product_name]['flows']
+
+        flow = r['Flow']
+        if flow not in flow_data:
+            flow_data[flow] = {'stepnos': {}}
+        stepno = r['StepNo']
+        flow_data[flow]['stepnos'][stepno] = {
+            'stepno': stepno,
+            'qty': r['qty'] or 0,
+            'workers': r['workers'] or 0,
+        }
+
+    def _build_products(p_map: dict) -> list:
+        products = []
+        for p_name, p_data in p_map.items():
+            flow_list = []
+            product_qty = 0
+            product_workers = set()
+            for f_name, f_data in p_data['flows'].items():
+                stepno_list = sorted(f_data['stepnos'].values(), key=lambda s: s['stepno'])
+                f_qty = sum(s['qty'] for s in stepno_list)
+                f_workers = sum(s['workers'] for s in stepno_list)
+                flow_list.append({
+                    'flow': f_name,
+                    'qty': f_qty,
+                    'workers': f_workers,
+                    'stepnos': stepno_list,
+                })
+                product_qty += f_qty
+            flow_list.sort(key=lambda f: f['qty'], reverse=True)
+            products.append({
+                'product_name': p_name,
+                'order_no': p_data['order_no'],
+                'total_qty': product_qty,
+                'worker_count': 0,
+                'flow_count': len(flow_list),
+                'flows': flow_list,
+            })
+        products.sort(key=lambda p: p['total_qty'], reverse=True)
+        return products
+
+    result = _build_products(product_map)
+    if unmatched_flows:
+        result.extend(_build_products({'未分类': {'order_no': '', 'flows': unmatched_flows}}))
+
+    return {'products': result}
+
+
 # ============================================================================
 # 产量看板模块查询函数
 # ============================================================================

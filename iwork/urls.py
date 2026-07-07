@@ -49,6 +49,7 @@ urlpatterns = [
     path("api/dashboard/detail/flows/", api_views.flow_overview, name="detail-flow-overview"),
     path("api/dashboard/detail/flow/<str:flow_name>/", api_views.flow_detail, name="detail-flow-detail"),
     path("api/dashboard/detail/stepno/<int:stepno>/", api_views.stepno_detail, name="detail-stepno-detail"),
+    path("api/dashboard/detail/product-overview/", api_views.product_overview, name="detail-product-overview"),
 
     # 生产详情页面
     path("production/detail-data/", views.production_detail, name="production-detail"),
