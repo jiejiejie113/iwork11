@@ -662,22 +662,48 @@ createApp({
                 if (!canvas) return;
                 if (charts['product-chart']) charts['product-chart'].destroy();
                 const ctx = canvas.getContext('2d');
-                const colors = productChartLabels.value.map((_, i) => {
-                    const hue = (i * 37 + 200) % 360;
-                    return 'hsla(' + hue + ', 65%, 55%, 0.85)';
+
+                const values = productChartValues.value;
+                if (!values.length) return;
+                const maxVal = Math.max(...values);
+                const minVal = Math.min(...values);
+                const avgVal = values.reduce((a, b) => a + b, 0) / values.length;
+
+                const defaultColor = 'rgba(96, 165, 250, 0.85)';   // 统一蓝色
+                const maxColor = 'rgba(52, 211, 153, 0.85)';       // 最高值绿色
+                const minColor = 'rgba(248, 113, 113, 0.85)';      // 最低值红色
+                const bgColors = values.map(v => {
+                    if (values.length <= 1) return defaultColor;
+                    if (v === maxVal) return maxColor;
+                    if (v === minVal) return minColor;
+                    return defaultColor;
                 });
+                const borderColors = bgColors.map(c => c.replace('0.85', '1'));
+
                 charts['product-chart'] = new Chart(ctx, {
                     type: 'bar',
                     data: {
                         labels: productChartLabels.value,
-                        datasets: [{
-                            label: '产量',
-                            data: productChartValues.value,
-                            backgroundColor: colors,
-                            borderColor: colors.map(c => c.replace('0.85', '1')),
-                            borderWidth: 1,
-                            borderRadius: 4,
-                        }],
+                        datasets: [
+                            {
+                                label: '产量',
+                                data: values,
+                                backgroundColor: bgColors,
+                                borderColor: borderColors,
+                                borderWidth: 1,
+                                borderRadius: 4,
+                            },
+                            {
+                                type: 'line',
+                                label: '平均值 ' + fmtNum(Math.round(avgVal)),
+                                data: Array(values.length).fill(avgVal),
+                                borderColor: 'rgba(148, 163, 184, 0.7)',
+                                borderDash: [6, 4],
+                                borderWidth: 1.5,
+                                pointRadius: 0,
+                                fill: false,
+                            },
+                        ],
                     },
                     options: {
                         responsive: true,

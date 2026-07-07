@@ -44,7 +44,7 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 MODE = "export_date"            # "export_date" = 按日期导出 | "export_month" = 按月份导出
 
 # ---- export_date 模式参数 ----
-TARGET_DATE = "2026-06-25"      # None = 今日，或 格式"2026-04-21"
+TARGET_DATE = "2026-07-07"      # None = 今日，或 格式"2026-04-21"
 
 # ---- export_month 模式参数 ----
 TARGET_MONTH = "2026-04"        # 支持月份 "2026-02" 或具体日期 "2026-02-20"，自动识别
@@ -63,7 +63,6 @@ DB_HOST_OPTIONS = {
     "EST": "192.168.4.19",
 }
 # ========================================
-
 
 def get_db_config(host: str | None = None) -> dict:
     """
