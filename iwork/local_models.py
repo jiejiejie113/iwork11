@@ -63,3 +63,39 @@ class TargetProduction(models.Model):
     def __str__(self) -> str:
         wo_tag = f' @ {self.workorder}' if self.workorder else ''
         return f'{self.target_date} - {self.employee_id}{wo_tag}: {self.target_qty}'
+
+
+class ProductionOrder(models.Model):
+    """
+    生产工单信息（本地存储）
+    数据源：iwork/sqlite/production_orders.db → orders 表
+    每个工单可关联多个部门和款号
+    """
+    order_no = models.CharField('工单号', max_length=50)
+    order_dept = models.CharField('工单/部门', max_length=50, blank=True, default='')
+    style_no = models.CharField('款号', max_length=50, blank=True, default='')
+    product_name = models.CharField('产品名称', max_length=200, blank=True, default='')
+    style_desc = models.CharField('款式', max_length=200, blank=True, default='')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'production_orders'
+        managed = True
+        indexes = [
+            models.Index(fields=['order_no'], name='idx_po_order_no'),
+            models.Index(fields=['style_no'], name='idx_po_style_no'),
+            models.Index(fields=['order_dept'], name='idx_po_order_dept'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['order_no', 'order_dept', 'style_no', 'product_name', 'style_desc'],
+                name='idx_po_unique_record',
+            ),
+        ]
+        verbose_name = '生产工单'
+        verbose_name_plural = '生产工单'
+
+    def __str__(self) -> str:
+        return f'{self.order_no} - {self.style_no}'

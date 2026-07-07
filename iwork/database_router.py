@@ -8,7 +8,7 @@ class DatabaseRouter:
 
     iwork_app_labels = ['iwork']
     # 路由到 iwork_local 的模型（读写 + 允许迁移）
-    local_models = {'localpytckreg3', 'targetproduction'}
+    local_models = {'localpytckreg3', 'targetproduction', 'productionorder'}
 
     def _is_local(self, model):
         return model._meta.model_name in self.local_models
