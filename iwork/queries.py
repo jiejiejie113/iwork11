@@ -739,7 +739,7 @@ def get_batch_stepno_employees(target_date: date) -> dict:
 
 def get_batch_product_overview(target_date: date) -> dict:
     """
-    按产品名称分组的三层结构（Product → Flow → StepNo）
+    按产品名称分组的四层结构（Product → WrkOrder → Flow → StepNo）
     通过 WrkOrder[:6] 匹配 production_orders.style_no 获取产品信息
 
     Args:
@@ -749,12 +749,13 @@ def get_batch_product_overview(target_date: date) -> dict:
         dict: {
             products: [{
                 product_name: str, order_no: str, total_qty: int,
-                worker_count: int, flow_count: int,
-                flows: [{
-                    flow: str, qty: int, workers: int,
-                    stepnos: [{stepno: int, qty: int, workers: int}, ...]
-                }, ...]
-            }, ...]
+                wrk_order_count: int,
+                wrk_orders: [{
+                    wrk_order: str, qty: int, workers: int, flow_count: int,
+                    flows: [{flow: str, qty: int, workers: int,
+                             stepnos: [{stepno: int, qty: int, workers: int}]}]
+                }]
+            }]
         }
         按产品总产量降序排列，未匹配到的 WrkOrder 归入"未分类"
     """
@@ -787,8 +788,9 @@ def get_batch_product_overview(target_date: date) -> dict:
             if m['style_no'] not in lookup:
                 lookup[m['style_no']] = (m['product_name'] or '', m['order_no'] or '')
 
-    product_map: dict[str, dict] = {}
-    unmatched_flows: dict[str, dict] = {}
+    # 四层结构: product → {wrk_order: {flow: {stepno: {qty, workers}}}}
+    product_raw: dict[str, dict] = {}
+    unmatched_raw: dict[str, dict] = {}
 
     for r in rows:
         wo = r['WrkOrder'] or ''
@@ -798,12 +800,16 @@ def get_batch_product_overview(target_date: date) -> dict:
         order_no = info[1]
 
         if product_name == '未分类':
-            flow_data = unmatched_flows
-        elif product_name not in product_map:
-            product_map[product_name] = {'order_no': order_no, 'flows': {}}
-            flow_data = product_map[product_name]['flows']
+            target = unmatched_raw
+        elif product_name not in product_raw:
+            product_raw[product_name] = {'order_no': order_no, 'wrk_orders': {}}
+            target = product_raw[product_name]['wrk_orders']
         else:
-            flow_data = product_map[product_name]['flows']
+            target = product_raw[product_name]['wrk_orders']
+
+        if wo not in target:
+            target[wo] = {'flows': {}}
+        flow_data = target[wo]['flows']
 
         flow = r['Flow']
         if flow not in flow_data:
@@ -815,13 +821,12 @@ def get_batch_product_overview(target_date: date) -> dict:
             'workers': r['workers'] or 0,
         }
 
-    def _build_products(p_map: dict) -> list:
-        products = []
-        for p_name, p_data in p_map.items():
+    def _build_wrk_order(wo_data: dict) -> list:
+        result = []
+        for wo_name, wo in wo_data.items():
             flow_list = []
-            product_qty = 0
-            product_workers = set()
-            for f_name, f_data in p_data['flows'].items():
+            wo_qty = 0
+            for f_name, f_data in wo['flows'].items():
                 stepno_list = sorted(f_data['stepnos'].values(), key=lambda s: s['stepno'])
                 f_qty = sum(s['qty'] for s in stepno_list)
                 f_workers = sum(s['workers'] for s in stepno_list)
@@ -831,22 +836,35 @@ def get_batch_product_overview(target_date: date) -> dict:
                     'workers': f_workers,
                     'stepnos': stepno_list,
                 })
-                product_qty += f_qty
+                wo_qty += f_qty
             flow_list.sort(key=lambda f: f['qty'], reverse=True)
+            result.append({
+                'wrk_order': wo_name,
+                'qty': wo_qty,
+                'flow_count': len(flow_list),
+                'flows': flow_list,
+            })
+        result.sort(key=lambda w: w['qty'], reverse=True)
+        return result
+
+    def _build_products(p_map: dict) -> list:
+        products = []
+        for p_name, p_data in p_map.items():
+            wo_list = _build_wrk_order(p_data['wrk_orders'])
+            product_qty = sum(w['qty'] for w in wo_list)
             products.append({
                 'product_name': p_name,
                 'order_no': p_data['order_no'],
                 'total_qty': product_qty,
-                'worker_count': 0,
-                'flow_count': len(flow_list),
-                'flows': flow_list,
+                'wrk_order_count': len(wo_list),
+                'wrk_orders': wo_list,
             })
         products.sort(key=lambda p: p['total_qty'], reverse=True)
         return products
 
-    result = _build_products(product_map)
-    if unmatched_flows:
-        result.extend(_build_products({'未分类': {'order_no': '', 'flows': unmatched_flows}}))
+    result = _build_products(product_raw)
+    if unmatched_raw:
+        result.extend(_build_products({'未分类': {'order_no': '', 'wrk_orders': unmatched_raw}}))
 
     return {'products': result}
 
