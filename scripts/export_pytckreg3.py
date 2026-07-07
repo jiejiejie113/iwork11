@@ -18,6 +18,7 @@
 """
 
 import calendar
+import sqlite3
 import sys
 import threading
 from datetime import date, datetime
@@ -115,6 +116,35 @@ def get_db_config(host: str | None = None) -> dict:
     }
 
 
+def _build_production_order_lookup() -> dict[str, tuple[str, str]]:
+    """
+    从 SQLite 读取生产工单数据，构建 style_no → (产品名称, 生产单号) 映射
+
+    Returns:
+        dict: {style_no: (product_name, order_no)}，文件不存在时返回空字典
+    """
+    sqlite_path = Path(__file__).parent.parent / "sqlite" / "production_orders.db"
+    if not sqlite_path.exists():
+        logger.warning(f"SQLite 文件不存在: {sqlite_path}，跳过工单信息匹配")
+        return {}
+
+    try:
+        conn = sqlite3.connect(str(sqlite_path))
+        cursor = conn.cursor()
+        cursor.execute('SELECT "Style No", "Product Name", "order" FROM orders')
+        lookup: dict[str, tuple[str, str]] = {}
+        for row in cursor:
+            style_no, product_name, order_no = row
+            if style_no and style_no not in lookup:
+                lookup[style_no] = (product_name or '', order_no or '')
+        conn.close()
+        logger.info(f"已加载 {len(lookup)} 条生产工单映射")
+        return lookup
+    except sqlite3.Error as e:
+        logger.warning(f"SQLite 读取失败: {e}，跳过工单信息匹配")
+        return {}
+
+
 def export_to_xlsx(
     target_date: date,
     output_dir: Path,
@@ -182,6 +212,12 @@ def export_to_xlsx(
             cursor.execute(sql, params)
 
             columns = [d[0] for d in cursor.description]
+            # 找到 WrkOrder 列的索引（用于后续匹配）
+            wrk_order_idx = columns.index('WrkOrder')
+            columns.append('ProductName')
+            columns.append('OrderNo')
+
+            lookup = _build_production_order_lookup()
 
             output_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -200,7 +236,10 @@ def export_to_xlsx(
                     logger.warning(f"已取消，部分数据已保存: {output_file} ({count} 条)")
                     return -count
 
-                ws.append(row)
+                wrk_order = row[wrk_order_idx] or ''
+                prefix = wrk_order[:6] if len(wrk_order) >= 6 else ''
+                product_name, order_no = lookup.get(prefix, ('', ''))
+                ws.append(row + (product_name, order_no))
                 count += 1
                 if count % CHUNK_SIZE == 0:
                     logger.info(f"已写入 {count} 条")
@@ -301,6 +340,11 @@ def export_month_to_xlsx(
                     "SerialNum, StationID FROM pytckreg3 LIMIT 0"
                 )
                 columns = [d[0] for d in cursor.description]
+                wrk_order_idx = columns.index('WrkOrder')
+                columns.append('ProductName')
+                columns.append('OrderNo')
+
+                lookup = _build_production_order_lookup()
 
                 output_dir.mkdir(parents=True, exist_ok=True)
                 month_str = target_month.replace("-", "")
@@ -345,7 +389,10 @@ def export_month_to_xlsx(
                             logger.warning(f"已取消，部分数据已保存: {output_file} ({total} 条)")
                             return -total
 
-                        ws.append(row)
+                        wrk_order = row[wrk_order_idx] or ''
+                        prefix = wrk_order[:6] if len(wrk_order) >= 6 else ''
+                        product_name, order_no = lookup.get(prefix, ('', ''))
+                        ws.append(row + (product_name, order_no))
                         total += 1
                         daily_count += 1
                         if total % CHUNK_SIZE == 0:
