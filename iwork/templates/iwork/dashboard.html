@@ -215,6 +215,8 @@
                     <tr class="text-left text-slate-400 border-b border-slate-700">
                         <th class="pb-2">工单号</th>
                         <th class="pb-2">总产量</th>
+                        <th class="pb-2">产品名称</th>
+                        <th class="pb-2">生产单号</th>
                         <th class="pb-2">分组</th>
                     </tr>
                 </thead>
@@ -222,9 +224,11 @@
                     <tr v-for="wo in workorderItems" :key="wo.wrk_order" class="border-b border-slate-700 hover:bg-slate-700/50">
                         <td class="py-2 text-slate-300">{[ wo.wrk_order ]}</td>
                         <td class="py-2 text-emerald-400 font-bold tabular-nums">{[ fmtNum(wo.total_qty) ]}</td>
+                        <td class="py-2 text-slate-300">{[ wo.product_name || '-' ]}</td>
+                        <td class="py-2 text-slate-300">{[ wo.order_no || '-' ]}</td>
                         <td class="py-2 text-slate-400 text-xs">{[ (wo.flows || []).join(', ') ]}</td>
                     </tr>
-                    <tr v-if="!workorderItems.length"><td colspan="3" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
+                    <tr v-if="!workorderItems.length"><td colspan="5" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
                 </tbody>
             </table>
         </div>

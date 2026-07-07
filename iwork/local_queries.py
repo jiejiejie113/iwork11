@@ -3,7 +3,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count
 
-from iwork.local_models import LocalPytckreg3
+from iwork.local_models import LocalPytckreg3, ProductionOrder
 
 
 def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
@@ -153,6 +153,32 @@ def _inject_flows(records, wo_list: list) -> None:
         wo['flows'] = sorted(flow_map.get(wo['wrk_order'], set()))
 
 
+def _enrich_production_orders(items: list) -> None:
+    """为工单列表注入 production_orders 中的产品名称和生产单号（原地修改）"""
+    prefixes = {item['wrk_order'][:6] for item in items if item.get('wrk_order') and len(item['wrk_order']) >= 6}
+    if not prefixes:
+        return
+
+    matches = (
+        ProductionOrder.objects
+        .using('iwork_local')
+        .filter(style_no__in=prefixes)
+        .values('style_no', 'product_name', 'order_no')
+        .distinct()
+    )
+
+    lookup = {}
+    for m in matches:
+        if m['style_no'] not in lookup:
+            lookup[m['style_no']] = (m['product_name'], m['order_no'])
+
+    for item in items:
+        prefix = item.get('wrk_order', '')[:6]
+        info = lookup.get(prefix, ('', ''))
+        item['product_name'] = info[0]
+        item['order_no'] = info[1]
+
+
 def get_workorders_list(target: date, limit: int = 20,
                                stepno_filter: list[int] | None = None) -> list:
     """获取本地工单列表"""
@@ -295,6 +321,7 @@ def get_workorders_paginated(target_date: date, page: int = 1, page_size: int = 
     )
     items = [{'wrk_order': s['WrkOrder'], 'total_qty': s['total_qty'] or 0, 'worker_count': s['worker_count'] or 0} for s in stats]
     _inject_flows(records, items)
+    _enrich_production_orders(items)
     return {
         'items': items,
         'total': total,
