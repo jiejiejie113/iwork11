@@ -664,6 +664,7 @@ createApp({
                     hasChildren: children.length > 0,
                 });
             }
+            nodes.sort((a, b) => b.qty - a.qty);
             return nodes;
         }
 
