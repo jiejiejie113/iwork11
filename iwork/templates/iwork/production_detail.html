@@ -217,6 +217,8 @@
                     <span v-if="availableLevels.length === 0" class="text-slate-600 text-[10px]">所有维度已在激活区</span>
                     <span v-if="availableLevels.length > 0 && selectedLevels.length === 0"
                         class="text-slate-500 text-[10px] ml-auto">拖入下方激活区以显示数据</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-red-400 border border-dashed border-red-500/50 cursor-pointer hover:bg-red-500/10 hover:border-red-400 text-[10px]"
+                        @dragenter="dragOver" @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
                 </div>
                 <!-- 下区：激活区 -->
                 <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
@@ -234,10 +236,8 @@
                         </span>
                     </template>
                     <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
-                    <span class="px-2 py-0.5 rounded bg-slate-700 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-blue-500 hover:text-blue-400 text-[10px] ml-auto"
+                    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-blue-400 border border-dashed border-blue-500/50 cursor-pointer hover:bg-blue-500/10 hover:border-blue-400 text-[10px]"
                         @dragenter="dragOver" @dragover="dragOver" @drop="dropInsertHere">拖入排序</span>
-                    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-red-500 hover:text-red-400 text-[10px]"
-                        @dragenter="dragOver" @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
                 </div>
             </div>
 
