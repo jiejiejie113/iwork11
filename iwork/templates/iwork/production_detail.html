@@ -841,13 +841,11 @@ createApp({
 
         function onTagPointerUp(e) {
             activeTagDrag.value = false;
-            tagHoverInsertIdx.value = -1;
             window.removeEventListener('pointermove', onTagPointerMove);
             window.removeEventListener('pointerup', onTagPointerUp);
 
             const level = tagDragLevel.value;
             const source = tagDragSource.value;
-            const oldIdx = tagDragIdx.value;
             const insertIdx = tagHoverInsertIdx.value;
 
             // 隐藏幽灵检测光标下元素
@@ -864,7 +862,7 @@ createApp({
                 const rmIdx = levels.indexOf(level);
                 if (rmIdx >= 0) levels.splice(rmIdx, 1);
             } else if (insertIdx >= 0) {
-                // 拖到激活区 → 使用 onTagPointerMove 预计算的插入位置
+                // 拖到激活区 → 使用预计算的插入位置
                 const srcIdx = source === 'selected' ? levels.indexOf(level) : -1;
                 if (srcIdx >= 0) levels.splice(srcIdx, 1);
                 if (insertIdx >= levels.length) levels.push(level);
@@ -878,6 +876,7 @@ createApp({
             tagDragLevel.value = '';
             tagDragSource.value = '';
             tagDragIdx.value = -1;
+            tagHoverInsertIdx.value = -1;
         }
 
         function dragStart(evt, level) {}
