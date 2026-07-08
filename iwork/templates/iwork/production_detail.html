@@ -60,7 +60,7 @@
         .dim-tag-wrap .dim-tag:active { cursor: grabbing; }
         .dim-tag-wrap .dim-tag.placeholder { display: inline-block; background: transparent; border: 2px dashed #475569; border-radius: 4px; opacity: .4; min-width: 3em; }
         .dim-tag.dragging { position: fixed; z-index: 1000; pointer-events: none; cursor: grabbing; transform: scale(1.12); box-shadow: 0 8px 25px rgba(0,0,0,.5); white-space: nowrap; }
-        .dim-tag-insert-indicator { display: inline-block; width: 1px; height: 18px; border-left: 2px dashed #60a5fa; vertical-align: middle; margin: 0 1px; box-shadow: 0 0 5px rgba(96,165,250,.5); }
+        .dim-tag-insert-indicator { display: inline-block; height: 18px; border-left: 2px dashed #60a5fa; vertical-align: middle; box-shadow: 0 0 5px rgba(96,165,250,.5); opacity: .6; }
         /* 隐藏滚动条但保留滚动功能 */
         .hide-scrollbar {
             -ms-overflow-style: none;  /* IE and Edge */
@@ -232,7 +232,7 @@
                 <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
                     data-area="activation">
                     <span class="text-slate-500 font-semibold mr-1">激活区</span>
-                    <span v-if="activeTagDrag && tagHoverInsertIdx === 0" class="dim-tag-insert-indicator"></span>
+                    <span v-if="activeTagDrag && tagHoverInsertIdx === 0" class="dim-tag-insert-indicator" :style="{ width: tagDragWidth + 'px' }"></span>
                     <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
                         <span v-if="idx > 0" class="text-slate-700">▸</span>
                         <span class="dim-tag-wrap">
@@ -242,7 +242,7 @@
                                 {[ levelLabels[lv] ]}
                             </span>
                         </span>
-                        <span v-if="activeTagDrag && tagHoverInsertIdx === idx + 1" class="dim-tag-insert-indicator"></span>
+                        <span v-if="activeTagDrag && tagHoverInsertIdx === idx + 1" class="dim-tag-insert-indicator" :style="{ width: tagDragWidth + 'px' }"></span>
                     </template>
                     <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
                     <span class="px-2 py-0.5 rounded bg-slate-700/50 text-blue-400 border border-dashed border-blue-500/50 cursor-pointer hover:bg-blue-500/10 hover:border-blue-400 text-[10px]"
@@ -776,6 +776,7 @@ createApp({
         const tagDragSource = ref(''); // 'pool' | 'selected'
         const tagDragIdx = ref(-1);
         const tagHoverInsertIdx = ref(-1);
+        const tagDragWidth = ref(0);
         const tagDragStyle = reactive({ left: '0px', top: '0px' });
 
         let tagDragStartX = 0, tagDragStartY = 0;
@@ -789,6 +790,7 @@ createApp({
             tagDragLevel.value = level;
             tagDragSource.value = source;
             tagDragIdx.value = idx;
+            tagDragWidth.value = rect.width;
             activeTagDrag.value = true;
             tagDragStartX = e.clientX;
             tagDragStartY = e.clientY;
@@ -1842,7 +1844,7 @@ createApp({
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             productRows, productChartTitle, toggleRow,
-            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragStyle,
+            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragStyle,
             onTagPointerDown,
             dragStart,
             // 工单列表相关
