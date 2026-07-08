@@ -202,32 +202,41 @@
         </div>
 
         <div class="flex-1 overflow-y-auto bg-slate-800 border border-slate-700 rounded-lg flex flex-col">
-            <!-- 表头：备选区 + 激活区 -->
-            <div class="flex-shrink-0 border-b border-slate-700 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
-                <span class="text-slate-500 mr-1">备选区</span>
-                <span v-for="lv in availableLevels" :key="'avail-' + lv"
-                    :draggable="true"
-                    @dragstart="dragStart($event, lv)"
-                    class="px-2 py-0.5 rounded bg-slate-700 text-slate-400 cursor-grab border border-slate-600 hover:bg-slate-600 transition-colors">
-                    {[ levelLabels[lv] ]}
-                </span>
-                <span class="text-slate-600 mx-2">→</span>
-                <span class="text-slate-500 mr-1">▼</span>
-                <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
-                    <span v-if="idx > 0" class="text-slate-700">▸</span>
-                    <span :draggable="true"
+            <!-- 拖拽区：上区备选 / 下区激活 -->
+            <div class="flex-shrink-0 border-b border-slate-700">
+                <!-- 上区：备选区 -->
+                <div class="px-3 pt-2 pb-1.5 flex items-center gap-2 flex-wrap text-xs">
+                    <span class="text-slate-500 font-semibold mr-1">备选区</span>
+                    <span v-for="lv in availableLevels" :key="'avail-' + lv"
+                        :draggable="true"
                         @dragstart="dragStart($event, lv)"
-                        @dragenter="dragOver"
-                        @dragover="dragOver"
-                        @drop="dropToSelected($event, idx)"
-                        class="px-2 py-0.5 rounded bg-blue-600 text-white cursor-grab hover:bg-blue-500 transition-colors">
+                        class="px-2 py-0.5 rounded bg-slate-700 text-slate-400 cursor-grab border border-slate-600 hover:bg-slate-600 transition-colors">
                         {[ levelLabels[lv] ]}
                     </span>
-                </template>
-                <span class="px-2 py-0.5 rounded bg-slate-700 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-blue-500 hover:text-blue-400 text-[10px]"
-                    @dragenter="dragOver" @dragover="dragOver" @drop="dropInsertHere">拖入排序</span>
-                <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-red-500 hover:text-red-400 text-[10px]"
-                    @dragenter="dragOver" @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
+                    <span v-if="availableLevels.length === 0" class="text-slate-600 text-[10px]">所有维度已在激活区</span>
+                    <span v-if="availableLevels.length > 0 && selectedLevels.length === 0"
+                        class="text-slate-500 text-[10px] ml-auto">拖入下方激活区以显示数据</span>
+                </div>
+                <!-- 下区：激活区 -->
+                <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50">
+                    <span class="text-slate-500 font-semibold mr-1">激活区</span>
+                    <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
+                        <span v-if="idx > 0" class="text-slate-700">▸</span>
+                        <span :draggable="true"
+                            @dragstart="dragStart($event, lv)"
+                            @dragenter="dragOver"
+                            @dragover="dragOver"
+                            @drop="dropToSelected($event, idx)"
+                            class="px-2 py-0.5 rounded bg-blue-600 text-white cursor-grab hover:bg-blue-500 transition-colors">
+                            {[ levelLabels[lv] ]}
+                        </span>
+                    </template>
+                    <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-700 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-blue-500 hover:text-blue-400 text-[10px] ml-auto"
+                        @dragenter="dragOver" @dragover="dragOver" @drop="dropInsertHere">拖入排序</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-red-500 hover:text-red-400 text-[10px]"
+                        @dragenter="dragOver" @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
+                </div>
             </div>
 
             <!-- 动态树形表格 -->
