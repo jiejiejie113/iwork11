@@ -255,7 +255,11 @@
                         <td class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</td>
                     </tr>
                     <tr v-if="productRows.length === 0" class="border-b border-slate-700">
-                        <td colspan="3" class="py-8 text-center text-slate-500">暂无数据</td>
+                        <td colspan="3" class="py-8 text-center text-slate-500">
+                            <template v-if="selectedLevels.length === 0">将维度标签拖入激活区以显示数据</template>
+                            <template v-else-if="productList.length === 0">暂无产品数据</template>
+                            <template v-else>点击展开查看详情</template>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -573,7 +577,7 @@ createApp({
         // 维度管理（拖拽控制层级）
         const productList = ref([]);
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
-        const selectedLevels = ref(['product', 'wrk_order', 'stepno', 'flow']);
+        const selectedLevels = ref([]);
         const expandedKeys = reactive(new Set());
         const levelLabels = { product: '产品名称', wrk_order: '工单号', stepno: '工序号', flow: '生产线' };
 
@@ -625,7 +629,7 @@ createApp({
                             qty: nodeQty(levelName, node), info: nodeInfo(levelName, node),
                             hasChildren: hasKids, expanded: expandedKeys.has(key),
                         });
-                        if (!expandedKeys.has(key)) return;
+                        if (!expandedKeys.has(key)) continue;
                     }
                     const nc = nodeChildren(levelName, node);
                     if (nc && levelIdx < 3) walk(nc, levelIdx + 1, key);
