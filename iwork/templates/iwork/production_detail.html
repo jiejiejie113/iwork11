@@ -813,29 +813,44 @@ createApp({
 
             const actArea = document.querySelector('[data-area="activation"]');
             const poolArea = document.querySelector('[data-area="pool"]');
-            if (poolArea && poolArea.contains(elemBelow)) {
+            const poolRect = poolArea ? poolArea.getBoundingClientRect() : null;
+            const actRect = actArea ? actArea.getBoundingClientRect() : null;
+
+            // 判断光标在哪个区域（用坐标，不依赖 DOM 命中）
+            const inPool = poolRect && e.clientX >= poolRect.left && e.clientX <= poolRect.right
+                && e.clientY >= poolRect.top && e.clientY <= poolRect.bottom;
+            const inAct = actRect && e.clientX >= actRect.left && e.clientX <= actRect.right
+                && e.clientY >= actRect.top && e.clientY <= actRect.bottom;
+
+            if (inPool) {
                 tagHoverInsertIdx.value = -1;
-            } else if (elemBelow?.closest('[data-action="add"]')) {
-                tagHoverInsertIdx.value = selectedLevels.value.length;
-            } else if (!actArea || !actArea.contains(elemBelow)) {
+            } else if (!inAct) {
                 tagHoverInsertIdx.value = -1;
             } else {
-                const wrap = elemBelow?.closest('.dim-tag-wrap');
-                if (!wrap) { tagHoverInsertIdx.value = selectedLevels.value.length; return; }
+                // 距离最近标签判定（消除 ▸ 和 gap 死区）
                 const wraps = [...actArea.querySelectorAll(':scope > .dim-tag-wrap')];
-                const wrapIdx = wraps.indexOf(wrap);
-                if (wrapIdx < 0) { tagHoverInsertIdx.value = selectedLevels.value.length; return; }
-                const cursorRight = e.clientX > wrap.getBoundingClientRect().left + wrap.getBoundingClientRect().width / 2;
-                const src = tagDragSource.value;
-                const srcIdx = tagDragIdx.value;
-                // 计算在真实 selectedLevels 中的插入位置（排除占位符标签）
-                let realBefore = 0;
-                for (let i = 0; i < wrapIdx; i++) {
-                    if (!wraps[i].querySelector('.dim-tag.placeholder')) realBefore++;
+                let bestIdx = -1, bestDist = Infinity;
+                for (let i = 0; i < wraps.length; i++) {
+                    const r = wraps[i].getBoundingClientRect();
+                    const midX = r.left + r.width / 2;
+                    const dist = Math.abs(e.clientX - midX);
+                    if (dist < bestDist) { bestDist = dist; bestIdx = i; }
                 }
-                let ins = realBefore + (cursorRight ? 1 : 0);
-                if (src === 'selected' && ins > srcIdx) ins--;
-                tagHoverInsertIdx.value = ins;
+                if (bestIdx < 0) {
+                    tagHoverInsertIdx.value = selectedLevels.value.length;
+                } else {
+                    const r = wraps[bestIdx].getBoundingClientRect();
+                    const cursorRight = e.clientX > r.left + r.width / 2;
+                    const src = tagDragSource.value;
+                    const srcIdx = tagDragIdx.value;
+                    let realBefore = 0;
+                    for (let i = 0; i < bestIdx; i++) {
+                        if (!wraps[i].querySelector('.dim-tag.placeholder')) realBefore++;
+                    }
+                    let ins = realBefore + (cursorRight ? 1 : 0);
+                    if (src === 'selected' && ins > srcIdx) ins--;
+                    tagHoverInsertIdx.value = ins;
+                }
             }
         }
 
