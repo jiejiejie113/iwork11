@@ -205,7 +205,8 @@
             <!-- 拖拽区：上区备选 / 下区激活 -->
             <div class="flex-shrink-0 border-b border-slate-700">
                 <!-- 上区：备选区 -->
-                <div class="px-3 pt-2 pb-1.5 flex items-center gap-2 flex-wrap text-xs">
+                <div class="px-3 pt-2 pb-1.5 flex items-center gap-2 flex-wrap text-xs"
+                    @dragover="dragOver" @drop="dropToPool">
                     <span class="text-slate-500 font-semibold mr-1">备选区</span>
                     <span v-for="lv in availableLevels" :key="'avail-' + lv"
                         :draggable="true"
@@ -761,6 +762,7 @@ createApp({
         function dragOver(evt) { evt.preventDefault(); evt.dataTransfer.dropEffect = 'move'; }
         function dropToSelected(evt, insertIdx) {
             evt.preventDefault();
+            evt.stopPropagation();
             const level = evt.dataTransfer.getData('text/plain');
             if (!level) return;
             const levels = [...selectedLevels.value];
@@ -777,6 +779,7 @@ createApp({
         }
         function dropToPool(evt) {
             evt.preventDefault();
+            evt.stopPropagation();
             const level = evt.dataTransfer.getData('text/plain');
             if (!level) return;
             const levels = [...selectedLevels.value];
