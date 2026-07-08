@@ -579,7 +579,7 @@ createApp({
         const productList = ref([]);
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref([]);
-        const expandedKeys = reactive(new Set());
+        const activePath = ref([]);
         const levelLabels = { product: '产品名称', wrk_order: '工单号', stepno: '工序号', flow: '生产线' };
 
         const availableLevels = computed(() => {
@@ -656,7 +656,7 @@ createApp({
             return nodes;
         }
 
-        // 动态树形表格行（按 selectedLevels 顺序重分组）
+        // 动态树形表格行（按 selectedLevels 顺序重分组，activePath 控制唯一展开）
         const productRows = computed(() => {
             if (!selectedLevels.value.length) return [];
             const leaves = flattenToLeaves(productList.value);
@@ -666,15 +666,16 @@ createApp({
             function walk(nodes, depth, parentKey) {
                 for (const node of nodes) {
                     const key = (parentKey || '') + '/' + node.name;
+                    const isExpanded = activePath.value.length > depth && activePath.value[depth] === key;
                     rows.push({
                         depth, key,
                         name: node.name,
                         qty: node.qty,
                         info: node.info,
                         hasChildren: node.hasChildren,
-                        expanded: expandedKeys.has(key),
+                        expanded: isExpanded,
                     });
-                    if (expandedKeys.has(key) && node.children) {
+                    if (isExpanded && node.children) {
                         walk(node.children, depth + 1, key);
                     }
                 }
@@ -683,29 +684,63 @@ createApp({
             return rows;
         });
 
-        // 图表联动
+        // 图表：仅显示当前焦点层级的直属子节点
+        const chartFocusKey = computed(() => {
+            return activePath.value.length ? activePath.value[activePath.value.length - 1] : null;
+        });
+
         const productChartLabels = computed(() => {
-            return productRows.value.map(r => r.name);
+            if (!chartFocusKey.value) {
+                return productRows.value.filter(r => r.depth === 0).map(r => r.name);
+            }
+            const rows = [];
+            let targetDepth = -1, collecting = false;
+            for (const r of productRows.value) {
+                if (r.key === chartFocusKey.value) { targetDepth = r.depth; collecting = true; continue; }
+                if (collecting) {
+                    if (r.depth <= targetDepth) break;
+                    if (r.depth === targetDepth + 1) rows.push(r);
+                }
+            }
+            return rows.map(r => r.name);
         });
         const productChartValues = computed(() => {
-            return productRows.value.map(r => r.qty);
+            if (!chartFocusKey.value) {
+                return productRows.value.filter(r => r.depth === 0).map(r => r.qty);
+            }
+            const rows = [];
+            let targetDepth = -1, collecting = false;
+            for (const r of productRows.value) {
+                if (r.key === chartFocusKey.value) { targetDepth = r.depth; collecting = true; continue; }
+                if (collecting) {
+                    if (r.depth <= targetDepth) break;
+                    if (r.depth === targetDepth + 1) rows.push(r);
+                }
+            }
+            return rows.map(r => r.qty);
         });
-        const productChartTitle = ref('各维度 产量 & 人数');
-        function resetChartTitle() {
-            if (!selectedLevels.value.length) { productChartTitle.value = '各维度 产量 & 人数'; return; }
-            productChartTitle.value = selectedLevels.value.map(l => levelLabels[l]).join(' / ') + ' 产量 & 人数';
-        }
+        const productChartTitle = computed(() => {
+            if (!chartFocusKey.value) {
+                if (!selectedLevels.value.length) return '各维度 产量 & 人数';
+                return selectedLevels.value.map(l => levelLabels[l]).join(' / ') + ' 产量 & 人数';
+            }
+            for (const r of productRows.value) {
+                if (r.key === chartFocusKey.value) return r.name + ' 详情';
+            }
+            return '各维度 产量 & 人数';
+        });
 
         function toggleRow(row) {
-            if (expandedKeys.has(row.key)) {
-                expandedKeys.delete(row.key);
+            if (!row.hasChildren) return;
+            if (activePath.value.length > row.depth && activePath.value[row.depth] === row.key) {
+                // 收起：截断到当前层级之前
+                activePath.value.splice(row.depth);
             } else {
-                expandedKeys.add(row.key);
+                // 展开：截断旧路径 + 追加当前节点
+                activePath.value.splice(row.depth);
+                activePath.value.push(row.key);
             }
-            nextTick(() => {
-                productChartTitle.value = row.name + ' 详情';
-                if (productRows.value.length) renderProductChart();
-            });
+            nextTick(() => { if (productRows.value.length) renderProductChart(); });
         }
 
         // 拖拽处理
@@ -727,8 +762,7 @@ createApp({
             if (insertIdx >= levels.length) levels.push(level);
             else levels.splice(insertIdx, 0, level);
             selectedLevels.value = levels;
-            expandedKeys.clear();
-            resetChartTitle();
+            activePath.value = [];
             nextTick(() => renderProductChart());
         }
         function dropToPool(evt) {
@@ -738,11 +772,10 @@ createApp({
             const levels = [...selectedLevels.value];
             const idx = levels.indexOf(level);
             if (idx < 0) return;
-            if (levels.length <= 2) return;
+            if (levels.length < 1) return;
             levels.splice(idx, 1);
             selectedLevels.value = levels;
-            expandedKeys.clear();
-            resetChartTitle();
+            activePath.value = [];
             nextTick(() => renderProductChart());
         }
         function dropInsertHere(evt) {
@@ -1371,8 +1404,7 @@ createApp({
 
         async function loadProductOverview() {
             showLoading();
-            expandedKeys.clear();
-            resetChartTitle();
+            activePath.value = [];
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await resp.json();
@@ -1694,7 +1726,7 @@ createApp({
             isEditing, draft, woDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
-            productList, selectedLevels, availableLevels, expandedKeys, levelLabels,
+            productList, selectedLevels, availableLevels, levelLabels,
             productRows, productChartTitle, toggleRow,
             dragStart, dragOver, dropToSelected, dropToPool, dropInsertHere,
             // 工单列表相关
