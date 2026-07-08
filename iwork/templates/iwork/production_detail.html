@@ -604,7 +604,7 @@ createApp({
         // 维度管理（拖拽控制层级）
         const productList = ref([]);
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
-        const selectedLevels = ref([]);
+        const selectedLevels = ref(['product']);
         const activePath = ref([]);
         const levelLabels = { product: '产品名称', wrk_order: '工单号', stepno: '工序号', flow: '生产线' };
 
