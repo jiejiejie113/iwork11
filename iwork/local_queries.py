@@ -672,7 +672,7 @@ def get_batch_stepno_employees(target_date: date) -> dict:
 
 def get_batch_product_overview(target_date: date) -> dict:
     """
-    按产品名称分组的四层结构（Product → WrkOrder → Flow → StepNo）— 本地库版本
+    按产品名称分组的四层结构（Product → WrkOrder → StepNo → Flow）— 本地库版本
     通过 WrkOrder[:6] 匹配 production_orders.style_no 获取产品信息
 
     Args:
@@ -683,19 +683,19 @@ def get_batch_product_overview(target_date: date) -> dict:
             products: [{
                 product_name: str, order_no: str, total_qty: int,
                 wrk_order_count: int,
-                wrk_orders: [{wrk_order, qty, flow_count, flows: [{flow, qty, workers, stepnos}]}]
+                wrk_orders: [{wrk_order, qty, stepno_count, stepnos: [{stepno, qty, workers, flows}]}]
             }]
         }
     """
     records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
 
     rows = list(
-        records.values('WrkOrder', 'Flow', 'StepNo')
+        records.values('WrkOrder', 'StepNo', 'Flow')
         .annotate(
             qty=Sum('Qty'),
             workers=Count('RegPerSysID', distinct=True),
         )
-        .order_by('WrkOrder', 'Flow', 'StepNo')
+        .order_by('WrkOrder', 'StepNo', 'Flow')
     )
 
     target_wo = set()
@@ -735,15 +735,17 @@ def get_batch_product_overview(target_date: date) -> dict:
             target = product_raw[product_name]['wrk_orders']
 
         if wo not in target:
-            target[wo] = {'flows': {}}
-        flow_data = target[wo]['flows']
+            target[wo] = {'stepnos': {}}
+        stepno_data = target[wo]['stepnos']
+
+        stepno = r['StepNo']
+        if stepno not in stepno_data:
+            stepno_data[stepno] = {'flows': {}}
+        flow_data = stepno_data[stepno]['flows']
 
         flow = r['Flow']
-        if flow not in flow_data:
-            flow_data[flow] = {'stepnos': {}}
-        stepno = r['StepNo']
-        flow_data[flow]['stepnos'][stepno] = {
-            'stepno': stepno,
+        flow_data[flow] = {
+            'flow': flow,
             'qty': r['qty'] or 0,
             'workers': r['workers'] or 0,
         }
@@ -751,25 +753,25 @@ def get_batch_product_overview(target_date: date) -> dict:
     def _build_wrk_order(wo_data: dict) -> list:
         result = []
         for wo_name, wo in wo_data.items():
-            flow_list = []
+            stepno_list = []
             wo_qty = 0
-            for f_name, f_data in wo['flows'].items():
-                stepno_list = sorted(f_data['stepnos'].values(), key=lambda s: s['stepno'])
-                f_qty = sum(s['qty'] for s in stepno_list)
-                f_workers = sum(s['workers'] for s in stepno_list)
-                flow_list.append({
-                    'flow': f_name,
-                    'qty': f_qty,
-                    'workers': f_workers,
-                    'stepnos': stepno_list,
+            for sn, sn_data in wo['stepnos'].items():
+                flows = sorted(sn_data['flows'].values(), key=lambda f: f['qty'], reverse=True)
+                sn_qty = sum(f['qty'] for f in flows)
+                sn_workers = sum(f['workers'] for f in flows)
+                stepno_list.append({
+                    'stepno': sn,
+                    'qty': sn_qty,
+                    'workers': sn_workers,
+                    'flows': flows,
                 })
-                wo_qty += f_qty
-            flow_list.sort(key=lambda f: f['qty'], reverse=True)
+                wo_qty += sn_qty
+            stepno_list.sort(key=lambda s: s['stepno'])
             result.append({
                 'wrk_order': wo_name,
                 'qty': wo_qty,
-                'flow_count': len(flow_list),
-                'flows': flow_list,
+                'stepno_count': len(stepno_list),
+                'stepnos': stepno_list,
             })
         result.sort(key=lambda w: w['qty'], reverse=True)
         return result

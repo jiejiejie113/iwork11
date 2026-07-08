@@ -197,12 +197,12 @@
             </div>
         </div>
 
-        <!-- 产品名称树形表格（4层：产品→工单→Flow→StepNo） -->
+        <!-- 产品名称树形表格（4层：产品→工单→工序→生产线） -->
         <div v-if="groupMode === 'product'" class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
             <table class="w-full text-xs">
                 <thead>
                     <tr class="text-left text-slate-400 border-b border-slate-700 bg-slate-800">
-                        <th class="py-2 px-3">产品名称 / 工单 / 生产线 / 工序</th>
+                        <th class="py-2 px-3">产品名称 / 工单 / 工序 / 生产线</th>
                         <th class="py-2 px-3 w-20 text-right">产量</th>
                         <th class="py-2 px-3 w-20 text-right">信息</th>
                     </tr>
@@ -230,27 +230,27 @@
                                         <span class="text-slate-300">{[ wo.wrk_order ]}</span>
                                     </td>
                                     <td class="py-1 px-3 text-right text-emerald-400 font-bold">{[ fmtNum(wo.qty) ]}</td>
-                                    <td class="py-1 px-3 text-right text-slate-500 text-[10px]">{[ wo.flow_count ]}条线</td>
+                                    <td class="py-1 px-3 text-right text-slate-500 text-[10px]">{[ wo.stepno_count ]}工序</td>
                                 </tr>
-                                <!-- 第3层：Flow -->
+                                <!-- 第3层：工序 -->
                                 <template v-if="activeWrkOrder === wo.wrk_order">
-                                    <template v-for="flow in wo.flows" :key="wo.wrk_order + '/' + flow.flow">
-                                        <tr @click.stop="toggleFlowNode(flow.flow)"
+                                    <template v-for="sn in wo.stepnos" :key="wo.wrk_order + '/' + sn.stepno">
+                                        <tr @click.stop="toggleStepnoNode(sn.stepno)"
                                             class="border-b border-slate-700/30 hover:bg-slate-700/10 cursor-pointer bg-slate-900/30">
                                             <td class="py-0.5 px-10 flex items-center gap-1">
-                                                <span class="text-slate-600 w-4 text-[10px] text-center">{[ activeFlow === flow.flow ? '▼' : '▶' ]}</span>
-                                                <span class="text-slate-400">{[ flow.flow ]}</span>
+                                                <span class="text-slate-600 w-4 text-[10px] text-center">{[ activeStepno == sn.stepno ? '▼' : '▶' ]}</span>
+                                                <span class="text-slate-400">工序 {[ sn.stepno ]}</span>
                                             </td>
-                                            <td class="py-0.5 px-3 text-right text-slate-300">{[ fmtNum(flow.qty) ]}</td>
-                                            <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ flow.workers ]}人</td>
+                                            <td class="py-0.5 px-3 text-right text-slate-300">{[ fmtNum(sn.qty) ]}</td>
+                                            <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ sn.workers ]}人</td>
                                         </tr>
-                                        <!-- 第4层：StepNo -->
-                                        <template v-if="activeFlow === flow.flow">
-                                            <tr v-for="sn in flow.stepnos" :key="flow.flow + '/' + sn.stepno"
+                                        <!-- 第4层：生产线 -->
+                                        <template v-if="activeStepno == sn.stepno">
+                                            <tr v-for="flow in sn.flows" :key="sn.stepno + '/' + flow.flow"
                                                 class="border-b border-slate-700/20 bg-slate-900/50">
-                                                <td class="py-0.5 px-14 text-slate-500">工序 {[ sn.stepno ]}</td>
-                                                <td class="py-0.5 px-3 text-right text-slate-400">{[ fmtNum(sn.qty) ]}</td>
-                                                <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ sn.workers ]}人</td>
+                                                <td class="py-0.5 px-14 text-slate-500">{[ flow.flow ]}</td>
+                                                <td class="py-0.5 px-3 text-right text-slate-400">{[ fmtNum(flow.qty) ]}</td>
+                                                <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ flow.workers ]}人</td>
                                             </tr>
                                         </template>
                                     </template>
@@ -576,40 +576,39 @@ createApp({
         const productList = ref([]);
         const activeProduct = ref(null);
         const activeWrkOrder = ref(null);
-        const activeFlow = ref(null);
+        const activeStepno = ref(null);
 
         function toggleProduct(productName) {
             if (activeProduct.value === productName) {
                 activeProduct.value = null;
                 activeWrkOrder.value = null;
-                activeFlow.value = null;
+                activeStepno.value = null;
             } else {
                 activeProduct.value = productName;
                 activeWrkOrder.value = null;
-                activeFlow.value = null;
+                activeStepno.value = null;
             }
             onClickProductLevel();
         }
         function toggleWrkOrder(wo) {
             if (activeWrkOrder.value === wo) {
                 activeWrkOrder.value = null;
-                activeFlow.value = null;
+                activeStepno.value = null;
             } else {
                 activeWrkOrder.value = wo;
-                activeFlow.value = null;
+                activeStepno.value = null;
             }
             onClickProductLevel();
         }
-        function toggleFlowNode(flowName) {
-            if (activeFlow.value === flowName) {
-                activeFlow.value = null;
+        function toggleStepnoNode(sn) {
+            if (activeStepno.value === sn) {
+                activeStepno.value = null;
             } else {
-                activeFlow.value = flowName;
+                activeStepno.value = sn;
             }
             onClickProductLevel();
         }
 
-        // 当前选中产品对象（用于获取子级数据）
         const currentProduct = computed(() => {
             if (!activeProduct.value) return null;
             return productList.value.find(p => p.product_name === activeProduct.value) || null;
@@ -618,14 +617,18 @@ createApp({
             if (!currentProduct.value || !activeWrkOrder.value) return null;
             return currentProduct.value.wrk_orders.find(w => w.wrk_order === activeWrkOrder.value) || null;
         });
+        const currentStepno = computed(() => {
+            if (!currentWrkOrder.value || !activeStepno.value) return null;
+            // activeStepno is a number stored as string in the comparison, need careful matching
+            return currentWrkOrder.value.stepnos.find(s => String(s.stepno) === String(activeStepno.value)) || null;
+        });
 
         const productChartLabels = computed(() => {
-            if (activeFlow.value && currentWrkOrder.value) {
-                const flow = currentWrkOrder.value.flows.find(f => f.flow === activeFlow.value);
-                return flow ? flow.stepnos.map(s => '工序' + s.stepno) : [];
+            if (activeStepno.value && currentStepno.value) {
+                return currentStepno.value.flows.map(f => f.flow);
             }
             if (activeWrkOrder.value && currentWrkOrder.value) {
-                return currentWrkOrder.value.flows.map(f => f.flow);
+                return currentWrkOrder.value.stepnos.map(s => '工序' + s.stepno);
             }
             if (activeProduct.value && currentProduct.value) {
                 return currentProduct.value.wrk_orders.map(w => w.wrk_order);
@@ -633,12 +636,11 @@ createApp({
             return productList.value.map(p => p.product_name);
         });
         const productChartValues = computed(() => {
-            if (activeFlow.value && currentWrkOrder.value) {
-                const flow = currentWrkOrder.value.flows.find(f => f.flow === activeFlow.value);
-                return flow ? flow.stepnos.map(s => s.qty) : [];
+            if (activeStepno.value && currentStepno.value) {
+                return currentStepno.value.flows.map(f => f.qty);
             }
             if (activeWrkOrder.value && currentWrkOrder.value) {
-                return currentWrkOrder.value.flows.map(f => f.qty);
+                return currentWrkOrder.value.stepnos.map(s => s.qty);
             }
             if (activeProduct.value && currentProduct.value) {
                 return currentProduct.value.wrk_orders.map(w => w.qty);
@@ -646,8 +648,8 @@ createApp({
             return productList.value.map(p => p.total_qty);
         });
         const productChartTitle = computed(() => {
-            if (activeFlow.value) return activeFlow.value + ' 工序产量';
-            if (activeWrkOrder.value) return activeWrkOrder.value + ' Flow产量';
+            if (activeStepno.value) return '工序' + activeStepno.value + ' Flow产量';
+            if (activeWrkOrder.value) return activeWrkOrder.value + ' 工序产量';
             if (activeProduct.value) return activeProduct.value + ' 工单产量';
             return '各产品 产量 & 人数';
         });
@@ -1280,7 +1282,7 @@ createApp({
             showLoading();
             activeProduct.value = null;
             activeWrkOrder.value = null;
-            activeFlow.value = null;
+            activeStepno.value = null;
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await resp.json();
@@ -1602,8 +1604,8 @@ createApp({
             isEditing, draft, woDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
-            productList, activeProduct, activeWrkOrder, activeFlow,
-            toggleProduct, toggleWrkOrder, toggleFlowNode,
+            productList, activeProduct, activeWrkOrder, activeStepno,
+            toggleProduct, toggleWrkOrder, toggleStepnoNode,
             productChartTitle,
             // 工单列表相关
             workorderList, workorderSummaryList, workorderListRef,
