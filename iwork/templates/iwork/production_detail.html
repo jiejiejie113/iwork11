@@ -218,7 +218,8 @@
                         class="text-slate-500 text-[10px] ml-auto">拖入下方激活区以显示数据</span>
                 </div>
                 <!-- 下区：激活区 -->
-                <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50">
+                <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
+                    @dragover="dragOver" @drop="dropInsertHere">
                     <span class="text-slate-500 font-semibold mr-1">激活区</span>
                     <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
                         <span v-if="idx > 0" class="text-slate-700">▸</span>
