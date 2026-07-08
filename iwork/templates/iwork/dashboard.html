@@ -49,7 +49,7 @@
 <div id="app" class="container mx-auto px-4 py-6" data-initial-view="{{ initial_view }}">
 
     <!-- ========== 顶部工具栏 ========== -->
-    <header class="flex justify-between items-center mb-6 flex-wrap gap-4">
+    <header class="flex justify-between items-center mb-2 flex-wrap gap-4">
         {% include 'iwork/_header.html' %}
 
             <!-- StepNo 全局过滤（单选下拉） -->
@@ -103,7 +103,7 @@
     </header>
 
     <!-- ========== 第1行：KPI 卡片 ========== -->
-    <section class="grid grid-cols-3 gap-4 mb-6">
+    <section class="grid grid-cols-3 gap-4 mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
             <div class="text-slate-400 text-sm mb-1">全厂普通线成衣产量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
             <div class="text-3xl font-bold text-emerald-400 tabular-nums">{[ fmtNum(data.total_qty) ]}</div>
@@ -119,13 +119,13 @@
     </section>
 
     <!-- ========== 第2行：每小时趋势 + 每日工序堆积 ========== -->
-    <section class="grid grid-cols-2 gap-4 mb-6">
+    <section class="grid grid-cols-2 gap-4 mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">每小时成衣产量趋势</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">每小时成衣产量趋势</h3>
             <div style="height:200px;"><canvas id="hourly-chart"></canvas></div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">每日工序产量（堆积）
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">每日工序产量（堆积）
                 <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">至 {[ currentHour + 1 ]}时产量累计</span>
             </h3>
             <div style="height:200px;"><canvas id="daily-process-chart"></canvas></div>
@@ -133,9 +133,9 @@
     </section>
 
     <!-- ========== 第3行：工序产量对比（全宽，Tab切换） ========== -->
-    <section class="mb-6">
+    <section class="mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-3 text-slate-200">工序产量对比（按生产线分组）</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">工序产量对比（按生产线分组）</h3>
             <!-- Tab 菜单（多工序时显示）：单行 + 横向滚动 + 输入跳转 -->
             <div v-if="pfSteps.length > 1" class="flex items-center gap-2 mb-3">
                 <input v-model="pfJumpInput" @keyup.enter="jumpPfStep"
@@ -164,22 +164,22 @@
     </section>
 
     <!-- ========== 第4行：工站分布 + 工站产量排行 [已隐藏] ==========
-    <section class="grid grid-cols-2 gap-4 mb-6">
+    <section class="grid grid-cols-2 gap-4 mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">工站分布</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">工站分布</h3>
             <div style="height:250px;"><canvas id="station-dist-chart"></canvas></div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">工站产量排行</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">工站产量排行</h3>
             <div style="height:250px;"><canvas id="station-rank-chart"></canvas></div>
         </div>
     </section>
     ========== [已隐藏] ========== -->
 
     <!-- ========== 第5行：工序×Flow 热力图（全宽） [已隐藏] ==========
-    <section class="mb-6">
+    <section class="mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 overflow-x-auto">
-            <h3 class="text-lg font-semibold mb-4 text-slate-200">工位负荷热力图（工序 × 流水线）</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">工位负荷热力图（工序 × 流水线）</h3>
             <div v-if="data.heatmap_matrix && data.heatmap_matrix.stepnos.length">
                 <table class="w-full text-xs border-collapse">
                     <thead>
@@ -208,7 +208,7 @@
 
     <!-- ========== 第6行：工单列表 ========== -->
     <section class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-        <h3 class="text-lg font-semibold mb-4 text-slate-200">工单列表</h3>
+        <h3 class="text-lg font-semibold mb-2 text-slate-200">工单列表</h3>
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
