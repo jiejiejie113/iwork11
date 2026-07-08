@@ -54,6 +54,12 @@
         .card-wrapper .card.dragging { position:fixed; z-index:1000; pointer-events:none; cursor:grabbing; opacity:.9; transform:scale(1.06); box-shadow:0 15px 40px rgba(0,0,0,.6); }
         /* FLIP */
         .flip-move { transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+        /* 拖拽：维度标签 */
+        .dim-tag-wrap { position: relative; display: inline-flex; align-items: center; }
+        .dim-tag-wrap .dim-tag { transition: transform .15s ease, box-shadow .15s ease; cursor: grab; user-select: none; -webkit-user-select: none; }
+        .dim-tag-wrap .dim-tag:active { cursor: grabbing; }
+        .dim-tag-wrap .dim-tag.placeholder { display: inline-block; background: transparent; border: 2px dashed #475569; border-radius: 4px; opacity: .4; min-width: 3em; }
+        .dim-tag.dragging { position: fixed; z-index: 1000; pointer-events: none; cursor: grabbing; transform: scale(1.12); box-shadow: 0 8px 25px rgba(0,0,0,.5); white-space: nowrap; }
         /* 隐藏滚动条但保留滚动功能 */
         .hide-scrollbar {
             -ms-overflow-style: none;  /* IE and Edge */
@@ -206,39 +212,45 @@
             <div class="flex-shrink-0 border-b border-slate-700">
                 <!-- 上区：备选区 -->
                 <div class="px-3 pt-2 pb-1.5 flex items-center gap-2 flex-wrap text-xs"
-                    @dragover="dragOver" @drop="dropToPool">
+                    data-area="pool">
                     <span class="text-slate-500 font-semibold mr-1">备选区</span>
-                    <span v-for="lv in availableLevels" :key="'avail-' + lv"
-                        :draggable="true"
-                        @dragstart="dragStart($event, lv)"
-                        class="px-2 py-0.5 rounded bg-slate-700 text-slate-400 cursor-grab border border-slate-600 hover:bg-slate-600 transition-colors">
-                        {[ levelLabels[lv] ]}
+                    <span v-for="lv in availableLevels" :key="'avail-' + lv" class="dim-tag-wrap">
+                        <span v-if="activeTagDrag && tagDragSource === 'pool' && tagDragLevel === lv" class="dim-tag placeholder px-2 py-0.5"></span>
+                        <span v-else class="dim-tag px-2 py-0.5 rounded bg-slate-700 text-slate-400 border border-slate-600 hover:bg-slate-600"
+                            @pointerdown="onTagPointerDown($event, lv, 'pool')">
+                            {[ levelLabels[lv] ]}
+                        </span>
                     </span>
-                    <span v-if="availableLevels.length === 0" class="text-slate-600 text-[10px]">所有维度已在激活区</span>
+                    <span v-if="availableLevels.length === 0" class="text-slate-600 text-[10px] ml-auto">所有维度已在激活区</span>
                     <span v-if="availableLevels.length > 0 && selectedLevels.length === 0"
                         class="text-slate-500 text-[10px] ml-auto">拖入下方激活区以显示数据</span>
                     <span class="px-2 py-0.5 rounded bg-slate-700/50 text-red-400 border border-dashed border-red-500/50 cursor-pointer hover:bg-red-500/10 hover:border-red-400 text-[10px]"
-                        @dragenter="dragOver" @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
+                        data-action="remove">拖出隐藏</span>
                 </div>
                 <!-- 下区：激活区 -->
                 <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
-                    @dragover="dragOver" @drop="dropInsertHere">
+                    data-area="activation">
                     <span class="text-slate-500 font-semibold mr-1">激活区</span>
                     <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
                         <span v-if="idx > 0" class="text-slate-700">▸</span>
-                        <span :draggable="true"
-                            @dragstart="dragStart($event, lv)"
-                            @dragenter="dragOver"
-                            @dragover="dragOver"
-                            @drop="dropToSelected($event, idx)"
-                            class="px-2 py-0.5 rounded bg-blue-600 text-white cursor-grab hover:bg-blue-500 transition-colors">
-                            {[ levelLabels[lv] ]}
+                        <span class="dim-tag-wrap">
+                            <span v-if="activeTagDrag && tagDragSource === 'selected' && tagDragIdx === idx" class="dim-tag placeholder px-2 py-0.5"></span>
+                            <span v-else class="dim-tag px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-500"
+                                @pointerdown="onTagPointerDown($event, lv, 'selected', idx)">
+                                {[ levelLabels[lv] ]}
+                            </span>
                         </span>
                     </template>
                     <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
                     <span class="px-2 py-0.5 rounded bg-slate-700/50 text-blue-400 border border-dashed border-blue-500/50 cursor-pointer hover:bg-blue-500/10 hover:border-blue-400 text-[10px]"
-                        @dragenter="dragOver" @dragover="dragOver" @drop="dropInsertHere">拖入排序</span>
+                        data-action="add">拖入排序</span>
                 </div>
+                <!-- 拖拽幽灵 -->
+                <span v-if="activeTagDrag" class="dim-tag dragging px-2 py-0.5 rounded"
+                    :class="tagDragSource === 'pool' ? 'bg-slate-700 text-slate-400 border border-slate-600' : 'bg-blue-600 text-white'"
+                    :style="tagDragStyle">
+                    {[ levelLabels[tagDragLevel] ]}
+                </span>
             </div>
 
             <!-- 动态树形表格 -->
@@ -755,46 +767,97 @@ createApp({
             nextTick(() => { if (productRows.value.length) renderProductChart(); });
         }
 
-        // 拖拽处理
-        function dragStart(evt, level) {
-            evt.dataTransfer.setData('text/plain', level);
-            evt.dataTransfer.effectAllowed = 'move';
+        // 维度标签拖拽（Pointer 拖拽 + 占位符 + 碰撞检测）
+        const activeTagDrag = ref(false);
+        const tagDragLevel = ref('');
+        const tagDragSource = ref(''); // 'pool' | 'selected'
+        const tagDragIdx = ref(-1);
+        const tagDragStyle = reactive({ left: '0px', top: '0px' });
+
+        let tagDragStartX = 0, tagDragStartY = 0;
+        let tagDragStartLeft = 0, tagDragStartTop = 0;
+
+        function onTagPointerDown(e, level, source, idx = -1) {
+            if (e.button !== undefined && e.button !== 0) return;
+            e.preventDefault();
+            const el = e.currentTarget;
+            const rect = el.getBoundingClientRect();
+            tagDragLevel.value = level;
+            tagDragSource.value = source;
+            tagDragIdx.value = idx;
+            activeTagDrag.value = true;
+            tagDragStartX = e.clientX;
+            tagDragStartY = e.clientY;
+            tagDragStartLeft = rect.left;
+            tagDragStartTop = rect.top;
+            Object.assign(tagDragStyle, { left: rect.left + 'px', top: rect.top + 'px', minWidth: rect.width + 'px' });
+            window.addEventListener('pointermove', onTagPointerMove);
+            window.addEventListener('pointerup', onTagPointerUp);
+            el.setPointerCapture(e.pointerId);
         }
-        function dragOver(evt) { evt.preventDefault(); evt.dataTransfer.dropEffect = 'move'; }
-        function dropToSelected(evt, insertIdx) {
-            evt.preventDefault();
-            evt.stopPropagation();
-            const level = evt.dataTransfer.getData('text/plain');
-            if (!level) return;
+
+        function onTagPointerMove(e) {
+            if (!activeTagDrag.value) return;
+            tagDragStyle.left = (tagDragStartLeft + e.clientX - tagDragStartX) + 'px';
+            tagDragStyle.top = (tagDragStartTop + e.clientY - tagDragStartY) + 'px';
+        }
+
+        function onTagPointerUp(e) {
+            activeTagDrag.value = false;
+            window.removeEventListener('pointermove', onTagPointerMove);
+            window.removeEventListener('pointerup', onTagPointerUp);
+
+            const level = tagDragLevel.value;
+            const source = tagDragSource.value;
+            const oldIdx = tagDragIdx.value;
+
+            // 隐藏幽灵检测光标下元素
+            const ghost = document.querySelector('.dim-tag.dragging');
+            if (ghost) ghost.style.display = 'none';
+            const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
+            if (ghost) ghost.style.display = '';
+
+            const poolArea = document.querySelector('[data-area="pool"]');
+            const actArea = document.querySelector('[data-area="activation"]');
             const levels = [...selectedLevels.value];
-            const oldIdx = levels.indexOf(level);
-            if (oldIdx >= 0) {
-                levels.splice(oldIdx, 1);
-                if (oldIdx < insertIdx) insertIdx--;
+
+            if (elemBelow?.closest('[data-action="remove"]') || (poolArea && poolArea.contains(elemBelow))) {
+                // 拖到备选区或拖出隐藏 → 移除
+                const rmIdx = levels.indexOf(level);
+                if (rmIdx >= 0) levels.splice(rmIdx, 1);
+                selectedLevels.value = levels;
+                activePath.value = [];
+                nextTick(() => renderProductChart());
+            } else if (elemBelow?.closest('[data-action="add"]') || (actArea && actArea.contains(elemBelow))) {
+                // 拖到激活区 → 插入
+                const srcIdx = source === 'selected' ? levels.indexOf(level) : -1;
+                if (srcIdx >= 0) levels.splice(srcIdx, 1);
+
+                const wrap = elemBelow?.closest('.dim-tag-wrap');
+                let insertIdx = levels.length;
+                if (wrap && actArea && actArea.contains(wrap)) {
+                    const wraps = [...actArea.querySelectorAll(':scope > .dim-tag-wrap')];
+                    const wrapIdx = wraps.indexOf(wrap);
+                    if (wrapIdx >= 0) {
+                        insertIdx = wrapIdx;
+                        const rect = wrap.getBoundingClientRect();
+                        if (e.clientX > rect.left + rect.width / 2) insertIdx++;
+                        if (srcIdx >= 0 && insertIdx > srcIdx) insertIdx--;
+                    }
+                }
+                if (insertIdx >= levels.length) levels.push(level);
+                else levels.splice(insertIdx, 0, level);
+                selectedLevels.value = levels;
+                activePath.value = [];
+                nextTick(() => renderProductChart());
             }
-            if (insertIdx >= levels.length) levels.push(level);
-            else levels.splice(insertIdx, 0, level);
-            selectedLevels.value = levels;
-            activePath.value = [];
-            nextTick(() => renderProductChart());
+
+            tagDragLevel.value = '';
+            tagDragSource.value = '';
+            tagDragIdx.value = -1;
         }
-        function dropToPool(evt) {
-            evt.preventDefault();
-            evt.stopPropagation();
-            const level = evt.dataTransfer.getData('text/plain');
-            if (!level) return;
-            const levels = [...selectedLevels.value];
-            const idx = levels.indexOf(level);
-            if (idx < 0) return;
-            if (levels.length < 1) return;
-            levels.splice(idx, 1);
-            selectedLevels.value = levels;
-            activePath.value = [];
-            nextTick(() => renderProductChart());
-        }
-        function dropInsertHere(evt) {
-            dropToSelected(evt, selectedLevels.value.length);
-        }
+
+        function dragStart(evt, level) {}
 
         function renderProductChart() {
             nextTick(() => {
@@ -1742,7 +1805,9 @@ createApp({
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             productRows, productChartTitle, toggleRow,
-            dragStart, dragOver, dropToSelected, dropToPool, dropInsertHere,
+            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagDragStyle,
+            onTagPointerDown,
+            dragStart,
             // 工单列表相关
             workorderList, workorderSummaryList, workorderListRef,
             pauseWorkorderScroll, resumeWorkorderScroll,
