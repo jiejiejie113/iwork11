@@ -201,72 +201,65 @@
             <div class="flex-1" style="height:calc(100% - 30px);"><canvas id="product-chart"></canvas></div>
         </div>
 
-        <!-- 产品名称树形表格（4层：产品→工单→工序→生产线） -->
-        <div class="flex-1 overflow-y-auto bg-slate-800 border border-slate-700 rounded-lg">
+        <div class="flex-1 overflow-y-auto bg-slate-800 border border-slate-700 rounded-lg flex flex-col">
+            <!-- 表头：备选区 + 激活区 -->
+            <div class="flex-shrink-0 border-b border-slate-700 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+                <span class="text-slate-500 mr-1">备选区</span>
+                <span v-for="lv in availableLevels" :key="'avail-' + lv"
+                    :draggable="true"
+                    @dragstart="dragStart($event, lv)"
+                    class="px-2 py-0.5 rounded bg-slate-700 text-slate-400 cursor-grab border border-slate-600 hover:bg-slate-600 transition-colors">
+                    {[ levelLabels[lv] ]}
+                </span>
+                <span class="text-slate-600 mx-2">→</span>
+                <span class="text-slate-500 mr-1">▼</span>
+                <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
+                    <span v-if="idx > 0" class="text-slate-700">▸</span>
+                    <span :draggable="true"
+                        @dragstart="dragStart($event, lv)"
+                        @dragover="dragOver"
+                        @drop="dropToSelected($event, idx)"
+                        class="px-2 py-0.5 rounded bg-blue-600 text-white cursor-grab hover:bg-blue-500 transition-colors">
+                        {[ levelLabels[lv] ]}
+                    </span>
+                </template>
+                <span class="px-2 py-0.5 rounded bg-slate-700 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-blue-500 hover:text-blue-400 text-[10px]"
+                    @dragover="dragOver" @drop="dropInsertHere">拖入排序</span>
+                <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-600 border border-dashed border-slate-600 cursor-pointer hover:border-red-500 hover:text-red-400 text-[10px]"
+                    @dragover="dragOver" @drop="dropToPool">拖出隐藏</span>
+            </div>
+
+            <!-- 动态树形表格 -->
+            <div class="flex-1 overflow-y-auto">
             <table class="w-full text-xs">
                 <thead>
                     <tr class="text-left text-slate-400 border-b border-slate-700 bg-slate-800">
-                        <th class="py-2 px-3">产品名称 / 工单 / 工序 / 生产线</th>
+                        <th class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</th>
                         <th class="py-2 px-3 w-20 text-right">产量</th>
                         <th class="py-2 px-3 w-20 text-right">信息</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template v-for="product in productList" :key="product.product_name">
-                        <!-- 第1层：产品 -->
-                        <tr @click="toggleProduct(product.product_name)"
-                            class="border-b border-slate-700 hover:bg-slate-700/30 cursor-pointer">
-                            <td class="py-1.5 px-3 flex items-center gap-1">
-                                <span class="text-slate-500 w-4 text-center">{[ activeProduct === product.product_name ? '▼' : '▶' ]}</span>
-                                <span class="text-blue-400 font-semibold">{[ product.product_name ]}</span>
-                                <span v-if="product.order_no" class="text-slate-500 ml-1 text-[10px]">({[ product.order_no ]})</span>
-                            </td>
-                            <td class="py-1.5 px-3 text-right text-emerald-400 font-bold">{[ fmtNum(product.total_qty) ]}</td>
-                            <td class="py-1.5 px-3 text-right text-slate-400 text-[10px]">{[ product.wrk_order_count ]}工单</td>
-                        </tr>
-                        <!-- 第2层：工单 -->
-                        <template v-if="activeProduct === product.product_name">
-                            <template v-for="wo in product.wrk_orders" :key="product.product_name + '/' + wo.wrk_order">
-                                <tr @click.stop="toggleWrkOrder(wo.wrk_order)"
-                                    class="border-b border-slate-700/50 hover:bg-slate-700/20 cursor-pointer bg-slate-800/50">
-                                    <td class="py-1 px-6 flex items-center gap-1">
-                                        <span class="text-slate-500 w-4 text-[10px] text-center">{[ activeWrkOrder === wo.wrk_order ? '▼' : '▶' ]}</span>
-                                        <span class="text-slate-300">{[ wo.wrk_order ]}</span>
-                                    </td>
-                                    <td class="py-1 px-3 text-right text-emerald-400 font-bold">{[ fmtNum(wo.qty) ]}</td>
-                                    <td class="py-1 px-3 text-right text-slate-500 text-[10px]">{[ wo.stepno_count ]}工序</td>
-                                </tr>
-                                <!-- 第3层：工序 -->
-                                <template v-if="activeWrkOrder === wo.wrk_order">
-                                    <template v-for="sn in wo.stepnos" :key="wo.wrk_order + '/' + sn.stepno">
-                                        <tr @click.stop="toggleStepnoNode(sn.stepno)"
-                                            class="border-b border-slate-700/30 hover:bg-slate-700/10 cursor-pointer bg-slate-900/30">
-                                            <td class="py-0.5 px-10 flex items-center gap-1">
-                                                <span class="text-slate-600 w-4 text-[10px] text-center">{[ activeStepno == sn.stepno ? '▼' : '▶' ]}</span>
-                                                <span class="text-slate-400">工序 {[ sn.stepno ]}</span>
-                                            </td>
-                                            <td class="py-0.5 px-3 text-right text-slate-300">{[ fmtNum(sn.qty) ]}</td>
-                                            <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ sn.workers ]}人</td>
-                                        </tr>
-                                        <!-- 第4层：生产线 -->
-                                        <template v-if="activeStepno == sn.stepno">
-                                            <tr v-for="flow in sn.flows" :key="sn.stepno + '/' + flow.flow"
-                                                class="border-b border-slate-700/20 bg-slate-900/50">
-                                                <td class="py-0.5 px-14 text-slate-500">{[ flow.flow ]}</td>
-                                                <td class="py-0.5 px-3 text-right text-slate-400">{[ fmtNum(flow.qty) ]}</td>
-                                                <td class="py-0.5 px-3 text-right text-slate-500 text-[10px]">{[ flow.workers ]}人</td>
-                                            </tr>
-                                        </template>
-                                    </template>
-                                </template>
-                            </template>
-                        </template>
-                    </template>
-                    <tr v-if="productList.length === 0" class="border-b border-slate-700">
-                        <td colspan="3" class="py-8 text-center text-slate-500">暂无产品数据</td>
+                    <tr v-for="row in productRows" :key="row.key"
+                        @click="toggleRow(row)"
+                        class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer"
+                        :class="row.depth === 0 ? '' : row.depth === 1 ? 'bg-slate-800/50' : row.depth === 2 ? 'bg-slate-900/30' : 'bg-slate-900/50'">
+                        <td class="py-1.5 px-3 flex items-center gap-1"
+                            :style="{ paddingLeft: (8 + row.depth * 24) + 'px' }">
+                            <span v-if="row.hasChildren" class="text-slate-500 w-4 text-center">{[ row.expanded ? '▼' : '▶' ]}</span>
+                            <span v-else class="w-4"></span>
+                            <span :class="row.depth === 0 ? 'text-blue-400 font-semibold' : row.depth === 1 ? 'text-slate-300' : row.depth === 2 ? 'text-slate-400' : 'text-slate-500'">{[ row.name ]}</span>
+                        </td>
+                        <td class="py-1.5 px-3 text-right"
+                            :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</td>
+                        <td class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</td>
+                    </tr>
+                    <tr v-if="productRows.length === 0" class="border-b border-slate-700">
+                        <td colspan="3" class="py-8 text-center text-slate-500">暂无数据</td>
                     </tr>
                 </tbody>
             </table>
+            </div>
         </div>
     </template>
 </div>
@@ -577,90 +570,131 @@ createApp({
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
 
-        // 产品名称树形表格状态（手风琴模式：同时只有一个分支展开）
+        // 维度管理（拖拽控制层级）
         const productList = ref([]);
-        const activeProduct = ref(null);
-        const activeWrkOrder = ref(null);
-        const activeStepno = ref(null);
+        const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
+        const selectedLevels = ref(['product', 'wrk_order', 'stepno', 'flow']);
+        const expandedKeys = reactive(new Set());
+        const levelLabels = { product: '产品名称', wrk_order: '工单号', stepno: '工序号', flow: '生产线' };
 
-        function toggleProduct(productName) {
-            if (activeProduct.value === productName) {
-                activeProduct.value = null;
-                activeWrkOrder.value = null;
-                activeStepno.value = null;
-            } else {
-                activeProduct.value = productName;
-                activeWrkOrder.value = null;
-                activeStepno.value = null;
-            }
-            onClickProductLevel();
-        }
-        function toggleWrkOrder(wo) {
-            if (activeWrkOrder.value === wo) {
-                activeWrkOrder.value = null;
-                activeStepno.value = null;
-            } else {
-                activeWrkOrder.value = wo;
-                activeStepno.value = null;
-            }
-            onClickProductLevel();
-        }
-        function toggleStepnoNode(sn) {
-            if (activeStepno.value === sn) {
-                activeStepno.value = null;
-            } else {
-                activeStepno.value = sn;
-            }
-            onClickProductLevel();
-        }
-
-        const currentProduct = computed(() => {
-            if (!activeProduct.value) return null;
-            return productList.value.find(p => p.product_name === activeProduct.value) || null;
-        });
-        const currentWrkOrder = computed(() => {
-            if (!currentProduct.value || !activeWrkOrder.value) return null;
-            return currentProduct.value.wrk_orders.find(w => w.wrk_order === activeWrkOrder.value) || null;
-        });
-        const currentStepno = computed(() => {
-            if (!currentWrkOrder.value || !activeStepno.value) return null;
-            // activeStepno is a number stored as string in the comparison, need careful matching
-            return currentWrkOrder.value.stepnos.find(s => String(s.stepno) === String(activeStepno.value)) || null;
+        const availableLevels = computed(() => {
+            return dimensionPool.filter(d => !selectedLevels.value.includes(d));
         });
 
+        // 层级名称提取
+        function nodeName(level, node) {
+            if (level === 'product') return node.product_name;
+            if (level === 'wrk_order') return node.wrk_order;
+            if (level === 'stepno') return '工序' + node.stepno;
+            return node.flow;
+        }
+        function nodeQty(level, node) {
+            if (level === 'product') return node.total_qty;
+            return node.qty;
+        }
+        function nodeInfo(level, node) {
+            if (level === 'product') return node.wrk_order_count + '工单';
+            if (level === 'wrk_order') return node.stepno_count + '工序';
+            if (level === 'stepno') return (node.workers || 0) + '人';
+            return (node.workers || 0) + '人';
+        }
+        function nodeChildren(level, node) {
+            if (level === 'product') return node.wrk_orders || [];
+            if (level === 'wrk_order') return node.stepnos || [];
+            if (level === 'stepno') return node.flows || [];
+            return null;
+        }
+
+        // 动态树形表格行
+        const productRows = computed(() => {
+            const rows = [];
+            const fixedOrder = ['product', 'wrk_order', 'stepno', 'flow'];
+            function walk(children, levelIdx, parentKey) {
+                if (!children || !children.length) return;
+                const levelName = fixedOrder[levelIdx];
+                const selectedIdx = selectedLevels.value.indexOf(levelName);
+                const shouldEmit = selectedIdx >= 0;
+                for (const node of children) {
+                    const name = nodeName(levelName, node);
+                    const key = (parentKey || '') + '/' + name;
+                    if (shouldEmit) {
+                        const nc = nodeChildren(levelName, node);
+                        const hasKids = nc && nc.length > 0;
+                        rows.push({
+                            depth: selectedIdx, key, name, level: levelName,
+                            qty: nodeQty(levelName, node), info: nodeInfo(levelName, node),
+                            hasChildren: hasKids, expanded: expandedKeys.has(key),
+                        });
+                        if (!expandedKeys.has(key)) return;
+                    }
+                    const nc = nodeChildren(levelName, node);
+                    if (nc && levelIdx < 3) walk(nc, levelIdx + 1, key);
+                }
+            }
+            walk(productList.value, 0, '');
+            return rows;
+        });
+
+        // 图表联动
         const productChartLabels = computed(() => {
-            if (activeStepno.value && currentStepno.value) {
-                return currentStepno.value.flows.map(f => f.flow);
-            }
-            if (activeWrkOrder.value && currentWrkOrder.value) {
-                return currentWrkOrder.value.stepnos.map(s => '工序' + s.stepno);
-            }
-            if (activeProduct.value && currentProduct.value) {
-                return currentProduct.value.wrk_orders.map(w => w.wrk_order);
-            }
-            return productList.value.map(p => p.product_name);
+            return productRows.value.map(r => r.name);
         });
         const productChartValues = computed(() => {
-            if (activeStepno.value && currentStepno.value) {
-                return currentStepno.value.flows.map(f => f.qty);
-            }
-            if (activeWrkOrder.value && currentWrkOrder.value) {
-                return currentWrkOrder.value.stepnos.map(s => s.qty);
-            }
-            if (activeProduct.value && currentProduct.value) {
-                return currentProduct.value.wrk_orders.map(w => w.qty);
-            }
-            return productList.value.map(p => p.total_qty);
+            return productRows.value.map(r => r.qty);
         });
-        const productChartTitle = computed(() => {
-            if (activeStepno.value) return '工序' + activeStepno.value + ' Flow产量';
-            if (activeWrkOrder.value) return activeWrkOrder.value + ' 工序产量';
-            if (activeProduct.value) return activeProduct.value + ' 工单产量';
-            return '各产品 产量 & 人数';
-        });
+        const productChartTitle = ref('各产品 产量 & 人数');
 
-        function onClickProductLevel() {
+        function toggleRow(row) {
+            if (expandedKeys.has(row.key)) {
+                expandedKeys.delete(row.key);
+            } else {
+                expandedKeys.add(row.key);
+            }
+            nextTick(() => {
+                productChartTitle.value = row.name + ' 详情';
+                if (productRows.value.length) renderProductChart();
+            });
+        }
+
+        // 拖拽处理
+        function dragStart(evt, level) {
+            evt.dataTransfer.setData('text/plain', level);
+            evt.dataTransfer.effectAllowed = 'move';
+        }
+        function dragOver(evt) { evt.preventDefault(); evt.dataTransfer.dropEffect = 'move'; }
+        function dropToSelected(evt, insertIdx) {
+            evt.preventDefault();
+            const level = evt.dataTransfer.getData('text/plain');
+            if (!level) return;
+            const levels = [...selectedLevels.value];
+            const oldIdx = levels.indexOf(level);
+            if (oldIdx >= 0) {
+                levels.splice(oldIdx, 1);
+                if (oldIdx < insertIdx) insertIdx--;
+            }
+            if (insertIdx >= levels.length) levels.push(level);
+            else levels.splice(insertIdx, 0, level);
+            selectedLevels.value = levels;
+            expandedKeys.clear();
+            productChartTitle.value = '各产品 产量 & 人数';
             nextTick(() => renderProductChart());
+        }
+        function dropToPool(evt) {
+            evt.preventDefault();
+            const level = evt.dataTransfer.getData('text/plain');
+            if (!level) return;
+            const levels = [...selectedLevels.value];
+            const idx = levels.indexOf(level);
+            if (idx < 0) return;
+            if (levels.length <= 2) return;
+            levels.splice(idx, 1);
+            selectedLevels.value = levels;
+            expandedKeys.clear();
+            productChartTitle.value = '各产品 产量 & 人数';
+            nextTick(() => renderProductChart());
+        }
+        function dropInsertHere(evt) {
+            dropToSelected(evt, selectedLevels.value.length);
         }
 
         function renderProductChart() {
@@ -1285,9 +1319,8 @@ createApp({
 
         async function loadProductOverview() {
             showLoading();
-            activeProduct.value = null;
-            activeWrkOrder.value = null;
-            activeStepno.value = null;
+            expandedKeys.clear();
+            productChartTitle.value = '各产品 产量 & 人数';
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await resp.json();
@@ -1609,9 +1642,9 @@ createApp({
             isEditing, draft, woDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
-            productList, activeProduct, activeWrkOrder, activeStepno,
-            toggleProduct, toggleWrkOrder, toggleStepnoNode,
-            productChartTitle,
+            productList, selectedLevels, availableLevels, expandedKeys, levelLabels,
+            productRows, productChartTitle, toggleRow,
+            dragStart, dragOver, dropToSelected, dropToPool, dropInsertHere,
             // 工单列表相关
             workorderList, workorderSummaryList, workorderListRef,
             pauseWorkorderScroll, resumeWorkorderScroll,
