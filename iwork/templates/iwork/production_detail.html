@@ -60,6 +60,7 @@
         .dim-tag-wrap .dim-tag:active { cursor: grabbing; }
         .dim-tag-wrap .dim-tag.placeholder { display: inline-block; background: transparent; border: 2px dashed #475569; border-radius: 4px; opacity: .4; min-width: 3em; }
         .dim-tag.dragging { position: fixed; z-index: 1000; pointer-events: none; cursor: grabbing; transform: scale(1.12); box-shadow: 0 8px 25px rgba(0,0,0,.5); white-space: nowrap; }
+        .dim-tag-insert-indicator { display: inline-block; width: 1px; height: 18px; border-left: 2px dashed #60a5fa; vertical-align: middle; margin: 0 1px; box-shadow: 0 0 5px rgba(96,165,250,.5); }
         /* 隐藏滚动条但保留滚动功能 */
         .hide-scrollbar {
             -ms-overflow-style: none;  /* IE and Edge */
@@ -231,6 +232,7 @@
                 <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
                     data-area="activation">
                     <span class="text-slate-500 font-semibold mr-1">激活区</span>
+                    <span v-if="activeTagDrag && tagHoverInsertIdx === 0" class="dim-tag-insert-indicator"></span>
                     <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
                         <span v-if="idx > 0" class="text-slate-700">▸</span>
                         <span class="dim-tag-wrap">
@@ -240,6 +242,7 @@
                                 {[ levelLabels[lv] ]}
                             </span>
                         </span>
+                        <span v-if="activeTagDrag && tagHoverInsertIdx === idx + 1" class="dim-tag-insert-indicator"></span>
                     </template>
                     <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
                     <span class="px-2 py-0.5 rounded bg-slate-700/50 text-blue-400 border border-dashed border-blue-500/50 cursor-pointer hover:bg-blue-500/10 hover:border-blue-400 text-[10px]"
@@ -772,6 +775,7 @@ createApp({
         const tagDragLevel = ref('');
         const tagDragSource = ref(''); // 'pool' | 'selected'
         const tagDragIdx = ref(-1);
+        const tagHoverInsertIdx = ref(-1);
         const tagDragStyle = reactive({ left: '0px', top: '0px' });
 
         let tagDragStartX = 0, tagDragStartY = 0;
@@ -800,16 +804,51 @@ createApp({
             if (!activeTagDrag.value) return;
             tagDragStyle.left = (tagDragStartLeft + e.clientX - tagDragStartX) + 'px';
             tagDragStyle.top = (tagDragStartTop + e.clientY - tagDragStartY) + 'px';
+
+            // 隐藏幽灵，检测光标下元素
+            const ghost = document.querySelector('.dim-tag.dragging');
+            if (ghost) ghost.style.display = 'none';
+            const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
+            if (ghost) ghost.style.display = '';
+
+            const actArea = document.querySelector('[data-area="activation"]');
+            const poolArea = document.querySelector('[data-area="pool"]');
+            if (poolArea && poolArea.contains(elemBelow)) {
+                tagHoverInsertIdx.value = -1;
+            } else if (elemBelow?.closest('[data-action="add"]')) {
+                tagHoverInsertIdx.value = selectedLevels.value.length;
+            } else if (!actArea || !actArea.contains(elemBelow)) {
+                tagHoverInsertIdx.value = -1;
+            } else {
+                const wrap = elemBelow?.closest('.dim-tag-wrap');
+                if (!wrap) { tagHoverInsertIdx.value = selectedLevels.value.length; return; }
+                const wraps = [...actArea.querySelectorAll(':scope > .dim-tag-wrap')];
+                const wrapIdx = wraps.indexOf(wrap);
+                if (wrapIdx < 0) { tagHoverInsertIdx.value = selectedLevels.value.length; return; }
+                const cursorRight = e.clientX > wrap.getBoundingClientRect().left + wrap.getBoundingClientRect().width / 2;
+                const src = tagDragSource.value;
+                const srcIdx = tagDragIdx.value;
+                // 计算在真实 selectedLevels 中的插入位置（排除占位符标签）
+                let realBefore = 0;
+                for (let i = 0; i < wrapIdx; i++) {
+                    if (!wraps[i].querySelector('.dim-tag.placeholder')) realBefore++;
+                }
+                let ins = realBefore + (cursorRight ? 1 : 0);
+                if (src === 'selected' && ins > srcIdx) ins--;
+                tagHoverInsertIdx.value = ins;
+            }
         }
 
         function onTagPointerUp(e) {
             activeTagDrag.value = false;
+            tagHoverInsertIdx.value = -1;
             window.removeEventListener('pointermove', onTagPointerMove);
             window.removeEventListener('pointerup', onTagPointerUp);
 
             const level = tagDragLevel.value;
             const source = tagDragSource.value;
             const oldIdx = tagDragIdx.value;
+            const insertIdx = tagHoverInsertIdx.value;
 
             // 隐藏幽灵检测光标下元素
             const ghost = document.querySelector('.dim-tag.dragging');
@@ -818,39 +857,23 @@ createApp({
             if (ghost) ghost.style.display = '';
 
             const poolArea = document.querySelector('[data-area="pool"]');
-            const actArea = document.querySelector('[data-area="activation"]');
             const levels = [...selectedLevels.value];
 
             if (elemBelow?.closest('[data-action="remove"]') || (poolArea && poolArea.contains(elemBelow))) {
                 // 拖到备选区或拖出隐藏 → 移除
                 const rmIdx = levels.indexOf(level);
                 if (rmIdx >= 0) levels.splice(rmIdx, 1);
-                selectedLevels.value = levels;
-                activePath.value = [];
-                nextTick(() => renderProductChart());
-            } else if (elemBelow?.closest('[data-action="add"]') || (actArea && actArea.contains(elemBelow))) {
-                // 拖到激活区 → 插入
+            } else if (insertIdx >= 0) {
+                // 拖到激活区 → 使用 onTagPointerMove 预计算的插入位置
                 const srcIdx = source === 'selected' ? levels.indexOf(level) : -1;
                 if (srcIdx >= 0) levels.splice(srcIdx, 1);
-
-                const wrap = elemBelow?.closest('.dim-tag-wrap');
-                let insertIdx = levels.length;
-                if (wrap && actArea && actArea.contains(wrap)) {
-                    const wraps = [...actArea.querySelectorAll(':scope > .dim-tag-wrap')];
-                    const wrapIdx = wraps.indexOf(wrap);
-                    if (wrapIdx >= 0) {
-                        insertIdx = wrapIdx;
-                        const rect = wrap.getBoundingClientRect();
-                        if (e.clientX > rect.left + rect.width / 2) insertIdx++;
-                        if (srcIdx >= 0 && insertIdx > srcIdx) insertIdx--;
-                    }
-                }
                 if (insertIdx >= levels.length) levels.push(level);
                 else levels.splice(insertIdx, 0, level);
-                selectedLevels.value = levels;
-                activePath.value = [];
-                nextTick(() => renderProductChart());
             }
+
+            selectedLevels.value = levels;
+            activePath.value = [];
+            nextTick(() => renderProductChart());
 
             tagDragLevel.value = '';
             tagDragSource.value = '';
@@ -1805,7 +1828,7 @@ createApp({
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             productRows, productChartTitle, toggleRow,
-            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagDragStyle,
+            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragStyle,
             onTagPointerDown,
             dragStart,
             // 工单列表相关
