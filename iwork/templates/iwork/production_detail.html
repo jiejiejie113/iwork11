@@ -586,57 +586,100 @@ createApp({
             return dimensionPool.filter(d => !selectedLevels.value.includes(d));
         });
 
-        // 层级名称提取
-        function nodeName(level, node) {
-            if (level === 'product') return node.product_name;
-            if (level === 'wrk_order') return node.wrk_order;
-            if (level === 'stepno') return '工序' + node.stepno;
-            return node.flow;
-        }
-        function nodeQty(level, node) {
-            if (level === 'product') return node.total_qty;
-            return node.qty;
-        }
-        function nodeInfo(level, node) {
-            if (level === 'product') return node.wrk_order_count + '工单';
-            if (level === 'wrk_order') return node.stepno_count + '工序';
-            if (level === 'stepno') return (node.workers || 0) + '人';
-            return (node.workers || 0) + '人';
-        }
-        function nodeChildren(level, node) {
-            if (level === 'product') return node.wrk_orders || [];
-            if (level === 'wrk_order') return node.stepnos || [];
-            if (level === 'stepno') return node.flows || [];
-            return null;
+        // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
+        const levelShortLabels = { product: '产品', wrk_order: '工单', stepno: '工序', flow: '线体' };
+
+        function pickDim(leaf, dim) {
+            if (dim === 'product') return leaf.product_name;
+            if (dim === 'wrk_order') return leaf.wrk_order;
+            if (dim === 'stepno') return leaf.stepno;
+            return leaf.flow;
         }
 
-        // 动态树形表格行
-        const productRows = computed(() => {
-            const rows = [];
-            const fixedOrder = ['product', 'wrk_order', 'stepno', 'flow'];
-            function walk(children, levelIdx, parentKey) {
-                if (!children || !children.length) return;
-                const levelName = fixedOrder[levelIdx];
-                const selectedIdx = selectedLevels.value.indexOf(levelName);
-                const shouldEmit = selectedIdx >= 0;
-                for (const node of children) {
-                    const name = nodeName(levelName, node);
-                    const key = (parentKey || '') + '/' + name;
-                    if (shouldEmit) {
-                        const nc = nodeChildren(levelName, node);
-                        const hasKids = nc && nc.length > 0;
-                        rows.push({
-                            depth: selectedIdx, key, name, level: levelName,
-                            qty: nodeQty(levelName, node), info: nodeInfo(levelName, node),
-                            hasChildren: hasKids, expanded: expandedKeys.has(key),
-                        });
-                        if (!expandedKeys.has(key)) continue;
+        function flattenToLeaves(products) {
+            const leaves = [];
+            for (const p of (products || [])) {
+                for (const wo of (p.wrk_orders || [])) {
+                    for (const st of (wo.stepnos || [])) {
+                        for (const fl of (st.flows || [])) {
+                            leaves.push({
+                                product_name: p.product_name,
+                                wrk_order: wo.wrk_order,
+                                stepno: st.stepno,
+                                flow: fl.flow,
+                                qty: fl.qty || 0,
+                                workers: fl.workers || 0,
+                            });
+                        }
                     }
-                    const nc = nodeChildren(levelName, node);
-                    if (nc && levelIdx < 3) walk(nc, levelIdx + 1, key);
                 }
             }
-            walk(productList.value, 0, '');
+            return leaves;
+        }
+
+        function buildGroupedTree(leaves, levels) {
+            if (!levels.length || !leaves.length) return [];
+            const curDim = levels[0];
+            const restLevels = levels.slice(1);
+
+            const groups = new Map();
+            for (const leaf of leaves) {
+                const val = pickDim(leaf, curDim);
+                if (!groups.has(val)) groups.set(val, []);
+                groups.get(val).push(leaf);
+            }
+
+            const nodes = [];
+            for (const [val, groupLeaves] of groups) {
+                const children = restLevels.length ? buildGroupedTree(groupLeaves, restLevels) : [];
+                const totalQty = groupLeaves.reduce((s, l) => s + l.qty, 0);
+                const totalWorkers = groupLeaves.reduce((s, l) => s + l.workers, 0);
+
+                let info;
+                if (!restLevels.length) {
+                    info = totalWorkers + '人';
+                } else {
+                    const nextDim = restLevels[0];
+                    const cnt = new Set(groupLeaves.map(l => pickDim(l, nextDim))).size;
+                    info = cnt + '个' + levelShortLabels[nextDim];
+                }
+
+                const displayName = curDim === 'stepno' ? '工序' + val : val;
+                nodes.push({
+                    name: displayName,
+                    qty: totalQty,
+                    info,
+                    children,
+                    hasChildren: children.length > 0,
+                });
+            }
+            return nodes;
+        }
+
+        // 动态树形表格行（按 selectedLevels 顺序重分组）
+        const productRows = computed(() => {
+            if (!selectedLevels.value.length) return [];
+            const leaves = flattenToLeaves(productList.value);
+            const tree = buildGroupedTree(leaves, selectedLevels.value);
+
+            const rows = [];
+            function walk(nodes, depth, parentKey) {
+                for (const node of nodes) {
+                    const key = (parentKey || '') + '/' + node.name;
+                    rows.push({
+                        depth, key,
+                        name: node.name,
+                        qty: node.qty,
+                        info: node.info,
+                        hasChildren: node.hasChildren,
+                        expanded: expandedKeys.has(key),
+                    });
+                    if (expandedKeys.has(key) && node.children) {
+                        walk(node.children, depth + 1, key);
+                    }
+                }
+            }
+            walk(tree, 0, '');
             return rows;
         });
 
@@ -647,7 +690,11 @@ createApp({
         const productChartValues = computed(() => {
             return productRows.value.map(r => r.qty);
         });
-        const productChartTitle = ref('各产品 产量 & 人数');
+        const productChartTitle = ref('各维度 产量 & 人数');
+        function resetChartTitle() {
+            if (!selectedLevels.value.length) { productChartTitle.value = '各维度 产量 & 人数'; return; }
+            productChartTitle.value = selectedLevels.value.map(l => levelLabels[l]).join(' / ') + ' 产量 & 人数';
+        }
 
         function toggleRow(row) {
             if (expandedKeys.has(row.key)) {
@@ -681,7 +728,7 @@ createApp({
             else levels.splice(insertIdx, 0, level);
             selectedLevels.value = levels;
             expandedKeys.clear();
-            productChartTitle.value = '各产品 产量 & 人数';
+            resetChartTitle();
             nextTick(() => renderProductChart());
         }
         function dropToPool(evt) {
@@ -695,7 +742,7 @@ createApp({
             levels.splice(idx, 1);
             selectedLevels.value = levels;
             expandedKeys.clear();
-            productChartTitle.value = '各产品 产量 & 人数';
+            resetChartTitle();
             nextTick(() => renderProductChart());
         }
         function dropInsertHere(evt) {
@@ -1325,7 +1372,7 @@ createApp({
         async function loadProductOverview() {
             showLoading();
             expandedKeys.clear();
-            productChartTitle.value = '各产品 产量 & 人数';
+            resetChartTitle();
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await resp.json();
