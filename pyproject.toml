@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "S101",  # assert (测试中正常使用)
+    "S311",  # 标准伪随机数生成器（非加密场景可用）
+    "E501",  # 行长度限制（历史代码不强制）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311"]
+"**/migrations/**" = ["ALL"]
+"scripts/**" = ["S", "E402"]
+"src/**" = ["S", "E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
