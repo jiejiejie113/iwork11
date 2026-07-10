@@ -60,7 +60,18 @@
         .dim-tag-wrap .dim-tag:active { cursor: grabbing; }
         .dim-tag-wrap .dim-tag.placeholder { display: inline-block; background: transparent; border: 2px dashed #475569; border-radius: 4px; opacity: .4; min-width: 3em; }
         .dim-tag.dragging { position: fixed; z-index: 1000; pointer-events: none; cursor: grabbing; transform: scale(1.12); box-shadow: 0 8px 25px rgba(0,0,0,.5); white-space: nowrap; }
-        .dim-tag-insert-indicator { display: inline-block; height: 18px; border-left: 2px dashed #60a5fa; vertical-align: middle; box-shadow: 0 0 5px rgba(96,165,250,.5); opacity: .6; }
+        /* 插入占位虚线框：参与 flex 布局，挤压后续标签，体现占位视觉 */
+        .dim-tag-insert-placeholder {
+            display: inline-block; box-sizing: border-box; align-self: center;
+            border: 2px dashed #60a5fa; border-radius: 4px;
+            background: rgba(96,165,250,.10);
+            box-shadow: 0 0 6px rgba(96,165,250,.35);
+            animation: tagPlaceholderPulse 1s ease-in-out infinite;
+        }
+        @keyframes tagPlaceholderPulse {
+            0%, 100% { background: rgba(96,165,250,.10); }
+            50%      { background: rgba(96,165,250,.22); }
+        }
         /* 隐藏滚动条但保留滚动功能 */
         .hide-scrollbar {
             -ms-overflow-style: none;  /* IE and Edge */
@@ -69,12 +80,15 @@
         .hide-scrollbar::-webkit-scrollbar {
             display: none;  /* Chrome, Safari and Opera */
         }
-        /* 树形表格行过渡动画 */
-        .tree-enter-active { transition: opacity 0.3s ease, transform 0.3s ease; }
-        .tree-leave-active { transition: opacity 0.18s ease; }
-        .tree-enter-from { opacity: 0; transform: translateY(-10px); }
+        /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
+        .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
+        .tree-body { position: relative; }
+        /* 行过渡：leave 行 absolute 脱离流，其他行立即 move；enter 延迟等外框先撑开 */
+        .tree-enter-active { transition: opacity 0.26s ease, transform 0.26s cubic-bezier(.4,0,.2,1); transition-delay: 0.12s; }
+        .tree-leave-active { transition: opacity 0.18s ease; position: absolute; left: 0; right: 0; }
+        .tree-enter-from { opacity: 0; transform: translateY(-8px); }
         .tree-leave-to   { opacity: 0; }
-        .tree-move       { transition: transform 0.25s ease; }
+        .tree-move       { transition: transform 0.3s cubic-bezier(.4,0,.2,1); transition-delay: 0.04s; }
         /* 产品图表容器过渡 */
         #product-chart { transition: opacity 0.35s ease; }
     </style>
@@ -240,19 +254,22 @@
                 <div class="px-3 pb-2 pt-1.5 flex items-center gap-2 flex-wrap text-xs border-t border-slate-700/50"
                     data-area="activation">
                     <span class="text-slate-500 font-semibold mr-1">激活区</span>
-                    <span v-if="activeTagDrag && tagHoverInsertIdx === 0" class="dim-tag-insert-indicator" :style="{ width: tagDragWidth + 'px' }"></span>
                     <template v-for="(lv, idx) in selectedLevels" :key="'sel-' + lv">
-                        <span v-if="idx > 0" class="text-slate-700">▸</span>
-                        <span class="dim-tag-wrap">
-                            <span v-if="activeTagDrag && tagDragSource === 'selected' && tagDragIdx === idx" class="dim-tag placeholder px-2 py-0.5" :style="{ width: tagDragWidth + 'px' }"></span>
-                            <span v-else class="dim-tag px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-500"
-                                @pointerdown="onTagPointerDown($event, lv, 'selected', idx)">
-                                {[ levelLabels[lv] ]}
-                            </span>
+                        <!-- 占位虚线框：插到 idx 位置时挤压后续标签 -->
+                        <span v-if="activeTagDrag && tagHoverInsertIdx === idx" class="dim-tag-insert-placeholder px-2 py-0.5" :style="{ width: tagDragWidth + 'px', height: tagDragHeight + 'px' }"></span>
+                        <!-- 箭头：拖动期间隐藏，避免指向虚线框造成视觉错乱 -->
+                        <span v-if="idx > 0 && !activeTagDrag" class="text-slate-700">▸</span>
+                        <!-- 原标签：拖动换位时 display:none 让出空间给虚线框；拖出激活区时保留原位 -->
+                        <span class="dim-tag px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-500"
+                            :data-act-idx="idx"
+                            :style="{ display: (activeTagDrag && tagDragSource === 'selected' && tagDragIdx === idx && tagHoverInsertIdx >= 0) ? 'none' : 'inline-block' }"
+                            @pointerdown="onTagPointerDown($event, lv, 'selected', idx)">
+                            {[ levelLabels[lv] ]}
                         </span>
-                        <span v-if="activeTagDrag && tagHoverInsertIdx === idx + 1" class="dim-tag-insert-indicator" :style="{ width: tagDragWidth + 'px' }"></span>
                     </template>
-                    <span v-if="selectedLevels.length === 0" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
+                    <!-- 末尾占位虚线框 -->
+                    <span v-if="activeTagDrag && tagHoverInsertIdx === selectedLevels.length" class="dim-tag-insert-placeholder px-2 py-0.5" :style="{ width: tagDragWidth + 'px', height: tagDragHeight + 'px' }"></span>
+                    <span v-if="selectedLevels.length === 0 && !activeTagDrag" class="text-slate-600 text-[10px]">将备选区维度拖入此处</span>
                     <span class="px-2 py-0.5 rounded bg-slate-700/50 text-blue-400 border border-dashed border-blue-500/50 cursor-pointer hover:bg-blue-500/10 hover:border-blue-400 text-[10px]"
                         data-action="add">拖入排序</span>
                 </div>
@@ -266,38 +283,41 @@
 
             <!-- 动态树形表格 -->
             <div class="flex-1 overflow-y-auto">
-            <table class="w-full text-xs">
-                <thead>
-                    <tr class="text-left text-slate-400 border-b border-slate-700 bg-slate-800">
-                        <th class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</th>
-                        <th class="py-2 px-3 w-20 text-right">产量</th>
-                        <th class="py-2 px-3 w-20 text-right">信息</th>
-                    </tr>
-                </thead>
-                <transition-group name="tree" tag="tbody" appear>
-                    <tr v-for="row in productRows" :key="row.key"
+            <!-- 表头（保留 table 视觉，固定不参与过渡）-->
+            <div class="text-left text-slate-400 border-b border-slate-700 bg-slate-800 text-xs"
+                 style="display:grid;grid-template-columns:1fr 80px 80px;">
+                <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
+                <div class="py-2 px-3 text-right">产量</div>
+                <div class="py-2 px-3 text-right">信息</div>
+            </div>
+            <!-- tree-wrap：外框高度先过渡；tree-body：内部行 enter/leave -->
+            <div class="tree-wrap" ref="treeWrapEl">
+                <transition-group name="tree" tag="div" class="tree-body" appear>
+                    <div v-for="row in productRows" :key="row.key"
                         @click="toggleRow(row)"
-                        class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer"
+                        class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer text-xs"
+                        style="display:grid;grid-template-columns:1fr 80px 80px;align-items:center;"
                         :class="row.depth === 0 ? '' : row.depth === 1 ? 'bg-slate-800/50' : row.depth === 2 ? 'bg-slate-900/30' : 'bg-slate-900/50'">
-                        <td class="py-1.5 px-3 flex items-center gap-1"
+                        <div class="py-1.5 px-3 flex items-center gap-1"
                             :style="{ paddingLeft: (8 + row.depth * 24) + 'px' }">
                             <span v-if="row.hasChildren" class="text-slate-500 w-4 text-center">{[ row.expanded ? '▼' : '▶' ]}</span>
                             <span v-else class="w-4"></span>
                             <span :class="row.depth === 0 ? 'text-blue-400 font-semibold' : row.depth === 1 ? 'text-slate-300' : row.depth === 2 ? 'text-slate-400' : 'text-slate-500'">{[ row.name ]}</span>
-                        </td>
-                        <td class="py-1.5 px-3 text-right"
-                            :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</td>
-                        <td class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</td>
-                    </tr>
-                    <tr v-if="productRows.length === 0" key="empty-row" class="border-b border-slate-700">
-                        <td colspan="3" class="py-8 text-center text-slate-500">
+                        </div>
+                        <div class="py-1.5 px-3 text-right"
+                            :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</div>
+                        <div class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</div>
+                    </div>
+                    <div v-if="productRows.length === 0" key="empty-row" class="border-b border-slate-700 text-xs"
+                        style="display:grid;grid-template-columns:1fr 80px 80px;">
+                        <div class="py-8 text-center text-slate-500" style="grid-column:1 / span 3;">
                             <template v-if="selectedLevels.length === 0">将维度标签拖入激活区以显示数据</template>
                             <template v-else-if="productList.length === 0">暂无产品数据</template>
                             <template v-else>点击展开查看详情</template>
-                        </td>
-                    </tr>
+                        </div>
+                    </div>
                 </transition-group>
-            </table>
+            </div>
             </div>
         </div>
     </template>
@@ -551,7 +571,7 @@
 </div>
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick } = Vue;
+const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } = Vue;
 
 createApp({
     delimiters: ['{[', ']}'],
@@ -784,14 +804,30 @@ createApp({
             nextTick(() => { if (productRows.value.length) renderProductChart(); });
         }
 
-        // 维度标签拖拽（Pointer 拖拽 + 占位符 + 碰撞检测）
+        // 外框高度先过渡：productRows 变化前后测量高度，驱动 tree-wrap 平滑伸缩
+        watch(productRows, () => {
+            const wrap = treeWrapEl.value;
+            if (!wrap) return;
+            const oldH = wrap.scrollHeight;
+            wrap.style.height = oldH + 'px';
+            nextTick(() => {
+                const newH = wrap.scrollHeight;
+                if (Math.abs(newH - oldH) < 1) { wrap.style.height = ''; return; }
+                wrap.style.height = newH + 'px';
+                setTimeout(() => { if (treeWrapEl.value) treeWrapEl.value.style.height = ''; }, 340);
+            });
+        });
+
+        // 维度标签拖拽（Pointer 拖拽 + 占位挤压 + 中心点判定）
         const activeTagDrag = ref(false);
         const tagDragLevel = ref('');
         const tagDragSource = ref(''); // 'pool' | 'selected'
         const tagDragIdx = ref(-1);
         const tagHoverInsertIdx = ref(-1);
         const tagDragWidth = ref(0);
+        const tagDragHeight = ref(0);
         const tagDragStyle = reactive({ left: '0px', top: '0px' });
+        const treeWrapEl = ref(null);
 
         let tagDragStartX = 0, tagDragStartY = 0;
         let tagDragStartLeft = 0, tagDragStartTop = 0;
@@ -805,6 +841,7 @@ createApp({
             tagDragSource.value = source;
             tagDragIdx.value = idx;
             tagDragWidth.value = rect.width;
+            tagDragHeight.value = rect.height;
             activeTagDrag.value = true;
             tagDragStartX = e.clientX;
             tagDragStartY = e.clientY;
@@ -841,30 +878,30 @@ createApp({
             if (inPool) {
                 tagHoverInsertIdx.value = -1;
             } else if (!inAct) {
+                // 拖出激活区：取消插入指示，原标签保留原位（不挤压）
                 tagHoverInsertIdx.value = -1;
             } else {
-                // 距离最近标签判定（消除 ▸ 和 gap 死区）
-                const wraps = [...actArea.querySelectorAll(':scope > .dim-tag-wrap')];
-                let bestIdx = -1, bestDist = Infinity;
-                for (let i = 0; i < wraps.length; i++) {
-                    const r = wraps[i].getBoundingClientRect();
-                    const midX = r.left + r.width / 2;
-                    const dist = Math.abs(e.clientX - midX);
-                    if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-                }
-                if (bestIdx < 0) {
-                    tagHoverInsertIdx.value = selectedLevels.value.length;
+                // 基于实际可见标签中心点精确判断插入位置
+                // 过滤 display:none 的原拖动标签（visibility/offsetWidth 仍可能非0，用 offsetWidth>0 兜底）
+                const tags = Array.from(actArea.querySelectorAll('[data-act-idx]'))
+                                  .filter(t => t.offsetWidth > 0);
+                if (tags.length === 0) {
+                    tagHoverInsertIdx.value = 0;
                 } else {
-                    const r = wraps[bestIdx].getBoundingClientRect();
-                    const cursorRight = e.clientX > r.left + r.width / 2;
-                    const src = tagDragSource.value;
-                    const srcIdx = tagDragIdx.value;
-                    let realBefore = 0;
-                    for (let i = 0; i < bestIdx; i++) {
-                        if (!wraps[i].querySelector('.dim-tag.placeholder')) realBefore++;
+                    let ins = selectedLevels.value.length;
+                    let found = false;
+                    for (let i = 0; i < tags.length; i++) {
+                        const r = tags[i].getBoundingClientRect();
+                        const mid = r.left + r.width / 2;
+                        if (e.clientX < mid) {
+                            ins = parseInt(tags[i].dataset.actIdx);
+                            found = true;
+                            break;
+                        }
                     }
-                    let ins = realBefore + (cursorRight ? 1 : 0);
-                    if (src === 'selected' && ins > srcIdx) ins--;
+                    if (!found) ins = selectedLevels.value.length;
+                    // 校正：拖动激活区标签换位时，移除自身后的目标索引
+                    if (tagDragSource.value === 'selected' && ins > tagDragIdx.value) ins -= 1;
                     tagHoverInsertIdx.value = ins;
                 }
             }
@@ -1872,8 +1909,8 @@ createApp({
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
-            productRows, productChartTitle, toggleRow,
-            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragStyle,
+            productRows, productChartTitle, toggleRow, treeWrapEl,
+            activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragHeight, tagDragStyle,
             onTagPointerDown,
             dragStart,
             // 工单列表相关
