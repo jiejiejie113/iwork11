@@ -677,9 +677,15 @@ createApp({
                     info,
                     children,
                     hasChildren: children.length > 0,
+                    _rawVal: val,
                 });
             }
-            nodes.sort((a, b) => b.qty - a.qty);
+            // 排序：工序层按时序升序，其余层按产量降序
+            if (curDim === 'stepno') {
+                nodes.sort((a, b) => a._rawVal - b._rawVal);
+            } else {
+                nodes.sort((a, b) => b.qty - a.qty);
+            }
             return nodes;
         }
 
