@@ -69,6 +69,14 @@
         .hide-scrollbar::-webkit-scrollbar {
             display: none;  /* Chrome, Safari and Opera */
         }
+        /* 树形表格行过渡动画 */
+        .tree-enter-active { transition: all 0.28s ease-out; }
+        .tree-leave-active { transition: all 0.18s ease-in; position: absolute; }
+        .tree-enter-from { opacity: 0; transform: translateY(-6px); }
+        .tree-leave-to   { opacity: 0; transform: translateY(-3px); }
+        .tree-move       { transition: transform 0.3s ease; }
+        /* 产品图表容器过渡 */
+        #product-chart { transition: opacity 0.35s ease; }
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" style="touch-action:none;">
@@ -266,7 +274,7 @@
                         <th class="py-2 px-3 w-20 text-right">信息</th>
                     </tr>
                 </thead>
-                <tbody>
+                <transition-group name="tree" tag="tbody" appear>
                     <tr v-for="row in productRows" :key="row.key"
                         @click="toggleRow(row)"
                         class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer"
@@ -281,14 +289,14 @@
                             :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</td>
                         <td class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</td>
                     </tr>
-                    <tr v-if="productRows.length === 0" class="border-b border-slate-700">
+                    <tr v-if="productRows.length === 0" key="empty-row" class="border-b border-slate-700">
                         <td colspan="3" class="py-8 text-center text-slate-500">
                             <template v-if="selectedLevels.length === 0">将维度标签拖入激活区以显示数据</template>
                             <template v-else-if="productList.length === 0">暂无产品数据</template>
                             <template v-else>点击展开查看详情</template>
                         </td>
                     </tr>
-                </tbody>
+                </transition-group>
             </table>
             </div>
         </div>
@@ -908,18 +916,19 @@ createApp({
             nextTick(() => {
                 const canvas = document.getElementById('product-chart');
                 if (!canvas) return;
-                if (charts['product-chart']) charts['product-chart'].destroy();
-                const ctx = canvas.getContext('2d');
 
                 const values = productChartValues.value;
-                if (!values.length) return;
+                if (!values.length) {
+                    if (charts['product-chart']) { charts['product-chart'].destroy(); charts['product-chart'] = null; }
+                    return;
+                }
                 const maxVal = Math.max(...values);
                 const minVal = Math.min(...values);
                 const avgVal = values.reduce((a, b) => a + b, 0) / values.length;
 
-                const defaultColor = 'rgba(96, 165, 250, 0.85)';   // 统一蓝色
-                const maxColor = 'rgba(52, 211, 153, 0.85)';       // 最高值绿色
-                const minColor = 'rgba(248, 113, 113, 0.85)';      // 最低值红色
+                const defaultColor = 'rgba(96, 165, 250, 0.85)';
+                const maxColor = 'rgba(52, 211, 153, 0.85)';
+                const minColor = 'rgba(248, 113, 113, 0.85)';
                 const bgColors = values.map(v => {
                     if (values.length <= 1) return defaultColor;
                     if (v === maxVal) return maxColor;
@@ -928,50 +937,64 @@ createApp({
                 });
                 const borderColors = bgColors.map(c => c.replace('0.85', '1'));
 
-                charts['product-chart'] = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: productChartLabels.value,
-                        datasets: [
-                            {
-                                label: '产量',
-                                data: values,
-                                backgroundColor: bgColors,
-                                borderColor: borderColors,
-                                borderWidth: 1,
-                                borderRadius: 4,
-                            },
-                            {
-                                type: 'line',
-                                label: '平均值 ' + fmtNum(Math.round(avgVal)),
-                                data: Array(values.length).fill(avgVal),
-                                borderColor: 'rgba(148, 163, 184, 0.7)',
-                                borderDash: [6, 4],
-                                borderWidth: 1.5,
-                                pointRadius: 0,
-                                fill: false,
-                            },
-                        ],
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: false },
+                // 增量更新：已存在则更新数据（Chart.js 自动动画），不存在则创建
+                if (charts['product-chart']) {
+                    const chart = charts['product-chart'];
+                    chart.data.labels = productChartLabels.value;
+                    chart.data.datasets[0].data = values;
+                    chart.data.datasets[0].backgroundColor = bgColors;
+                    chart.data.datasets[0].borderColor = borderColors;
+                    chart.data.datasets[1].data = Array(values.length).fill(avgVal);
+                    chart.data.datasets[1].label = '平均值 ' + fmtNum(Math.round(avgVal));
+                    chart.update('active');
+                } else {
+                    const ctx = canvas.getContext('2d');
+                    charts['product-chart'] = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: productChartLabels.value,
+                            datasets: [
+                                {
+                                    label: '产量',
+                                    data: values,
+                                    backgroundColor: bgColors,
+                                    borderColor: borderColors,
+                                    borderWidth: 1,
+                                    borderRadius: 4,
+                                },
+                                {
+                                    type: 'line',
+                                    label: '平均值 ' + fmtNum(Math.round(avgVal)),
+                                    data: Array(values.length).fill(avgVal),
+                                    borderColor: 'rgba(148, 163, 184, 0.7)',
+                                    borderDash: [6, 4],
+                                    borderWidth: 1.5,
+                                    pointRadius: 0,
+                                    fill: false,
+                                },
+                            ],
                         },
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: { color: '#94a3b8', font: { size: 10 } },
-                                grid: { color: '#334155' },
+                        options: {
+                            animation: { duration: 400, easing: 'easeOutQuart' },
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
                             },
-                            x: {
-                                ticks: { color: '#94a3b8', font: { size: 10 }, maxRotation: 45 },
-                                grid: { display: false },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: { color: '#94a3b8', font: { size: 10 } },
+                                    grid: { color: '#334155' },
+                                },
+                                x: {
+                                    ticks: { color: '#94a3b8', font: { size: 10 }, maxRotation: 45 },
+                                    grid: { display: false },
+                                },
                             },
                         },
-                    },
-                });
+                    });
+                }
             });
         }
 
