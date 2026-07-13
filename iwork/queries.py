@@ -1119,3 +1119,74 @@ def get_kanban_filter_options(target_date, stepnos=None, wrk_orders=None,
         'flows': all_flows,
         'employees': employees,
     }
+
+
+# ======
+# 工序描述与标准工时查询
+
+def get_all_step_descriptions() -> dict[int, str]:
+    """
+    获取所有工序号的描述信息
+
+    Returns:
+        dict[int, str]: {工序号: 工序描述} 字典
+    """
+    from iwork.models import Pydefstp
+    rows = Pydefstp.objects.using('iwork').values('StepNo', 'description')
+    return {r['StepNo']: r['description'] for r in rows}
+
+
+def get_step_description(stepno: int) -> str:
+    """
+    获取单个工序号的描述
+
+    Args:
+        stepno (int): 工序号
+
+    Returns:
+        str: 工序描述，未找到返回空字符串
+    """
+    from iwork.models import Pydefstp
+    try:
+        obj = Pydefstp.objects.using('iwork').get(StepNo=stepno)
+        return obj.description
+    except Pydefstp.DoesNotExist:
+        return ''
+
+
+def get_step_time(wrk_order: str, stepno: int) -> float | None:
+    """
+    获取某个工单某个工序的标准工时
+
+    Args:
+        wrk_order (str): 工单号
+        stepno (int): 工序号
+
+    Returns:
+        float | None: 标准工时，未找到返回 None
+    """
+    from iwork.models import Pywrkstp
+    try:
+        obj = Pywrkstp.objects.using('iwork').get(WrkOrder=wrk_order, StepNo=stepno)
+        return obj.StepTime
+    except Pywrkstp.DoesNotExist:
+        return None
+
+
+def get_batch_step_times(wrk_orders: list[str]) -> dict[tuple[str, int], float]:
+    """
+    批量获取多个工单的工序标准工时
+
+    Args:
+        wrk_orders (list[str]): 工单号列表
+
+    Returns:
+        dict[tuple[str, int], float]: {(工单号, 工序号): 标准工时} 字典
+    """
+    if not wrk_orders:
+        return {}
+    from iwork.models import Pywrkstp
+    rows = Pywrkstp.objects.using('iwork').filter(
+        WrkOrder__in=wrk_orders
+    ).values('WrkOrder', 'StepNo', 'StepTime')
+    return {(r['WrkOrder'], r['StepNo']): r['StepTime'] for r in rows}

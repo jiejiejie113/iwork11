@@ -61,3 +61,47 @@ class Pytckreg3(models.Model):
 
 
 from iwork.local_models import LocalPytckreg3
+
+
+class Pydefstp(models.Model):
+    """
+    工序字典表（只读）
+    映射到远程 pydefstp 表
+    StepNo 为主键，description 为工序描述
+    """
+
+    StepNo = models.IntegerField('工序号', primary_key=True)
+    description = models.CharField('工序描述', max_length=255, blank=True, default='')
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'pydefstp'
+        managed = False
+        verbose_name = '工序字典'
+        verbose_name_plural = '工序字典'
+
+    def __str__(self) -> str:
+        return f'{self.StepNo}: {self.description}'
+
+
+class Pywrkstp(models.Model):
+    """
+    工单工序工时表（只读）
+    映射到远程 pywrkstp 表
+    StepNo + WrkOrder 联合确定 StepTime（标准工时）
+    """
+
+    StepNo = models.IntegerField('工序号', default=0)
+    WrkOrder = models.CharField('工单号', max_length=14, blank=True, default='')
+    StepTime = models.FloatField('标准工时', default=0.0)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'pywrkstp'
+        managed = False
+        unique_together = ('StepNo', 'WrkOrder')
+        verbose_name = '工单工序工时'
+        verbose_name_plural = '工单工序工时'
+
+    def __str__(self) -> str:
+        return f'{self.WrkOrder} / Step {self.StepNo}: {self.StepTime}'

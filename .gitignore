@@ -94,3 +94,4 @@ static/
 # 本地数据库文件
 *.sqlite3
 dump.rdb
+sqlite/
