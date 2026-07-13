@@ -95,3 +95,4 @@ static/
 *.sqlite3
 sqlite/
 dump.rdb
+sqlite/
