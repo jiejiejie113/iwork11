@@ -258,7 +258,7 @@ class TestLocalDateStatsAPI:
             'workorder_count': 50, 'total_qty': 200,
             'hourly_stats': [], 'station_stats': [], 'workorders': [],
             'process_flow_stats': [], 'monthly_process_stats': [],
-            'monthly_total_trend': [], 'heatmap_data': None,
+            'monthly_total_trend': [], 'heatmap_matrix': None,
             'station_ranking': [], 'top_processes': [],
         }
 
@@ -298,7 +298,7 @@ class TestLocalDateStatsAPI:
             'process_flow_stats': [],
             'monthly_process_stats': [],
             'monthly_total_trend': [],
-            'heatmap_data': None,
+            'heatmap_matrix': None,
             'station_ranking': [{'station': 'S01', 'qty': 150}],
             'top_processes': [{'step': 70, 'qty': 200}],
         }
@@ -731,7 +731,8 @@ class TestDashboardStream:
 
     @patch('iwork.api_views.cache')
     @patch('iwork.api_views.get_realtime_stats')
-    def test_returns_event_stream_response(self, mock_stats, mock_cache):
+    @pytest.mark.asyncio
+    async def test_returns_event_stream_response(self, mock_stats, mock_cache):
         """SSE 视图返回 StreamingHttpResponse"""
         from iwork.api_views import dashboard_stream
         from django.http import StreamingHttpResponse
@@ -741,7 +742,7 @@ class TestDashboardStream:
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/')
-        response = dashboard_stream(request)
+        response = await dashboard_stream(request)
 
         assert isinstance(response, StreamingHttpResponse)
         assert response['Content-Type'] == 'text/event-stream'
@@ -749,7 +750,8 @@ class TestDashboardStream:
 
     @patch('iwork.api_views.cache')
     @patch('iwork.api_views.get_realtime_stats')
-    def test_sse_first_chunk_has_valid_json(self, mock_stats, mock_cache):
+    @pytest.mark.asyncio
+    async def test_sse_first_chunk_has_valid_json(self, mock_stats, mock_cache):
         """SSE 生成器第一个 chunk 包含有效的 JSON 数据"""
         from iwork.api_views import dashboard_stream
 
@@ -761,10 +763,10 @@ class TestDashboardStream:
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/')
-        response = dashboard_stream(request)
+        response = await dashboard_stream(request)
 
         # 取第一个 chunk（生成器 yield 后停在 sleep，不会阻塞）
-        first_chunk = next(response.streaming_content).decode('utf-8')
+        first_chunk = (await anext(response.streaming_content)).decode('utf-8')
         assert first_chunk.startswith('data: ')
         assert first_chunk.endswith('\n\n')
 
@@ -778,7 +780,8 @@ class TestDashboardStream:
 
     @patch('iwork.api_views.cache')
     @patch('iwork.api_views.get_realtime_stats')
-    def test_sse_respects_stepno_filter(self, mock_stats, mock_cache):
+    @pytest.mark.asyncio
+    async def test_sse_respects_stepno_filter(self, mock_stats, mock_cache):
         """SSE 视图支持 stepno 参数过滤"""
         from iwork.api_views import dashboard_stream
 
@@ -787,10 +790,10 @@ class TestDashboardStream:
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/?stepno=69')
-        response = dashboard_stream(request)
+        response = await dashboard_stream(request)
 
         # 触发生成器执行到第一个 yield
-        next(response.streaming_content)
+        await anext(response.streaming_content)
         mock_stats.assert_called_once_with(stepno_filter=[69])
 
 

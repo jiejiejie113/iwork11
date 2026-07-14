@@ -42,7 +42,7 @@ D:\DM\iwork\iwork\
 | 数据库别名  | 用途                                                                               |
 | ----------- | ---------------------------------------------------------------------------------- |
 | default     | Django 系统表（auth, sessions 等）                                                 |
-| iwork       | 远程生产数据库 (iwork_system) — 表 pytckreg3                                      |
+| iwork       | 远程生产数据库 (payroll) — 表 pytckreg3、pydefstp、pywrkstp                       |
 | iwork_local | 本地业务数据库 (iwork_local) — 表 pytckreg3, target_production, production_orders |
 
 ### 路由器规则（database_router.py）
@@ -56,7 +56,7 @@ D:\DM\iwork\iwork\
 ### 3.1 Pytckreg3 — 远程生产打卡记录（只读）
 
 - 文件: `D:\DM\iwork\iwork\models.py`
-- 数据库: `iwork_system.pytckreg3`（远程，managed=False）
+- 数据库: `payroll.pytckreg3`（远程，managed=False）
 - 用途：映射 payroll 系统的生产流水线打卡记录
 
 | 字段名      | 类型          | 约束                  |
@@ -118,7 +118,7 @@ D:\DM\iwork\iwork\
 
 - 文件: `D:\DM\iwork\iwork\local_models.py`
 - 数据库: `iwork_local.production_orders`（managed=True）
-- 用途：工单编号与产品款号映射表，数据源来自 `iwork/sqlite/production_orders.db`
+- 用途：工单编号与产品款号映射表。运行时读取 MySQL；`sqlite/production_orders.db` 仅是人工传输、Git 忽略的一次性导入源
 
 | 字段名       | 类型           | 约束              |
 | ------------ | -------------- | ----------------- |
@@ -140,6 +140,21 @@ D:\DM\iwork\iwork\
 唯一约束 `idx_po_unique_record`: `(order_no, order_dept, style_no, product_name, style_desc)`
 
 关联关系：通过 `Pytckreg3.WrkOrder[:6]` 前6位匹配 ProductionOrder.style_no，关联出 product_name 和 order_no。
+
+### 3.5 Pydefstp — 工序字典（只读）
+
+- 数据库：`payroll.pydefstp`（远程，managed=False）
+- 主键：`StepNo`
+- 用途：把工序号映射为工序描述
+
+### 3.6 Pywrkstp — 工单工序标准工时（只读）
+
+- 数据库：`payroll.pywrkstp`（远程，managed=False）
+- 联合主键：`(WrkOrder, StepNo)`
+- Django 映射：`CompositePrimaryKey('WrkOrder', 'StepNo')`
+- 用途：按工单和工序查询 `StepTime`
+
+该表没有可依赖的 `id` 列。查询、测试和 mock 都必须使用联合主键字段，不能让 ORM 隐式选择 `id`。
 
 ## 四、模型关系简图
 

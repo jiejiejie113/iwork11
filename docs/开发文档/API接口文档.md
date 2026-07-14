@@ -45,7 +45,7 @@ Celery Beat (每 60s)
 ### `GET /history/`
 
 - **文件：** `iwork/views.py` → `history_dashboard()`
-- **说明：** 历史数据看板。同一模板，`initial_view='history'`，初始数据归零，不启用 WebSocket。
+- **说明：** 历史数据看板。同一模板，`initial_view='history'`，初始数据归零，不建立 SSE 连接。
 - **参数：** 无
 
 ### `GET /production/detail-data/`

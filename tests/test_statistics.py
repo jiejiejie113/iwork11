@@ -344,6 +344,8 @@ class TestGetBatchDetailStats:
         custom_q.get_batch_flow_overview = Mock(return_value={})
         custom_q.get_batch_flow_hourly = Mock(return_value={})
         custom_q.get_batch_flow_employees = Mock(return_value={})
+        custom_q.get_batch_stepno_employees = Mock(return_value={})
+        custom_q.get_batch_product_overview = Mock(return_value={'products': []})
 
         get_batch_detail_stats(q=custom_q)
         custom_q.get_batch_flow_overview.assert_called_once()
@@ -367,6 +369,7 @@ class TestBatchHourlyMergeNoneSafe:
         mock_remote.get_batch_workorders_list.return_value = {}
         mock_remote.get_batch_monthly_total_trend.return_value = {}
         mock_remote.get_batch_monthly_process_stats.return_value = {}
+        mock_remote.get_batch_monthly_hourly_stats.return_value = {}
 
         result = get_batch_stats()
         assert result is not None

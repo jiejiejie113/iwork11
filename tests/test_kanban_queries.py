@@ -30,7 +30,7 @@ class TestApplyKanbanFilters:
         from iwork.queries import _apply_kanban_filters
         qs = Mock()
         _apply_kanban_filters(qs, stepnos=['70'])
-        qs.filter.assert_called_once_with(StepNo__in=['70'])
+        qs.filter.assert_called_once_with(StepNo__in=[70])
 
     def test_wrk_order_filter_applied(self):
         """款号筛选"""
@@ -77,7 +77,7 @@ class TestMergeWorkerRows:
         assert result[0]['reg_per_sys_id'] == 'A'
         assert result[0]['production'] == 100
         assert result[0]['stepno'] == '70'
-        assert result[0]['wrk_order'] == 'W1'
+        assert result[0]['wrk_orders'] == ['W1']
         assert result[0]['flow'] == 'F1'
 
     def test_single_worker_multiple_rows_merged(self):
@@ -90,9 +90,8 @@ class TestMergeWorkerRows:
         result = _merge_worker_rows(rows)
         assert len(result) == 1
         assert result[0]['production'] == 150
-        # 取产量最大的那条的主字段
-        assert result[0]['wrk_order'] == 'W1'
-        assert result[0]['flow'] == 'F1'
+        assert result[0]['wrk_orders'] == ['W1', 'W2']
+        assert result[0]['flow'] == 'F1、F2'
 
     def test_multiple_workers_separated(self):
         """不同工人不合并"""
@@ -127,17 +126,17 @@ class TestMergeWorkerRows:
         result = _merge_worker_rows(rows)
         assert result[0]['production'] == 30
 
-    def test_best_qty_selects_max(self):
-        """主字段来自 Qty 最大的记录"""
+    def test_worker_dimensions_include_all_unique_values(self):
+        """工人维度汇总保留全部不重复工序、工单和 Flow。"""
         from iwork.queries import _merge_worker_rows
         rows = [
             {'RegPerSysID': 'A', 'StepNo': '70', 'WrkOrder': 'SMALL', 'Flow': 'F1', 'qty': 10},
             {'RegPerSysID': 'A', 'StepNo': '80', 'WrkOrder': 'BIG', 'Flow': 'F2', 'qty': 200},
         ]
         result = _merge_worker_rows(rows)
-        assert result[0]['wrk_order'] == 'BIG'
-        assert result[0]['stepno'] == '80'
-        assert result[0]['flow'] == 'F2'
+        assert result[0]['wrk_orders'] == ['BIG', 'SMALL']
+        assert result[0]['stepno'] == '70、80'
+        assert result[0]['flow'] == 'F1、F2'
 
 
 class TestKanbanStats:
@@ -154,6 +153,7 @@ class TestKanbanStats:
         mock_qs = MagicMock(spec=QuerySet)
         mock_get_records.return_value = mock_qs
         mock_qs.filter.return_value = mock_qs
+        mock_qs.exclude.return_value = mock_qs
 
         # values().annotate() 返回的 QuerySet
         mock_worker_qs = MagicMock(spec=QuerySet)
@@ -188,6 +188,7 @@ class TestKanbanStats:
         mock_qs = MagicMock(spec=QuerySet)
         mock_get_records.return_value = mock_qs
         mock_qs.filter.return_value = mock_qs
+        mock_qs.exclude.return_value = mock_qs
         mock_worker_qs = MagicMock(spec=QuerySet)
         mock_qs.values.return_value = mock_worker_qs
         mock_worker_qs.annotate.return_value = mock_worker_qs

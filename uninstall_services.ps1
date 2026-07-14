@@ -15,7 +15,7 @@ if (-not (Test-Path $nssm)) {
 
 Write-Host "卸载 iwork Windows 服务..." -ForegroundColor Yellow
 
-@("iwork-daphne", "iwork-celery-worker", "iwork-celery-beat") | ForEach-Object {
+@("iwork-django", "iwork-daphne", "iwork-celery-worker", "iwork-celery-beat") | ForEach-Object {
     & $nssm stop $_ 2>$null
     & $nssm remove $_ confirm 2>$null
     Write-Host "  已卸载: $_"
@@ -23,6 +23,4 @@ Write-Host "卸载 iwork Windows 服务..." -ForegroundColor Yellow
 
 Write-Host "所有服务已卸载" -ForegroundColor Green
 Write-Host ""
-Write-Host "提示: Docker 容器和数据卷未删除。若需清理，请执行:" -ForegroundColor Yellow
-Write-Host "  docker compose down        # 仅停止容器" -ForegroundColor Yellow
-Write-Host "  docker compose down -v     # 停止容器并删除数据卷" -ForegroundColor Yellow
+Write-Host "Docker 容器和数据卷未修改。当前部署由 Docker 管理。" -ForegroundColor Yellow

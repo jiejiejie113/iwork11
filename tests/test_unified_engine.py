@@ -67,7 +67,7 @@ class TestUnifiedEngine:
             'workorder_count', 'total_qty', 'date',
             'hourly_stats', 'process_flow_stats',
             'monthly_process_stats', 'monthly_total_trend',
-            'station_stats', 'heatmap_data', 'station_ranking',
+            'station_stats', 'heatmap_matrix', 'station_ranking',
             'top_processes', 'workorders',
         ]
         for key in required_keys:
@@ -140,10 +140,10 @@ class TestUnifiedEngine:
 
         # 确认各查询函数被调用时传入了 stepno_filter
         mock_q.get_basic_stats.assert_called_with(date(2026, 5, 9), stepno_filter=[70, 69])
-        mock_q.get_process_stats.assert_called_with(date(2026, 5, 9), limit=8, stepno_filter=[70, 69])
+        mock_q.get_process_stats.assert_called_with(date(2026, 5, 9), limit=9999, stepno_filter=[70, 69])
         mock_q.get_hourly_stats.assert_called_with(date(2026, 5, 9), stepno_filter=[70, 69])
-        mock_q.get_heatmap_data.assert_called_with(date(2026, 5, 9), stepno_filter=[70, 69])
-        mock_q.get_station_ranking.assert_called_with(date(2026, 5, 9), limit=15, stepno_filter=[70, 69])
+        mock_q.get_process_by_flow.assert_called_with(date(2026, 5, 9), [70])
+        mock_q.get_station_ranking.assert_called_with(date(2026, 5, 9), stepno_filter=[70, 69])
 
     def test_date_passed_correctly(self):
         """验证 target_date 正确传递给查询函数（而非 today()）"""
@@ -319,7 +319,7 @@ class TestHistoryAPIResponse:
             'process_flow_stats': [{'step': 70, 'flow': 'A', 'qty': 600}],
             'monthly_process_stats': [{'date': '2026-05-09', 'step': 70, 'qty': 1000}],
             'monthly_total_trend': [{'date': '2026-05-01', 'qty': 5000}],
-            'heatmap_data': {'hours': [8], 'flows': ['A'], 'data': [[100]]},
+            'heatmap_matrix': {'hours': [8], 'flows': ['A'], 'data': [[100]]},
             'station_ranking': [{'station': 'S01', 'qty': 1000}],
             'top_processes': [{'step': 70, 'qty': 1000}],
         }
@@ -337,13 +337,13 @@ class TestHistoryAPIResponse:
         chart_fields = [
             'hourly_stats', 'station_stats', 'workorders',
             'process_flow_stats', 'monthly_process_stats',
-            'monthly_total_trend', 'heatmap_data', 'station_ranking',
+            'monthly_total_trend', 'heatmap_matrix', 'station_ranking',
         ]
         for field in chart_fields:
             assert field in data, f"remote 响应缺少字段: {field}"
             val = data[field]
             # 确保不是 None（热力图除外）
-            if field != 'heatmap_data':
+            if field != 'heatmap_matrix':
                 assert val is not None, f"字段 {field} 为 None"
 
     def test_local_mode_returns_all_chart_fields(self):
@@ -361,7 +361,7 @@ class TestHistoryAPIResponse:
             'process_flow_stats': [{'step': 69, 'flow': 'B', 'qty': 300}],
             'monthly_process_stats': [{'date': '2026-05-09', 'step': 69, 'qty': 800}],
             'monthly_total_trend': [{'date': '2026-05-01', 'qty': 4000}],
-            'heatmap_data': {'hours': [9], 'flows': ['B'], 'data': [[200]]},
+            'heatmap_matrix': {'hours': [9], 'flows': ['B'], 'data': [[200]]},
             'station_ranking': [{'station': 'S02', 'qty': 800}],
             'top_processes': [{'step': 69, 'qty': 800}],
         }
@@ -379,7 +379,7 @@ class TestHistoryAPIResponse:
         chart_fields = [
             'hourly_stats', 'station_stats', 'workorders',
             'process_flow_stats', 'monthly_process_stats',
-            'monthly_total_trend', 'heatmap_data', 'station_ranking',
+            'monthly_total_trend', 'heatmap_matrix', 'station_ranking',
         ]
         for field in chart_fields:
             assert field in data, f"local 响应缺少字段: {field}"
@@ -408,9 +408,9 @@ def _make_batch_mock():
     """构造模拟的 batch 查询返回数据"""
     return {
         'basic': {
-            70: {'total_qty': 5000},
-            69: {'total_qty': 3000},
-            68: {'total_qty': 2000},
+            70: {'total_qty': 5000, 'workorder_count': 3},
+            69: {'total_qty': 3000, 'workorder_count': 2},
+            68: {'total_qty': 2000, 'workorder_count': 1},
         },
         'hourly': {
             70: [{'hour': 8, 'qty': 2000}, {'hour': 9, 'qty': 3000}],
@@ -454,6 +454,7 @@ class TestBatchEngine:
         mock_q.get_batch_workorders_list.return_value = bm['wo']
         mock_q.get_batch_monthly_total_trend.return_value = bm['monthly_total']
         mock_q.get_batch_monthly_process_stats.return_value = bm['monthly_proc']
+        mock_q.get_batch_monthly_hourly_stats.return_value = {}
 
         batch = get_batch_stats(q=mock_q)
 
@@ -463,7 +464,7 @@ class TestBatchEngine:
             s = batch[stepno]
             assert s['total_qty'] > 0
             assert 'hourly_stats' in s
-            assert 'heatmap_data' in s
+            assert 'heatmap_matrix' in s
             assert 'station_ranking' in s
 
         # 'all' 合并视图
@@ -485,6 +486,7 @@ class TestBatchEngine:
         mock_q.get_batch_workorders_list.return_value = bm['wo']
         mock_q.get_batch_monthly_total_trend.return_value = bm['monthly_total']
         mock_q.get_batch_monthly_process_stats.return_value = bm['monthly_proc']
+        mock_q.get_batch_monthly_hourly_stats.return_value = {}
 
         batch = get_batch_stats(q=mock_q)
 
@@ -506,6 +508,7 @@ class TestBatchEngine:
         mock_q.get_batch_workorders_list.return_value = {}
         mock_q.get_batch_monthly_total_trend.return_value = {}
         mock_q.get_batch_monthly_process_stats.return_value = {}
+        mock_q.get_batch_monthly_hourly_stats.return_value = {}
 
         batch = get_batch_stats(q=mock_q)
 
@@ -548,25 +551,33 @@ class TestCacheLayer:
         result = get_realtime_stats([70])
         assert result['total_qty'] == 999
 
-    def test_get_date_stats_cache_hit(self):
-        """get_date_stats 历史查询优先读缓存"""
+    def test_get_date_stats_queries_remote_without_history_cache(self):
+        """远程历史查询每次实时执行，不读取旧历史缓存键。"""
         from iwork.statistics import get_date_stats
         from django.core.cache import cache
 
         cache.set('stats:date:2026-05-09:all', {'total_qty': 888, 'date': date(2026, 5, 9)}, 1800)
 
-        result = get_date_stats(date(2026, 5, 9), None)
-        assert result['total_qty'] == 888
+        expected = {'total_qty': 100, 'date': date(2026, 5, 9)}
+        with patch('iwork.statistics._get_date_stats', return_value=expected) as engine:
+            result = get_date_stats(date(2026, 5, 9), None)
 
-    def test_get_local_date_stats_cache_hit(self):
-        """get_local_date_stats 本地历史优先读缓存"""
+        assert result is expected
+        assert engine.call_args.kwargs['use_cache'] is False
+
+    def test_get_local_date_stats_queries_local_without_history_cache(self):
+        """本地历史查询每次实时执行，不读取旧历史缓存键。"""
         from iwork.statistics import get_local_date_stats
         from django.core.cache import cache
 
         cache.set('stats:local:date:2026-05-09:all', {'total_qty': 777, 'date': date(2026, 5, 9)}, 3600)
 
-        result = get_local_date_stats(date(2026, 5, 9), None)
-        assert result['total_qty'] == 777
+        expected = {'total_qty': 100, 'date': date(2026, 5, 9)}
+        with patch('iwork.statistics._get_date_stats', return_value=expected) as engine:
+            result = get_local_date_stats(date(2026, 5, 9), None)
+
+        assert result is expected
+        assert engine.call_args.kwargs['use_cache'] is False
 
     def test_invalidate_local_cache(self):
         """invalidate_local_cache 删除对应日期的本地缓存"""
@@ -602,16 +613,14 @@ class TestTasksNewFlow:
     """tasks.py 改用 batch 后的行为测试"""
 
     def test_sync_dashboard_stats_calls_batch(self):
-        """Celery 任务调用 get_batch_stats + cache_batch_to_redis"""
-        from unittest.mock import patch, AsyncMock
+        """Celery 任务构建并缓存看板及生产详情批次。"""
+        from unittest.mock import patch
         from iwork.tasks import sync_dashboard_stats
-
-        mock_channel = AsyncMock()
-        mock_channel.group_send = AsyncMock()
 
         with patch('iwork.tasks.get_batch_stats') as mock_batch, \
              patch('iwork.tasks.cache_batch_to_redis') as mock_cache, \
-             patch('iwork.tasks.get_channel_layer', return_value=mock_channel):
+             patch('iwork.tasks.get_batch_detail_stats', return_value={}) as mock_detail, \
+             patch('iwork.tasks.cache_detail_batch_to_redis') as mock_detail_cache:
             mock_batch.return_value = {
                 70: {'total_qty': 100, 'date': date.today()},
                 'all': {'total_qty': 500, 'date': date.today()},
@@ -621,7 +630,8 @@ class TestTasksNewFlow:
 
             mock_batch.assert_called_once()
             mock_cache.assert_called_once()
-            mock_channel.group_send.assert_called_once()
+            mock_detail.assert_called_once()
+            mock_detail_cache.assert_called_once_with({})
             assert result == 2
 
     def test_sync_dashboard_stats_error_retries(self):

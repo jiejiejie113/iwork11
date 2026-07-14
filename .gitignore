@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 export.env
+dkt-secrets.env
 
 # Python
 __pycache__/
@@ -30,6 +31,9 @@ wheels/
 venv/
 ENV/
 env/
+!env/
+!env/local.env
+!env/production.env
 .venv/
 
 # Django
@@ -95,4 +99,3 @@ static/
 *.sqlite3
 sqlite/
 dump.rdb
-sqlite/

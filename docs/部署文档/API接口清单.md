@@ -1,7 +1,7 @@
 # iwork Dashboard API 接口清单
 
-> 生成日期：2026-05-29
-> 版本：v2.0（看板改版后）
+> 生成日期：2026-05-29 | 复核：2026-07-14
+> 版本：v2.1（SSE 架构）
 
 ---
 
@@ -15,7 +15,7 @@
 | 历史数据 API | 3 | 历史日期查询、可用日期、数据同步 |
 | 生产详情 API | 4 | 工序概览、Flow 概览、Flow 明细、工序明细 |
 | 生产详情页面 | 3 | HTML 页面 |
-| WebSocket | 1 | 实时数据推送 |
+| SSE | 1 | 实时数据推送 |
 
 ---
 
@@ -588,29 +588,21 @@ GET /production/detail-data/stepno/<stepno>/
 
 ---
 
-## 七、WebSocket
+## 七、SSE
 
 ### 7.1 看板实时推送
 
-```
-ws://<host>/ws/dashboard/
+```http
+GET /api/dashboard/stream/
+Accept: text/event-stream
 ```
 
-WebSocket 连接，每 60 秒（由 Celery Beat 触发）主动推送当日统计数据。
+浏览器使用 `EventSource` 建立 SSE 连接。Celery Beat 每 60 秒刷新 Redis，SSE 端点读取缓存并发送包含 `type=dashboard_update` 的数据；连接期间会发送心跳注释。
 
 **推送消息示例**：
 
-```json
-{
-  "type": "dashboard_update",
-  "timestamp": "2026-05-29T14:30:00",
-  "data": {
-    "total_qty": 12580,
-    "total_workers": 342,
-    "total_workorders": 156,
-    "date": "2026-05-29"
-  }
-}
+```text
+data: {"type":"dashboard_update","timestamp":"2026-05-29T14:30:00","data":{"total_qty":12580,"total_workers":342,"total_workorders":156,"date":"2026-05-29"}}
 ```
 
 ---

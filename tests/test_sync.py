@@ -118,8 +118,9 @@ class TestSyncDateData:
         mock.StepNo = stepno
         mock.Qty = qty
         mock.RegPerSysID = 1
-        mock.RegDate = timezone.now()
-        mock.RegTime = timezone.now()
+        fixed_time = timezone.make_aware(datetime(2026, 5, 12, 8, 30))
+        mock.RegDate = fixed_time
+        mock.RegTime = fixed_time
         mock.RFID = ''
         mock.Flow = flow
         mock.PO = ''
@@ -165,9 +166,7 @@ class TestSyncDateData:
         ]
         # 本地已存在相同记录
         local_record = self._make_mock_record('T001')
-        mock_local_model.objects.using.return_value.filter.return_value = {
-            'T001': local_record
-        }
+        mock_local_model.objects.using.return_value.filter.return_value = [local_record]
 
         result = sync_date_data(date(2026, 5, 12))
         assert result['skipped_count'] == 1
@@ -183,9 +182,7 @@ class TestSyncDateData:
             self._make_mock_record('T001', qty=200),
         ]
         local_record = self._make_mock_record('T001', qty=100)
-        mock_local_model.objects.using.return_value.filter.return_value = {
-            'T001': local_record
-        }
+        mock_local_model.objects.using.return_value.filter.return_value = [local_record]
 
         result = sync_date_data(date(2026, 5, 12))
         assert result['updated_count'] >= 1
@@ -209,10 +206,10 @@ class TestSyncDateData:
 
         local_unchanged = self._make_mock_record('T003')
         local_changed = self._make_mock_record('T002', qty=100)
-        mock_local_model.objects.using.return_value.filter.return_value = {
-            'T002': local_changed,
-            'T003': local_unchanged,
-        }
+        mock_local_model.objects.using.return_value.filter.return_value = [
+            local_changed,
+            local_unchanged,
+        ]
         mock_local_model.objects.using.return_value.update_or_create.return_value = (Mock(), True)
 
         result = sync_date_data(date(2026, 5, 12))

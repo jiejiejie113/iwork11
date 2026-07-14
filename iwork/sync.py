@@ -5,10 +5,10 @@
 from datetime import date, timedelta
 from loguru import logger
 from django.utils import timezone
-from django.db import transaction
 
 from iwork.models import Pytckreg3
 from iwork.local_models import LocalPytckreg3
+from iwork.statistics import invalidate_local_cache
 
 
 def _get_date_range(target: date) -> tuple:
@@ -140,7 +140,6 @@ def sync_date_data(target_date: date) -> dict:
                 f"跳过 {stats['skipped_count']}")
 
     # 同步后清空本地历史缓存，确保下次查询获取最新数据
-    from iwork.statistics import invalidate_local_cache
     invalidate_local_cache(target_date)
 
     return stats

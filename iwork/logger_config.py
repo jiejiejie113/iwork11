@@ -1,12 +1,12 @@
 """
 统一日志配置中心
 
-所有进程入口（Django / Celery / Channels）启动时调用 setup_logging(component)，
+所有进程入口（Django / Celery）启动时调用 setup_logging(component)，
 将日志统一输出到 stdout（带组件标签）和 logs/ 目录（按天轮转）。
 
 Usage:
     from iwork.logger_config import setup_logging
-    setup_logging('DJANGO')   # 或 'CELERY'、'CHANNELS'
+    setup_logging('DJANGO')   # 或 'CELERY'
 """
 
 import sys
@@ -71,7 +71,7 @@ def setup_logging(component: str = "DJANGO"):
     初始化统一日志配置
 
     Args:
-        component: 组件标识，如 'DJANGO'、'CELERY'、'CHANNELS'
+        component: 组件标识，如 'DJANGO'、'CELERY'
     """
     # 确保日志目录存在
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -131,8 +131,6 @@ def _intercept_django_logging(component: str):
         "django.request",
         "django.server",
         "django.db.backends",
-        "django.channels",
-        "channels",
         "celery",
     ]
 

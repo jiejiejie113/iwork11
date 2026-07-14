@@ -1,15 +1,8 @@
-<#
-.SYNOPSIS
-    重启 iwork 所有 Windows 服务
-#>
+$ErrorActionPreference = 'Stop'
 
-$ErrorActionPreference = "Stop"
-
-Write-Host "重启 iwork 所有服务..." -ForegroundColor Yellow
-
-@("iwork-daphne", "iwork-celery-worker", "iwork-celery-beat") | ForEach-Object {
-    Restart-Service -Name $_ -Force
-    Write-Host "  已重启: $_"
+& docker restart DKT_iwork
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to restart DKT_iwork with exit code $LASTEXITCODE."
 }
 
-Write-Host "所有服务已重启" -ForegroundColor Green
+Write-Host 'DKT_iwork restarted.' -ForegroundColor Green

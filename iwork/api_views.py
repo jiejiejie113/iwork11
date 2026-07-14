@@ -16,7 +16,6 @@ from iwork.statistics import get_realtime_stats, _seconds_to_midnight
 from iwork.queries import (
     get_hourly_stats,
     get_flow_detail,
-    get_workorders_list,
     get_workorder_detail,
     get_monthly_total_trend,
     get_process_by_flow,
@@ -41,21 +40,14 @@ from iwork.local_queries import (
     get_batch_flow_employees as local_get_batch_flow_employees,
     get_batch_stepno_employees as local_get_batch_stepno_employees,
     get_batch_product_overview as local_get_batch_product_overview,
-    get_kanban_stats as local_get_kanban_stats,
-    get_kanban_ranking as local_get_kanban_ranking,
-    get_kanban_filter_options as local_get_kanban_filter_options,
 )
 from iwork.local_models import TargetProduction
+from iwork.request_params import parse_stepno_filter
 
 
 def _parse_stepno(request) -> list[int] | None:
     """从请求参数解析 StepNo 过滤列表，无参数返回 None（全工序）"""
-    # 兼容 DRF Request 和 Django WSGIRequest
-    params = getattr(request, 'query_params', request.GET)
-    raw = params.get('stepno', '')
-    if not raw:
-        return None
-    return [int(s.strip()) for s in raw.split(',') if s.strip().isdigit()]
+    return parse_stepno_filter(request)
 
 
 @api_view(['GET'])
@@ -89,10 +81,7 @@ def process_list(request):
         date_str = request.query_params.get('date', date.today().isoformat())
         date_obj = date.fromisoformat(date_str)
 
-        if mode == 'local':
-            stepnos = local_get_all_stepnos(date_obj)
-        else:
-            stepnos = remote_get_all_stepnos(date_obj)
+        stepnos = local_get_all_stepnos(date_obj) if mode == 'local' else remote_get_all_stepnos(date_obj)
 
         return Response({
             'date': date_obj.isoformat(),

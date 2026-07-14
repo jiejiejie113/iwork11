@@ -9,5 +9,5 @@ import django
 
 def pytest_configure():
     """pytest 启动时初始化 Django"""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'iwork.settings')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'iwork.test_settings')
     django.setup()

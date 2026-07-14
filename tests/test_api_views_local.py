@@ -18,7 +18,7 @@ class TestLocalDateStats:
             'workorder_count': 100, 'total_qty': 500,
             'hourly_stats': [], 'station_stats': [], 'workorders': [],
             'process_flow_stats': [], 'monthly_process_stats': [],
-            'monthly_total_trend': [], 'heatmap_data': None,
+            'monthly_total_trend': [], 'heatmap_matrix': None,
             'station_ranking': [], 'top_processes': [],
         }
 

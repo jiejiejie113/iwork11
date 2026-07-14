@@ -1,6 +1,6 @@
 # SSE 迁移数据流设计
 
-> 将实时看板从 WebSocket（Django Channels）迁移到 SSE（Server-Sent Events）
+> 状态：已完成。本文保留迁移前后对比；当前运行时为 Uvicorn + Django `StreamingHttpResponse`，不再使用 Channels、Daphne 或 `/ws/`。
 
 ## 一、整体架构变更
 
@@ -223,7 +223,7 @@ cache_batch_to_redis()          ← 写入 Redis（同步连接）
 | 连接方式 | 全双工持久连接 | 单向持久连接（服务端→客户端） |
 | 客户端发消息 | 通过 WebSocket 发送 | 普通 HTTP POST |
 | 断线重连 | 手动实现（setTimeout 3s） | 浏览器原生自动重连 |
-| 服务端依赖 | Daphne + Channels + channels-redis + Redis 异步连接 | Daphne + Redis 同步连接（Django cache） |
+| 服务端依赖 | Daphne + Channels + channels-redis + Redis 异步连接 | Uvicorn + Django cache（通过 `sync_to_async` 读取） |
 | 已知问题 | Docker WSL2 下 Redis 异步连接超时 | 无（同步连接已验证正常） |
 | 推送延迟 | 数据库写入后即时推送 | 最多 60s（与 Celery 采集周期一致，用户无感知） |
 
@@ -440,7 +440,7 @@ async function saveTargets(flow, targets) {
 # 保留以下
 # redis>=5.0.0
 # django-redis>=5.4.0
-# daphne>=4.0.0
+# uvicorn[standard]>=0.34.0
 ```
 
 ### 12.2 文件删除清单

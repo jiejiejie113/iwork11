@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, date, time
 from unittest.mock import Mock
-from iwork.models import Pytckreg3
+from iwork.models import Pywrkstp, Pytckreg3
 
 
 class TestPytckreg3Model:
@@ -109,3 +109,12 @@ class TestPytckreg3Model:
         """测试字符串表示"""
         record = Pytckreg3(TicketNo='TK123456789AB', SeqNo=1, SysSource='SYS')
         assert str(record) == 'TK123456789AB'
+
+
+class TestPywrkstpModel:
+    """工单工序工时表模型测试。"""
+
+    def test_primary_key_matches_remote_composite_key(self):
+        """ORM 使用 WrkOrder + StepNo，不生成远端不存在的 id 字段。"""
+        assert Pywrkstp._meta.pk.field_names == ('WrkOrder', 'StepNo')
+        assert 'id' not in {field.name for field in Pywrkstp._meta.fields}

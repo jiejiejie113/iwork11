@@ -62,9 +62,9 @@ class TestParseStepno:
         from iwork.api_views_local import _parse_stepno
         assert _parse_stepno(Mock(query_params={'stepno': '70,abc,68'})) == [70, 68]
 
-    def test_all_invalid_returns_empty(self):
+    def test_all_invalid_returns_none(self):
         from iwork.api_views_local import _parse_stepno
-        assert _parse_stepno(Mock(query_params={'stepno': 'abc,xyz'})) == []
+        assert _parse_stepno(Mock(query_params={'stepno': 'abc,xyz'})) is None
 
     def test_strips_whitespace(self):
         from iwork.api_views_local import _parse_stepno

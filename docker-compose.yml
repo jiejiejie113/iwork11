@@ -1,14 +1,17 @@
-version: '3.8'
-
 services:
   iwork:
     build: .
     container_name: DKT_iwork
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file:
-      - ${IWORK_ENV_FILE:-iwork/.env}
+      - ./env/${DKT_ENVIRONMENT:-production}.env
+    environment:
+      DJANGO_SECRET_KEY: ${IWORK_DJANGO_SECRET_KEY:?Set IWORK_DJANGO_SECRET_KEY in dkt-secrets.env}
+      ACCESS_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
+      LOCAL_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
+      IWORK_DB_PASSWORD: ${IWORK_DB_PASSWORD:?Set IWORK_DB_PASSWORD in dkt-secrets.env}
     volumes:
       - ./logs:/app/logs
       - ./static:/app/static

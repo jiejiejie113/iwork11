@@ -112,8 +112,9 @@ class TestGetWorkordersPaginated:
         from iwork.queries import get_workorders_paginated
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.distinct.return_value.count.return_value = 50
-        items = [{'WrkOrder': f'W{i:03d}', 'total_qty': 100, 'step_count': 3} for i in range(20)]
+        items = [{'WrkOrder': f'W{i:03d}', 'total_qty': 100, 'worker_count': 3} for i in range(20)]
         mock_qs.values.return_value.annotate.return_value.order_by.return_value.__getitem__.return_value = items
 
         result = get_workorders_paginated(date(2026, 5, 12), page=1, page_size=20)
@@ -129,6 +130,7 @@ class TestGetWorkordersPaginated:
         from iwork.queries import get_workorders_paginated
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.distinct.return_value.count.return_value = 0
         mock_qs.values.return_value.annotate.return_value.order_by.return_value.__getitem__.return_value = []
 
@@ -143,6 +145,7 @@ class TestGetWorkordersPaginated:
         from iwork.queries import get_workorders_paginated
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.distinct.return_value.count.return_value = 0
         mock_qs.values.return_value.annotate.return_value.order_by.return_value.__getitem__.return_value = []
 
@@ -335,6 +338,7 @@ class TestGetBatchBasicStats:
         from iwork.queries import get_batch_basic_stats
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value = [
             {'StepNo': 70, 'total_qty': 500, 'workorder_count': 12},
         ]
@@ -349,6 +353,7 @@ class TestGetBatchBasicStats:
         from iwork.queries import get_batch_basic_stats
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value = [
             {'StepNo': 70, 'total_qty': None, 'workorder_count': None},
         ]
@@ -371,7 +376,9 @@ class TestGetAllFlows:
         from iwork.queries import get_all_flows
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.values.return_value.annotate.return_value.order_by.return_value = [
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'Flow': 'VCO-C1', 'qty': 300},
             {'Flow': 'VCO-L5', 'qty': 500},
             {'Flow': 'VCO-X9', 'qty': 0},
@@ -386,7 +393,9 @@ class TestGetAllFlows:
         from iwork.queries import get_all_flows
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.values.return_value.annotate.return_value.order_by.return_value = []
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.values.return_value.annotate.return_value.order_by.return_value = []
 
         result = get_all_flows(date(2026, 5, 12))
         assert result == []
@@ -401,14 +410,31 @@ class TestGetBatchFlowOverview:
         from iwork.queries import get_batch_flow_overview
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.values.return_value.annotate.return_value = [
-            {'Flow': 'VCO-L5', 'total_qty': 500, 'worker_count': 12},
-            {'Flow': 'VCO-C1', 'total_qty': 300, 'worker_count': 8},
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        step_query = Mock()
+        step_query.annotate.return_value.order_by.return_value = [
+            {'Flow': 'VCO-L5', 'StepNo': 70, 'qty': 500, 'workers': 12},
+            {'Flow': 'VCO-C1', 'StepNo': 69, 'qty': 300, 'workers': 8},
         ]
+        worker_query = Mock()
+        worker_query.annotate.return_value = [
+            {'Flow': 'VCO-L5', 'total_workers': 12},
+            {'Flow': 'VCO-C1', 'total_workers': 8},
+        ]
+        mock_qs.values.side_effect = lambda *fields: (
+            step_query if fields == ('Flow', 'StepNo') else worker_query
+        )
 
         result = get_batch_flow_overview(date(2026, 5, 12))
-        assert result['VCO-L5'] == {'total_qty': 500, 'worker_count': 12}
-        assert result['VCO-C1'] == {'total_qty': 300, 'worker_count': 8}
+        assert result['VCO-L5'] == {
+            'stepnos': {'70': {'qty': 500, 'workers': 12}},
+            'total_workers': 12,
+        }
+        assert result['VCO-C1'] == {
+            'stepnos': {'69': {'qty': 300, 'workers': 8}},
+            'total_workers': 8,
+        }
 
 
 class TestGetBatchFlowHourly:
@@ -420,7 +446,9 @@ class TestGetBatchFlowHourly:
         from iwork.queries import get_batch_flow_hourly
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.extra.return_value.values.return_value.annotate.return_value.order_by.return_value = [
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.extra.return_value.values.return_value.annotate.return_value.order_by.return_value = [
             {'Flow': 'VCO-L5', 'hour': 8, 'qty': 100},
             {'Flow': 'VCO-L5', 'hour': 9, 'qty': 200},
             {'Flow': 'VCO-C1', 'hour': 8, 'qty': 50},
@@ -445,7 +473,9 @@ class TestGetBatchFlowEmployees:
         from iwork.queries import get_batch_flow_employees
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.filter.return_value.values.return_value.annotate.return_value.order_by.return_value = [
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'Flow': 'VCO-L5', 'RegPerSysID': 1001, 'StepNo': 70, 'WrkOrder': 'SO001', 'qty': 200},
             {'Flow': 'VCO-L5', 'RegPerSysID': 1001, 'StepNo': 69, 'WrkOrder': 'SO001', 'qty': 100},
             {'Flow': 'VCO-L5', 'RegPerSysID': 1002, 'StepNo': 70, 'WrkOrder': 'SO002', 'qty': 50},
@@ -459,8 +489,8 @@ class TestGetBatchFlowEmployees:
         assert result['VCO-L5'][0]['reg_per_sys_id'] == 1001
         assert result['VCO-L5'][0]['total_qty'] == 300
         assert len(result['VCO-L5'][0]['steps']) == 2
-        assert {'stepno': 70, 'qty': 200} in result['VCO-L5'][0]['steps']
-        assert {'stepno': 69, 'qty': 100} in result['VCO-L5'][0]['steps']
+        assert {'stepno': 70, 'qty': 200, 'workorder': 'SO001'} in result['VCO-L5'][0]['steps']
+        assert {'stepno': 69, 'qty': 100, 'workorder': 'SO001'} in result['VCO-L5'][0]['steps']
         assert result['VCO-L5'][0]['workorders'] == ['SO001']
         assert result['VCO-L5'][1]['reg_per_sys_id'] == 1002
         assert result['VCO-L5'][1]['total_qty'] == 50
@@ -482,7 +512,9 @@ class TestGetBatchStepnoEmployees:
         from iwork.queries import get_batch_stepno_employees
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
-        mock_qs.exclude.return_value.values.return_value.annotate.return_value.order_by.return_value = [
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'StepNo': 70, 'RegPerSysID': 1001, 'Flow': 'VCO-L5', 'qty': 200},
             {'StepNo': 70, 'RegPerSysID': 1001, 'Flow': 'VCO-C1', 'qty': 100},
             {'StepNo': 70, 'RegPerSysID': 1002, 'Flow': 'VCO-L5', 'qty': 50},

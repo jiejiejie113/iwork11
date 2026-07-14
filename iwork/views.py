@@ -22,7 +22,7 @@ def dashboard(request):
 
 @require_http_methods(['GET'])
 def history_dashboard(request):
-    """看板历史数据页面（独立 URL，不连 WebSocket）"""
+    """看板历史数据页面（独立 URL，不建立 SSE 连接）。"""
     context = {
         'stats': {'total_qty': 0, 'workorder_count': 0},
         'stats_json': '{}',

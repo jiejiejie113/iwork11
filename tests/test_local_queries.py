@@ -92,6 +92,7 @@ class TestGetBatchBasicStats:
         from iwork.local_queries import get_batch_basic_stats
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value = [
             {'StepNo': 70, 'total_qty': 500, 'workorder_count': 8},
         ]
@@ -109,6 +110,7 @@ class TestGetBatchWorkordersList:
         from iwork.local_queries import get_batch_workorders_list
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'StepNo': 70, 'WrkOrder': 'W001', 'total_qty': 500, 'step_count': 1},
             {'StepNo': 70, 'WrkOrder': 'W002', 'total_qty': 300, 'step_count': 1},
@@ -192,7 +194,9 @@ class TestGetAllFlowsLocal:
         from iwork.local_queries import get_all_flows
 
         # mock 不会真正排序，所以数据要按 .order_by('Flow') 的预期结果预排好
-        mock_qs = mock_model.objects.using.return_value.filter.return_value.exclude.return_value
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'Flow': 'Flow_A', 'qty': 100},
             {'Flow': 'Flow_B', 'qty': 200},
@@ -212,16 +216,27 @@ class TestGetBatchFlowOverviewLocal:
         """返回每个 Flow 的 total_qty 和 worker_count"""
         from iwork.local_queries import get_batch_flow_overview
 
-        mock_qs = mock_model.objects.using.return_value.filter.return_value.exclude.return_value
-        mock_qs.values.return_value.annotate.return_value = [
-            {'Flow': 'Flow_A', 'total_qty': 500, 'worker_count': 3},
-            {'Flow': 'Flow_B', 'total_qty': 300, 'worker_count': 2},
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        step_query = Mock()
+        step_query.annotate.return_value.order_by.return_value = [
+            {'Flow': 'Flow_A', 'StepNo': 70, 'qty': 500, 'workers': 3},
+            {'Flow': 'Flow_B', 'StepNo': 69, 'qty': 300, 'workers': 2},
         ]
+        worker_query = Mock()
+        worker_query.annotate.return_value = [
+            {'Flow': 'Flow_A', 'total_workers': 3},
+            {'Flow': 'Flow_B', 'total_workers': 2},
+        ]
+        mock_qs.values.side_effect = lambda *fields: (
+            step_query if fields == ('Flow', 'StepNo') else worker_query
+        )
 
         result = get_batch_flow_overview(date(2026, 5, 12))
         assert result == {
-            'Flow_A': {'total_qty': 500, 'worker_count': 3},
-            'Flow_B': {'total_qty': 300, 'worker_count': 2},
+            'Flow_A': {'stepnos': {'70': {'qty': 500, 'workers': 3}}, 'total_workers': 3},
+            'Flow_B': {'stepnos': {'69': {'qty': 300, 'workers': 2}}, 'total_workers': 2},
         }
 
 
@@ -233,7 +248,9 @@ class TestGetBatchFlowHourlyLocal:
         """返回每个 Flow 的每小时产量数据"""
         from iwork.local_queries import get_batch_flow_hourly
 
-        mock_qs = mock_model.objects.using.return_value.filter.return_value.exclude.return_value
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
         mock_qs.extra.return_value.values.return_value.annotate.return_value.order_by.return_value = [
             {'Flow': 'Flow_A', 'hour': 8, 'qty': 50},
             {'Flow': 'Flow_A', 'hour': 9, 'qty': 60},
@@ -255,11 +272,13 @@ class TestGetBatchFlowEmployeesLocal:
         """返回每个 Flow 下的员工明细，按 total_qty 降序排列"""
         from iwork.local_queries import get_batch_flow_employees
 
-        mock_qs = mock_model.objects.using.return_value.filter.return_value.exclude.return_value
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
-            {'Flow': 'Flow_A', 'RegPerSysID': 1001, 'StepNo': 70, 'qty': 200},
-            {'Flow': 'Flow_A', 'RegPerSysID': 1001, 'StepNo': 69, 'qty': 100},
-            {'Flow': 'Flow_A', 'RegPerSysID': 1002, 'StepNo': 70, 'qty': 150},
+            {'Flow': 'Flow_A', 'RegPerSysID': 1001, 'StepNo': 70, 'WrkOrder': 'W001', 'qty': 200},
+            {'Flow': 'Flow_A', 'RegPerSysID': 1001, 'StepNo': 69, 'WrkOrder': 'W001', 'qty': 100},
+            {'Flow': 'Flow_A', 'RegPerSysID': 1002, 'StepNo': 70, 'WrkOrder': 'W002', 'qty': 150},
         ]
 
         result = get_batch_flow_employees(date(2026, 5, 12))
@@ -283,7 +302,9 @@ class TestGetBatchStepnoEmployeesLocal:
         """返回每个工序下的员工明细，按 qty 降序排列"""
         from iwork.local_queries import get_batch_stepno_employees
 
-        mock_qs = mock_model.objects.using.return_value.filter.return_value.exclude.return_value
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {'StepNo': 70, 'RegPerSysID': 1001, 'Flow': 'Flow_A', 'qty': 200},
             {'StepNo': 70, 'RegPerSysID': 1001, 'Flow': 'Flow_B', 'qty': 100},

@@ -11,15 +11,13 @@ from loguru import logger
 
 from iwork.statistics import get_local_date_stats, get_date_stats
 from iwork.local_queries import get_available_dates
+from iwork.request_params import parse_stepno_filter
 from iwork.sync import sync_date_data
 
 
 def _parse_stepno(request) -> list[int] | None:
     """从请求参数解析 StepNo 过滤列表，无参数返回 None（全工序）"""
-    raw = request.query_params.get('stepno', '')
-    if not raw:
-        return None
-    return [int(s.strip()) for s in raw.split(',') if s.strip().isdigit()]
+    return parse_stepno_filter(request)
 
 
 @api_view(['GET'])

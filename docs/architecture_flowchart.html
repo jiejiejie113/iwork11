@@ -1,348 +1,69 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iwork 生产看板系统 - 架构流程图</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: #1e293b;
-            color: #e2e8f0;
-            font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-            padding: 40px 20px;
-        }
-        h1 {
-            text-align: center;
-            font-size: 28px;
-            margin-bottom: 8px;
-            color: #f1f5f9;
-        }
-        .subtitle {
-            text-align: center;
-            color: #94a3b8;
-            margin-bottom: 40px;
-            font-size: 14px;
-        }
-        .diagram-container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background: #0f172a;
-            border-radius: 16px;
-            padding: 40px 20px;
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
-            overflow-x: auto;
-        }
-        .legend {
-            max-width: 1400px;
-            margin: 24px auto 0;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            justify-content: center;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: #94a3b8;
-        }
-        .legend-dot {
-            width: 14px;
-            height: 14px;
-            border-radius: 4px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iwork 当前架构流程图</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px 20px;
+      color: #17212b;
+      background: #f5f7f8;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    main { max-width: 1280px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    p { margin: 0 0 24px; color: #52606d; line-height: 1.7; }
+    .diagram {
+      overflow-x: auto;
+      border: 1px solid #cbd3d9;
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 6px;
+    }
+    code { color: #075985; }
+  </style>
 </head>
 <body>
-    <h1>iwork 生产看板系统 — 架构流程图</h1>
-    <p class="subtitle">Django 5.2 · Channels · Celery · Redis · MySQL 双数据库 · WebSocket 实时推送</p>
+  <main>
+    <h1>iwork 当前架构流程图</h1>
+    <p>2026-07-14 复核。运行时为 Uvicorn + SSE，不包含 Django Channels、Daphne 或 WebSocket 路由。</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart LR
+  User["浏览器"] --> Nginx["Nginx /iwork/"]
+  Nginx --> Auth["oauth2-proxy"]
+  Auth --> Keycloak["Keycloak OIDC"]
+  Nginx --> App["DKT_iwork / Uvicorn ASGI"]
 
-    <div class="diagram-container">
-        <div class="mermaid">
-graph TB
-    %% ========== 样式定义 ==========
-    classDef entry fill:#f59e0b,stroke:#fbbf24,color:#1e293b,stroke-width:2px
-    classDef config fill:#6366f1,stroke:#818cf8,color:#fff,stroke-width:2px
-    classDef route fill:#8b5cf6,stroke:#a78bfa,color:#fff,stroke-width:2px
-    classDef view fill:#10b981,stroke:#34d399,color:#1e293b,stroke-width:2px
-    classDef model fill:#ef4444,stroke:#f87171,color:#fff,stroke-width:2px
-    classDef query fill:#06b6d4,stroke:#22d3ee,color:#1e293b,stroke-width:2px
-    classDef biz fill:#ec4899,stroke:#f472b6,color:#fff,stroke-width:2px
-    classDef task fill:#f97316,stroke:#fb923c,color:#1e293b,stroke-width:2px
-    classDef frontend fill:#14b8a6,stroke:#2dd4bf,color:#1e293b,stroke-width:2px
-    classDef db fill:#dc2626,stroke:#ef4444,color:#fff,stroke-width:2px
-    classDef middleware fill:#ca8a04,stroke:#eab308,color:#1e293b,stroke-width:2px
-    classDef tool fill:#64748b,stroke:#94a3b8,color:#fff,stroke-width:2px
-    classDef test fill:#a855f7,stroke:#c084fc,color:#fff,stroke-width:2px
-    classDef ext fill:#475569,stroke:#64748b,color:#cbd5e1,stroke-width:2px
+  App --> Api["Django 页面与 REST API"]
+  App --> Sse["StreamingHttpResponse SSE"]
+  User -->|"EventSource GET /api/dashboard/stream/"| Sse
 
-    %% ========== 外部系统 / 用户 ==========
-    USER["👤 浏览器用户"]
-    EXT_DB[("🏭 远程生产库<br/>payroll.pytckreg3<br/>192.168.3.15 · 只读")]
+  Beat["Celery Beat 60s"] --> Worker["Celery Worker"]
+  Worker --> Remote["payroll MySQL / 只读"]
+  Worker --> Cache["DKT_iwork_redis"]
+  Sse -->|"sync_to_async cache.get"| Cache
+  Api --> Cache
 
-    %% ========== ASGI/WSGI 入口层 ==========
-    subgraph ENTRY ["═══════════ 入口层 ═══════════"]
-        direction LR
-        DAPHNE["🟢 Daphne ASGI<br/>:8000"]
-        MANAGE["manage.py<br/>Django CLI"]
-    end
+  Api --> DefaultDb["iwork_system MySQL"]
+  Api --> LocalDb["iwork_local MySQL"]
+  Api --> Remote
 
-    %% ========== Django 配置核心 ==========
-    subgraph CORE ["═══════════ Django 配置核心 ═══════════"]
-        direction TB
-        SETTINGS["⚙️ settings.py<br/>━━━━━━━━━━<br/>3 DB · Redis Cache<br/>Channels · Celery<br/>DRF · 时区配置"]
-        CELERY_CFG["📋 celery.py<br/>━━━━━━━━━━<br/>beat_schedule<br/>每60秒同步一次"]
-        ASGI_CFG["🔌 asgi.py<br/>━━━━━━━━━━<br/>HTTP + WebSocket<br/>双协议路由"]
-        ROUTER["🔀 database_router.py<br/>━━━━━━━━━━<br/>read: iwork → 远程<br/>write: iwork_local → 本地"]
-    end
-
-    %% ========== 路由层 ==========
-    subgraph ROUTES ["═══════════ 路由层 ═══════════"]
-        direction TB
-        URL_MAIN["🌐 urls.py<br/>━━━━━━━━━━<br/>GET / → dashboard<br/>api/dashboard/*<br/>api/history/*"]
-        URL_API["📡 api_urls.py<br/>━━━━━━━━━━<br/>app_name='api'<br/>实时数据端点"]
-        URL_HISTORY["📅 history_urls.py<br/>━━━━━━━━━━<br/>app_name='history'<br/>历史/同步端点"]
-        WS_ROUTE["🔗 routing.py<br/>━━━━━━━━━━<br/>ws/dashboard/<br/>→ DashboardConsumer"]
-    end
-
-    %% ========== 视图层 ==========
-    subgraph VIEWS ["═══════════ 视图层 ═══════════"]
-        direction TB
-        VIEW_DASH["📄 views.py<br/>━━━━━━━━━━<br/>dashboard()<br/>渲染主页模板"]
-        API_REALTIME["⚡ api_views.py<br/>━━━━━━━━━━<br/>realtime_stats<br/>hourly_stats<br/>flow_stats<br/>workorder_list<br/>workorder_detail"]
-        API_HISTORY["📊 api_views_local.py<br/>━━━━━━━━━━<br/>local_date_stats<br/>available_dates<br/>sync_date"]
-    end
-
-    %% ========== WebSocket 消费者 ==========
-    subgraph WS ["═══════════ WebSocket 层 ═══════════"]
-        CONSUMER["🔔 consumers.py<br/>━━━━━━━━━━<br/>DashboardConsumer<br/>AsyncWebsocketConsumer<br/>加入/离开 dashboard 组<br/>接收 dashboard_update 推送"]
-    end
-
-    %% ========== 模型层 ==========
-    subgraph MODELS ["═══════════ 模型层 ═══════════"]
-        direction LR
-        REMOTE_MODEL["🗄️ models.py<br/>━━━━━━━━━━<br/>Pytckreg3 (远程)<br/>19个字段<br/>managed=False<br/>app_label='iwork'"]
-        LOCAL_MODEL["💾 local_models.py<br/>━━━━━━━━━━<br/>LocalPytckreg3 (本地)<br/>与远程字段一致<br/>managed=False"]
-    end
-
-    %% ========== 查询层 ==========
-    subgraph QUERIES ["═══════════ 查询层 ═══════════"]
-        direction LR
-        Q_REMOTE["🔍 queries.py<br/>━━━━━━━━━━<br/>远程查询 × 10<br/>basic · hourly · process<br/>flow · station · worker<br/>workorder"]
-        Q_LOCAL["🔎 local_queries.py<br/>━━━━━━━━━━<br/>本地查询<br/>get_available_dates"]
-    end
-
-    %% ========== 业务逻辑层 ==========
-    subgraph BIZ ["═══════════ 业务逻辑层 ═══════════"]
-        direction LR
-        STAT["📈 statistics.py<br/>━━━━━━━━━━<br/>get_today_stats()<br/>get_realtime_stats()<br/>calculate_flow_efficiency()"]
-        SYNC["🔄 sync.py<br/>━━━━━━━━━━<br/>sync_date_data()<br/>has_changes()<br/>远程 → 本地 数据同步"]
-    end
-
-    %% ========== Celery 任务层 ==========
-    subgraph TASKS ["═══════════ 任务调度层 ═══════════"]
-        direction LR
-        CELERY_TASK["⏱️ tasks.py<br/>━━━━━━━━━━<br/>sync_dashboard_stats<br/>shared_task<br/>每分钟刷新缓存<br/>+ WebSocket 广播"]
-        CELERY_WORKER["🐍 Celery Worker<br/>eventlet 并发"]
-        CELERY_BEAT["🥁 Celery Beat<br/>定时调度器"]
-    end
-
-    %% ========== 前端 ==========
-    subgraph FRONTEND ["═══════════ 前端 (SPA) ═══════════"]
-        direction TB
-        TEMPLATE["🎨 dashboard.html<br/>━━━━━━━━━━<br/>Tailwind CSS (CDN)<br/>Chart.js (CDN)<br/>━━━━━━━━━━<br/>4 KPI 卡片<br/>2 趋势图表<br/>3 分布面板<br/>工单列表表格<br/>视图切换 · 日期选择<br/>数据模式 (实时/历史)<br/>暂停/恢复"]
-    end
-
-    %% ========== 数据库层 ==========
-    subgraph DATABASES ["═══════════ 数据持久层 ═══════════"]
-        direction LR
-        DB_DEFAULT[("🗄️ default<br/>━━━━━━━━━━<br/>Django 系统库<br/>auth · sessions<br/>django_celery_beat<br/>本地 · 读写")]
-        DB_IWORK[("🏭 iwork<br/>━━━━━━━━━━<br/>payroll 业务库<br/>pytckreg3 表<br/>远程 192.168.3.15<br/>🔒 只读")]
-        DB_LOCAL[("💾 iwork_local<br/>━━━━━━━━━━<br/>本地镜像库<br/>pytckreg3 表<br/>同步目标 · 读写")]
-    end
-
-    %% ========== 中间件 ==========
-    subgraph MIDDLEWARE ["═══════════ 中间件 / 缓存层 ═══════════"]
-        direction LR
-        REDIS_CACHE[("📦 Redis<br/>━━━━━━━━━━<br/>Channel Layer<br/>Django Cache<br/>Celery Broker<br/>Celery Backend")]
-    end
-
-    %% ========== 测试层 ==========
-    subgraph TESTS ["═══════════ 测试层 (Pytest) ═══════════"]
-        direction LR
-        T1["test_models.py<br/>(14)"]
-        T2["test_local_models.py<br/>(4)"]
-        T3["test_database_router.py<br/>(8)"]
-        T4["test_api_views.py<br/>(17)"]
-        T5["test_api_views_local.py<br/>(3)"]
-        T6["test_consumers.py<br/>(2)"]
-        T7["test_tasks.py<br/>(6)"]
-        T8["test_statistics.py<br/>(7)"]
-        T9["test_sync.py<br/>(4)"]
-    end
-
-    %% ========== 工具脚本层 ==========
-    subgraph TOOLS ["═══════════ 工具 / 脚本层 ═══════════"]
-        direction LR
-        SCRIPT_CREATE["scripts/create_local_db.py<br/>创建本地库和表"]
-        SCRIPT_EXPORT["scripts/export_pytckreg3.py<br/>导出远程数据到 CSV"]
-        RECONCILE["src/reconcile_data/<br/>数据核对模块"]
-    end
-
-    %% ========== 启动脚本 ==========
-    subgraph DEPLOY ["═══════════ 部署 / 启动 ═══════════"]
-        direction LR
-        BAT_START["start_dashboard.bat<br/>一键启动"]
-        BAT_STOP["stop_dashboard.bat<br/>停止服务"]
-    end
-
-    %% ========== 连接关系 ==========
-
-    %% 用户到入口
-    USER -->|"HTTP :8000"| DAPHNE
-    USER -->|"WebSocket<br/>ws://host:8000<br/>ws/dashboard/"| DAPHNE
-
-    %% 入口到路由
-    DAPHNE --> ASGI_CFG
-    MANAGE --> SETTINGS
-
-    %% 配置层内部
-    SETTINGS --> CELERY_CFG
-    SETTINGS --> ROUTER
-    ASGI_CFG --> URL_MAIN
-    ASGI_CFG --> WS_ROUTE
-
-    %% 路由到视图
-    URL_MAIN --> URL_API
-    URL_MAIN --> URL_HISTORY
-    URL_MAIN --> VIEW_DASH
-    URL_API --> API_REALTIME
-    URL_HISTORY --> API_HISTORY
-    WS_ROUTE --> CONSUMER
-
-    %% 视图到查询/业务
-    API_REALTIME --> STAT
-    API_REALTIME --> Q_REMOTE
-    API_HISTORY --> Q_LOCAL
-    API_HISTORY --> SYNC
-    STAT --> Q_REMOTE
-    SYNC --> Q_REMOTE
-    SYNC --> Q_LOCAL
-
-    %% 查询到模型
-    Q_REMOTE --> REMOTE_MODEL
-    Q_LOCAL --> LOCAL_MODEL
-
-    %% 模型到数据库 (经过路由器)
-    REMOTE_MODEL -->|"DatabaseRouter<br/>app_label='iwork'"| ROUTER
-    LOCAL_MODEL -->|"DatabaseRouter<br/>model='localpytckreg3'"| ROUTER
-    ROUTER -->|"读/写"| DB_DEFAULT
-    ROUTER -->|"只读"| DB_IWORK
-    ROUTER -->|"读/写"| DB_LOCAL
-
-    %% 外部数据库
-    EXT_DB -.->|"远端数据源"| DB_IWORK
-
-    %% Celery 调度链
-    CELERY_BEAT -->|"每60秒触发"| CELERY_TASK
-    CELERY_TASK -->|"执行"| STAT
-    CELERY_TASK -->|"执行"| SYNC
-    CELERY_TASK -->|"推送结果"| CONSUMER
-    CELERY_WORKER -->|"运行"| CELERY_TASK
-
-    %% Redis 连接
-    REDIS_CACHE --- SETTINGS
-    REDIS_CACHE --- CONSUMER
-    REDIS_CACHE --- CELERY_TASK
-    REDIS_CACHE --- CELERY_CFG
-
-    %% 前端渲染
-    VIEW_DASH --> TEMPLATE
-    CONSUMER -->|"WebSocket 实时推送<br/>dashboard_update 事件"| TEMPLATE
-    API_REALTIME -->|"REST API 轮询"| TEMPLATE
-    API_HISTORY -->|"历史数据查询"| TEMPLATE
-
-    %% 启动依赖
-    BAT_START -.->|"启动"| REDIS_CACHE
-    BAT_START -.->|"启动"| CELERY_WORKER
-    BAT_START -.->|"启动"| CELERY_BEAT
-    BAT_START -.->|"启动"| DAPHNE
-
-    %% 测试
-    TESTS -.->|"测试"| API_REALTIME
-    TESTS -.->|"测试"| API_HISTORY
-    TESTS -.->|"测试"| REMOTE_MODEL
-    TESTS -.->|"测试"| LOCAL_MODEL
-    TESTS -.->|"测试"| ROUTER
-    TESTS -.->|"测试"| CONSUMER
-    TESTS -.->|"测试"| CELERY_TASK
-    TESTS -.->|"测试"| STAT
-    TESTS -.->|"测试"| SYNC
-
-    %% 工具
-    TOOLS -.->|"建库"| DB_LOCAL
-    TOOLS -.->|"导出"| DB_IWORK
-
-    %% 样式应用
-    class DAPHNE,MANAGE entry
-    class SETTINGS,CELERY_CFG,ASGI_CFG,ROUTER config
-    class URL_MAIN,URL_API,URL_HISTORY,WS_ROUTE route
-    class VIEW_DASH,API_REALTIME,API_HISTORY view
-    class CONSUMER view
-    class REMOTE_MODEL,LOCAL_MODEL model
-    class Q_REMOTE,Q_LOCAL query
-    class STAT,SYNC biz
-    class CELERY_TASK,CELERY_WORKER,CELERY_BEAT task
-    class TEMPLATE frontend
-    class DB_DEFAULT,DB_IWORK,DB_LOCAL,EXT_DB db
-    class REDIS_CACHE middleware
-    class T1,T2,T3,T4,T5,T6,T7,T8,T9 test
-    class SCRIPT_CREATE,SCRIPT_EXPORT,RECONCILE,BAT_START,BAT_STOP tool
-    class USER ext
-        </div>
+  classDef edge fill:#e8f1f5,stroke:#527487,color:#17212b
+  classDef app fill:#eaf4ec,stroke:#4f7658,color:#17212b
+  classDef data fill:#fff4d8,stroke:#8a6a20,color:#17212b
+  class User,Nginx,Auth,Keycloak edge
+  class App,Api,Sse,Beat,Worker app
+  class Cache,DefaultDb,LocalDb,Remote data
+      </pre>
     </div>
-
-    <div class="legend">
-        <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> 入口层</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> 配置核心</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> 路由层</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div> 视图/消费者</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> 模型层</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> 查询层</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div> 业务逻辑</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> 任务调度</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div> 前端</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div> 数据库</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#ca8a04"></div> 中间件/缓存</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> 测试层</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div> 工具/脚本</div>
-    </div>
-
-    <script>
-        mermaid.initialize({
-            startOnLoad: true,
-            theme: 'dark',
-            themeVariables: {
-                primaryColor: '#1e293b',
-                primaryTextColor: '#e2e8f0',
-                primaryBorderColor: '#475569',
-                lineColor: '#64748b',
-                secondaryColor: '#334155',
-                tertiaryColor: '#0f172a',
-                fontSize: '13px'
-            },
-            flowchart: {
-                useMaxWidth: true,
-                htmlLabels: true,
-                curve: 'basis',
-                padding: 20,
-                nodeSpacing: 30,
-                rankSpacing: 50
-            }
-        });
-    </script>
+  </main>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: "base", securityLevel: "strict" });
+  </script>
 </body>
 </html>

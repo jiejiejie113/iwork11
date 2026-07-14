@@ -59,10 +59,6 @@ class Pytckreg3(models.Model):
     def __str__(self) -> str:
         return self.TicketNo
 
-
-from iwork.local_models import LocalPytckreg3
-
-
 class Pydefstp(models.Model):
     """
     工序字典表（只读）
@@ -91,6 +87,7 @@ class Pywrkstp(models.Model):
     StepNo + WrkOrder 联合确定 StepTime（标准工时）
     """
 
+    pk = models.CompositePrimaryKey('WrkOrder', 'StepNo')
     StepNo = models.IntegerField('工序号', default=0)
     WrkOrder = models.CharField('工单号', max_length=14, blank=True, default='')
     StepTime = models.FloatField('标准工时', default=0.0)

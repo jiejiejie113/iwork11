@@ -35,9 +35,13 @@ iwork/
 │   ├── sync.py                    # 远程→本地数据同步
 │   ├── tasks.py                   # Celery 定时任务
 │   ├── database_router.py         # 三库路由器
-│   ├── middleware.py               # TrustedProxy 认证
+│   ├── middleware.py              # TrustedProxy 认证
+│   ├── test_settings.py           # SQLite/内存缓存测试配置
 │   ├── management/commands/       # Django 管理命令
-│   └── .env / .env.local          # 环境变量
+│   └── ...
+├── env/                           # 可提交的非敏感环境 profile
+│   ├── local.env
+│   └── production.env
 ├── templates/iwork/               # 前端模板
 │   ├── dashboard.html             # 实时/历史看板
 │   ├── production_detail.html     # 生产详情
@@ -64,16 +68,18 @@ iwork/
 
 核心表：`payroll.pytckreg3`（生产流水线打卡记录）
 
+`Pywrkstp` 使用 Django 5.2 `CompositePrimaryKey('WrkOrder', 'StepNo')` 映射远程联合主键，不假设数据库存在 `id` 列。
+
 ## 快速开始
 
 ### Docker 部署（推荐）
 
 ```bash
-# 生产环境
-docker compose up -d --build
+# 本地环境（中央密钥位于两个仓库的共同上级目录）
+docker compose --env-file env/local.env --env-file ../dkt-secrets.env up -d --build iwork
 
-# 本地开发环境
-docker compose --env-file .env.local up -d --build
+# 服务器 D:\DM\iwork
+docker compose --env-file env/production.env --env-file D:\DM\dkt-secrets.env up -d --build iwork
 ```
 
 > iwork 通过 `docker_dkt-net` 网络连接 DTD_nginx 提供的 MySQL（`mysql`）和 Redis（`iwork-redis`）。
@@ -112,10 +118,10 @@ iwork 不实现应用内认证，安全边界由 Nginx + oauth2-proxy + Keycloak
 ## 测试
 
 ```bash
-# 核心 API 测试（无需数据库/Redis）
+# 单文件快速测试
 pytest tests/test_core_api.py -v
 
-# 完整测试（需要数据库/Redis/Docker 环境）
+# 完整测试使用 iwork.test_settings，不依赖外部 MySQL/Redis
 pytest tests/ -v
 ```
 

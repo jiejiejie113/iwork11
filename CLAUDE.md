@@ -133,11 +133,7 @@ api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同�
 
 ## 环境变量
 
-`.env` 文件位于 `iwork/` 目录（不是项目根目录），模板为 `iwork/.env.example`。
-
-```python
-environ.Env.read_env(BASE_DIR / "iwork" / ".env")
-```
+非敏感环境 profile 位于 `env/local.env` 与 `env/production.env`。真实密钥位于两个仓库共同上级目录的 `dkt-secrets.env`，不得提交；Compose 必须同时通过两个 `--env-file` 参数加载 profile 和中央密钥。
 
 环境变量命名：
 - `DJANGO_*`：Django 基础配置（SECRET_KEY、DEBUG、ALLOWED_HOSTS）
@@ -154,7 +150,7 @@ pip install -r requirements.txt
 # Django 迁移（仅 default 和 iwork_local 库）
 python manage.py migrate
 
-# Django 开发服务器（WSGI，不支持 WebSocket）
+# Django 开发服务器（仅用于页面/API 快速调试；正式 SSE 运行时使用 Uvicorn）
 python manage.py runserver
 
 # 运行测试
@@ -186,7 +182,7 @@ uvicorn iwork.asgi:application --host 0.0.0.0 --port 8000
 ## 日志系统
 
 所有进程（Django / Celery）通过 `iwork/logger_config.py` 统一日志配置。
-- 入口调用：`setup_logging('DJANGO')` / `'CELERY'` / `'CHANNELS'`
+- 入口调用：`setup_logging('DJANGO')` / `'CELERY'` / `'ASGI'`
 - stdout：DEBUG 级别，格式 `时间 | 级别 | [组件名] | 消息`
 - 文件：`logs/all_YYYY-MM-DD.log`（保留 7 天）+ `logs/error_YYYY-MM-DD.log`（保留 30 天）
 - Django 标准 logging 通过 `_InterceptHandler` 全部重定向到 loguru
