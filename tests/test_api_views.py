@@ -732,7 +732,12 @@ class TestProductOverviewEndpoint:
         cached = {
             'products': [{
                 'wrk_orders': [{
-                    'stepnos': [{'stepno': 70, 'description': '后整', 'step_time': 0.331}],
+                    'stepnos': [{
+                        'stepno': 70,
+                        'description': '后整',
+                        'step_time': 0.331,
+                        'output_value': 33.1,
+                    }],
                 }],
             }],
         }
@@ -743,7 +748,7 @@ class TestProductOverviewEndpoint:
 
         assert response.status_code == 200
         assert response.data == cached
-        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v3')
+        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v4')
 
 
 # ============================================================================

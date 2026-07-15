@@ -351,3 +351,4 @@ class TestGetBatchProductOverviewLocal:
         step = result['products'][0]['wrk_orders'][0]['stepnos'][0]
         assert step['description'] == ''
         assert step['step_time'] is None
+        assert step['output_value'] is None

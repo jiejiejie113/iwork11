@@ -753,7 +753,7 @@ def get_batch_product_overview(target_date: date) -> dict:
                 wrk_orders: [{
                     wrk_order: str, qty: int, stepno_count: int,
                     stepnos: [{stepno: int, description: str, step_time: float | None,
-                               qty: int, workers: int,
+                               output_value: float | None, qty: int, workers: int,
                                flows: [{flow: str, qty: int, workers: int}]}]
                 }]
             }]
@@ -837,10 +837,12 @@ def get_batch_product_overview(target_date: date) -> dict:
                 sn_qty = sum(f['qty'] for f in flows)
                 sn_workers = sum(f['workers'] for f in flows)
                 metadata = step_metadata.get((wo_name, sn), {})
+                step_time = metadata.get('step_time')
                 stepno_list.append({
                     'stepno': sn,
                     'description': metadata.get('description', ''),
-                    'step_time': metadata.get('step_time'),
+                    'step_time': step_time,
+                    'output_value': sn_qty * step_time if step_time is not None else None,
                     'qty': sn_qty,
                     'workers': sn_workers,
                     'flows': flows,

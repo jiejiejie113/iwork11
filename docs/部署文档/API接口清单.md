@@ -588,6 +588,7 @@ GET /api/dashboard/detail/product-overview/
         "stepno": 70,
         "description": "后整",
         "step_time": 0.331,
+        "output_value": 33.1,
         "qty": 100,
         "workers": 5,
         "flows": [{"flow": "VCO-L5", "qty": 100, "workers": 5}]
@@ -598,11 +599,14 @@ GET /api/dashboard/detail/product-overview/
 ```
 
 `description` 缺失时返回空字符串；`step_time` 缺失时返回 `null`，数据库中的
-`0` 保持为数值 `0`。
+`0` 保持为数值 `0`。`output_value = qty * step_time`；工时缺失时产值返回
+`null`，工时为 `0` 时产值返回数值 `0`。
 
 生产详情“按产品名称”树表仅在激活区同时包含“本厂款号”和“工序号”时显示
 “工序描述”“标准工时”独立列。路径首次确定 `(WrkOrder, StepNo)` 的行显示
 对应值；尚未确定组合的汇总行和后续生产线子行显示 `--`，不进行聚合或重复展示。
+“产值”列始终显示，并按树节点下所有记录汇总；任一记录缺少标准工时时，该汇总
+节点显示 `--`。可视化图表支持“产量/产值”切换，分别按当前指标降序构建柱状图。
 
 ---
 

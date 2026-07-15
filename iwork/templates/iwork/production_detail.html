@@ -226,7 +226,17 @@
         <!-- 产品模式：图表固定 + 表格可滚动 -->
         <template v-if="groupMode === 'product'">
         <div class="flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4" style="height:300px;">
-            <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ productChartTitle ]}</h3>
+            <div class="flex items-center justify-between gap-3 mb-2">
+                <h3 class="text-xs font-semibold text-slate-300">{[ productChartTitle ]}</h3>
+                <div class="flex bg-slate-900 rounded-md p-0.5 border border-slate-700 text-xs">
+                    <button @click="setProductChartMetric('qty')"
+                        :class="productChartMetric === 'qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                        class="px-3 py-1 rounded transition-colors">产量</button>
+                    <button @click="setProductChartMetric('output_value')"
+                        :class="productChartMetric === 'output_value' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                        class="px-3 py-1 rounded transition-colors">产值</button>
+                </div>
+            </div>
             <div class="flex-1" style="height:calc(100% - 30px);"><canvas id="product-chart"></canvas></div>
         </div>
 
@@ -290,6 +300,7 @@
                 <div v-if="showStepMetadataColumns" class="py-2 px-3">工序描述</div>
                 <div class="py-2 px-3 text-right">产量</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3 text-right">标准工时</div>
+                <div class="py-2 px-3 text-right">产值</div>
                 <div class="py-2 px-3 text-right">信息</div>
             </div>
             <!-- tree-wrap：外框高度先过渡；tree-body：内部行 enter/leave -->
@@ -314,6 +325,9 @@
                             :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</div>
                         <div v-if="showStepMetadataColumns" class="py-1.5 px-3 text-right text-slate-300 tabular-nums">
                             {[ row.metadataResolved && row.stepTime !== null && row.stepTime !== undefined ? row.stepTime : '--' ]}
+                        </div>
+                        <div class="py-1.5 px-3 text-right text-cyan-300 tabular-nums">
+                            {[ fmtOutputValue(row.outputValue) ]}
                         </div>
                         <div class="py-1.5 px-3 text-right text-slate-500 text-[10px] whitespace-nowrap">{[ row.info ]}</div>
                     </div>
@@ -640,6 +654,7 @@ createApp({
 
         // 维度管理（拖拽控制层级）
         const productList = ref([]);
+        const productChartMetric = ref('qty');
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
@@ -654,9 +669,9 @@ createApp({
         });
         const productGridColumns = computed(() => {
             if (showStepMetadataColumns.value) {
-                return 'minmax(260px, 1fr) minmax(180px, 240px) 80px 110px 100px';
+                return 'minmax(260px, 1fr) minmax(180px, 240px) 80px 110px 100px 100px';
             }
-            return 'minmax(260px, 1fr) 80px 140px';
+            return 'minmax(260px, 1fr) 80px 100px 140px';
         });
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
@@ -681,6 +696,9 @@ createApp({
                                 stepno: st.stepno,
                                 step_description: st.description || '',
                                 step_time: st.step_time ?? null,
+                                output_value: st.step_time !== null && st.step_time !== undefined
+                                    ? (fl.qty || 0) * st.step_time
+                                    : null,
                                 flow: fl.flow,
                                 qty: fl.qty || 0,
                                 workers: fl.workers || 0,
@@ -711,6 +729,12 @@ createApp({
                     : [];
                 const totalQty = groupLeaves.reduce((s, l) => s + l.qty, 0);
                 const totalWorkers = groupLeaves.reduce((s, l) => s + l.workers, 0);
+                const hasCompleteOutputValue = groupLeaves.every(
+                    leaf => leaf.output_value !== null && leaf.output_value !== undefined
+                );
+                const totalOutputValue = hasCompleteOutputValue
+                    ? groupLeaves.reduce((sum, leaf) => sum + leaf.output_value, 0)
+                    : null;
 
                 let info;
                 if (!restLevels.length) {
@@ -730,6 +754,7 @@ createApp({
                 nodes.push({
                     name: displayName,
                     qty: totalQty,
+                    outputValue: totalOutputValue,
                     info,
                     metadataResolved: completesStepMetadataPair,
                     description: metadataLeaf ? metadataLeaf.step_description : null,
@@ -763,6 +788,7 @@ createApp({
                         depth, key,
                         name: node.name,
                         qty: node.qty,
+                        outputValue: node.outputValue,
                         info: node.info,
                         metadataResolved: node.metadataResolved,
                         description: node.description,
@@ -784,9 +810,9 @@ createApp({
             return activePath.value.length ? activePath.value[activePath.value.length - 1] : null;
         });
 
-        const productChartLabels = computed(() => {
+        function getProductChartRows() {
             if (!chartFocusKey.value) {
-                return productRows.value.filter(r => r.depth === 0).map(r => r.name);
+                return productRows.value.filter(r => r.depth === 0);
             }
             const rows = [];
             let targetDepth = -1, collecting = false;
@@ -797,33 +823,44 @@ createApp({
                     if (r.depth === targetDepth + 1) rows.push(r);
                 }
             }
-            return rows.map(r => r.name);
+            return rows;
+        }
+
+        const productChartItems = computed(() => {
+            const metricKey = productChartMetric.value === 'output_value' ? 'outputValue' : 'qty';
+            const items = getProductChartRows().map(row => ({
+                label: row.name,
+                value: Number(row[metricKey] ?? 0),
+            }));
+            items.sort((a, b) => b.value - a.value);
+            return items;
+        });
+
+        const productChartLabels = computed(() => {
+            return productChartItems.value.map(item => item.label);
         });
         const productChartValues = computed(() => {
-            if (!chartFocusKey.value) {
-                return productRows.value.filter(r => r.depth === 0).map(r => r.qty);
-            }
-            const rows = [];
-            let targetDepth = -1, collecting = false;
-            for (const r of productRows.value) {
-                if (r.key === chartFocusKey.value) { targetDepth = r.depth; collecting = true; continue; }
-                if (collecting) {
-                    if (r.depth <= targetDepth) break;
-                    if (r.depth === targetDepth + 1) rows.push(r);
-                }
-            }
-            return rows.map(r => r.qty);
+            return productChartItems.value.map(item => item.value);
+        });
+        const productChartMetricLabel = computed(() => {
+            return productChartMetric.value === 'output_value' ? '产值' : '产量';
         });
         const productChartTitle = computed(() => {
             if (!chartFocusKey.value) {
-                if (!selectedLevels.value.length) return '各维度 产量 & 人数';
-                return selectedLevels.value.map(l => levelLabels[l]).join(' / ') + ' 产量 & 人数';
+                if (!selectedLevels.value.length) return '各维度 ' + productChartMetricLabel.value;
+                return selectedLevels.value.map(l => levelLabels[l]).join(' / ') + ' ' + productChartMetricLabel.value;
             }
             for (const r of productRows.value) {
-                if (r.key === chartFocusKey.value) return r.name + ' 详情';
+                if (r.key === chartFocusKey.value) return r.name + ' ' + productChartMetricLabel.value + '详情';
             }
-            return '各维度 产量 & 人数';
+            return '各维度 ' + productChartMetricLabel.value;
         });
+
+        function setProductChartMetric(metric) {
+            if (productChartMetric.value === metric) return;
+            productChartMetric.value = metric;
+            nextTick(() => renderProductChart());
+        }
 
         function toggleRow(row) {
             if (!row.hasChildren) return;
@@ -996,6 +1033,10 @@ createApp({
                 const maxVal = Math.max(...values);
                 const minVal = Math.min(...values);
                 const avgVal = values.reduce((a, b) => a + b, 0) / values.length;
+                const formattedAvg = productChartMetric.value === 'output_value'
+                    ? fmtOutputValue(avgVal)
+                    : fmtNum(Math.round(avgVal));
+                const averageLabel = '平均' + productChartMetricLabel.value + ' ' + formattedAvg;
 
                 const defaultColor = 'rgba(96, 165, 250, 0.85)';
                 const maxColor = 'rgba(52, 211, 153, 0.85)';
@@ -1012,11 +1053,13 @@ createApp({
                 if (charts['product-chart']) {
                     const chart = charts['product-chart'];
                     chart.data.labels = productChartLabels.value;
+                    chart.data.datasets[0].label = productChartMetricLabel.value;
                     chart.data.datasets[0].data = values;
                     chart.data.datasets[0].backgroundColor = bgColors;
                     chart.data.datasets[0].borderColor = borderColors;
                     chart.data.datasets[1].data = Array(values.length).fill(avgVal);
-                    chart.data.datasets[1].label = '平均值 ' + fmtNum(Math.round(avgVal));
+                    chart.data.datasets[1].label = averageLabel;
+                    chart.options.scales.y.title.text = productChartMetricLabel.value;
                     chart.update('active');
                 } else {
                     const ctx = canvas.getContext('2d');
@@ -1026,7 +1069,7 @@ createApp({
                             labels: productChartLabels.value,
                             datasets: [
                                 {
-                                    label: '产量',
+                                    label: productChartMetricLabel.value,
                                     data: values,
                                     backgroundColor: bgColors,
                                     borderColor: borderColors,
@@ -1035,7 +1078,7 @@ createApp({
                                 },
                                 {
                                     type: 'line',
-                                    label: '平均值 ' + fmtNum(Math.round(avgVal)),
+                                    label: averageLabel,
                                     data: Array(values.length).fill(avgVal),
                                     borderColor: 'rgba(148, 163, 184, 0.7)',
                                     borderDash: [6, 4],
@@ -1057,6 +1100,7 @@ createApp({
                                     beginAtZero: true,
                                     ticks: { color: '#94a3b8', font: { size: 10 } },
                                     grid: { color: '#334155' },
+                                    title: { display: true, text: productChartMetricLabel.value, color: '#94a3b8' },
                                 },
                                 x: {
                                     ticks: { color: '#94a3b8', font: { size: 10 }, maxRotation: 45 },
@@ -1426,6 +1470,11 @@ createApp({
         });
 
         function fmtNum(n) { return n != null ? n.toLocaleString() : '--'; }
+        function fmtOutputValue(n) {
+            return n != null
+                ? Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+                : '--';
+        }
 
         // 工序色板
         function stepColor(idx, stepno) {
@@ -1941,10 +1990,10 @@ createApp({
             filterByWorkOrder, getWorkorderItems, getWoTarget, getCombinedTarget,
             isEditing, draft, woDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
-            fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
+            fmtNum, fmtOutputValue, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             showStepMetadataColumns, productGridColumns,
-            productRows, productChartTitle, toggleRow, treeWrapEl,
+            productRows, productChartMetric, productChartTitle, setProductChartMetric, toggleRow, treeWrapEl,
             activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragHeight, tagDragStyle,
             onTagPointerDown,
             dragStart,

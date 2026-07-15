@@ -556,22 +556,28 @@ class TestGetBatchProductOverview:
         queryset.values.return_value.annotate.return_value.order_by.return_value = [
             {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'VCO-L5', 'qty': 100, 'workers': 2},
             {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'VCO-L5', 'qty': 50, 'workers': 1},
+            {'WrkOrder': 'BU0724', 'StepNo': 72, 'Flow': 'VCO-L5', 'qty': 20, 'workers': 1},
         ]
         order_query = mock_order.objects.using.return_value.filter.return_value
         order_query.values.return_value.distinct.return_value = [
             {'style_no': 'BU0724', 'product_name': 'OLLIE TEE', 'order_no': 'PO-1'},
         ]
         mock_metadata.return_value = {
-            ('BU0724', 70): {'description': '后整', 'step_time': 0.0},
+            ('BU0724', 70): {'description': '后整', 'step_time': 0.331},
+            ('BU0724', 72): {'description': '包装', 'step_time': 0.0},
         }
 
         result = get_batch_product_overview(date(2026, 7, 15))
 
         steps = result['products'][0]['wrk_orders'][0]['stepnos']
         assert steps[0]['description'] == '后整'
-        assert steps[0]['step_time'] == 0.0
+        assert steps[0]['step_time'] == 0.331
+        assert steps[0]['output_value'] == 33.1
         assert steps[1]['description'] == ''
         assert steps[1]['step_time'] is None
+        assert steps[1]['output_value'] is None
+        assert steps[2]['step_time'] == 0.0
+        assert steps[2]['output_value'] == 0.0
         mock_metadata.assert_called_once_with(['BU0724'])
 
 
