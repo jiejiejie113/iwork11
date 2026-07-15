@@ -537,3 +537,39 @@ class TestGetBatchStepnoEmployees:
         assert result[69][0]['reg_per_sys_id'] == 1001
         assert result[69][0]['qty'] == 300
         assert result[69][0]['flows'] == ['VCO-L5']
+
+
+class TestGetBatchProductOverview:
+    """按产品名称概览包含工序字典与标准工时。"""
+
+    @patch('iwork.queries.get_batch_step_times')
+    @patch('iwork.queries.get_all_step_descriptions')
+    @patch('iwork.queries.ProductionOrder')
+    @patch('iwork.queries.get_records_queryset')
+    def test_includes_description_and_step_time(
+        self, mock_records, mock_order, mock_descriptions, mock_step_times,
+    ):
+        from iwork.queries import get_batch_product_overview
+
+        queryset = mock_records.return_value
+        queryset.exclude.return_value = queryset
+        queryset.filter.return_value = queryset
+        queryset.values.return_value.annotate.return_value.order_by.return_value = [
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'VCO-L5', 'qty': 100, 'workers': 2},
+            {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'VCO-L5', 'qty': 50, 'workers': 1},
+        ]
+        order_query = mock_order.objects.using.return_value.filter.return_value
+        order_query.values.return_value.distinct.return_value = [
+            {'style_no': 'BU0724', 'product_name': 'OLLIE TEE', 'order_no': 'PO-1'},
+        ]
+        mock_descriptions.return_value = {70: '后整'}
+        mock_step_times.return_value = {('BU0724', 70): 0.0}
+
+        result = get_batch_product_overview(date(2026, 7, 15))
+
+        steps = result['products'][0]['wrk_orders'][0]['stepnos']
+        assert steps[0]['description'] == '后整'
+        assert steps[0]['step_time'] == 0.0
+        assert steps[1]['description'] == ''
+        assert steps[1]['step_time'] is None
+        mock_step_times.assert_called_once_with(['BU0724'])

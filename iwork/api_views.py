@@ -12,7 +12,11 @@ from asgiref.sync import sync_to_async
 from datetime import date, datetime
 from loguru import logger
 
-from iwork.statistics import get_realtime_stats, _seconds_to_midnight
+from iwork.statistics import (
+    PRODUCT_OVERVIEW_CACHE_KEY,
+    _seconds_to_midnight,
+    get_realtime_stats,
+)
 from iwork.queries import (
     get_hourly_stats,
     get_flow_detail,
@@ -534,7 +538,7 @@ def product_overview(request):
         mode = request.query_params.get('mode', 'remote')
 
         if target_date == date.today() and mode == 'remote':
-            cached = cache.get('stats:detail:product_overview')
+            cached = cache.get(PRODUCT_OVERVIEW_CACHE_KEY)
             if cached is not None:
                 return Response(cached, status=status.HTTP_200_OK)
 
@@ -544,7 +548,7 @@ def product_overview(request):
             result = remote_get_batch_product_overview(target_date)
 
         if target_date == date.today() and mode == 'remote':
-            cache.set('stats:detail:product_overview', result, 3600)
+            cache.set(PRODUCT_OVERVIEW_CACHE_KEY, result, 3600)
 
         return Response(result, status=status.HTTP_200_OK)
     except Exception as e:

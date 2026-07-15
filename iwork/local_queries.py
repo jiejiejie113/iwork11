@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count
+from loguru import logger
 
 from iwork.local_models import LocalPytckreg3, ProductionOrder
 
@@ -683,7 +684,10 @@ def get_batch_product_overview(target_date: date) -> dict:
             products: [{
                 product_name: str, order_no: str, total_qty: int,
                 wrk_order_count: int,
-                wrk_orders: [{wrk_order, qty, stepno_count, stepnos: [{stepno, qty, workers, flows}]}]
+                wrk_orders: [{
+                    wrk_order, qty, stepno_count,
+                    stepnos: [{stepno, description, step_time, qty, workers, flows}],
+                }]
             }]
         }
     """
@@ -697,6 +701,21 @@ def get_batch_product_overview(target_date: date) -> dict:
         )
         .order_by('WrkOrder', 'StepNo', 'Flow')
     )
+
+    wrk_orders = sorted({r['WrkOrder'] for r in rows if r['WrkOrder']})
+    from iwork.queries import get_all_step_descriptions, get_batch_step_times
+
+    try:
+        step_descriptions = get_all_step_descriptions()
+    except Exception as exc:
+        logger.warning('本地产品概览读取工序描述失败，使用空描述: {}', exc)
+        step_descriptions = {}
+
+    try:
+        step_times = get_batch_step_times(wrk_orders)
+    except Exception as exc:
+        logger.warning('本地产品概览读取标准工时失败，使用空工时: {}', exc)
+        step_times = {}
 
     target_wo = set()
     for r in rows:
@@ -761,6 +780,8 @@ def get_batch_product_overview(target_date: date) -> dict:
                 sn_workers = sum(f['workers'] for f in flows)
                 stepno_list.append({
                     'stepno': sn,
+                    'description': step_descriptions.get(sn, ''),
+                    'step_time': step_times.get((wo_name, sn)),
                     'qty': sn_qty,
                     'workers': sn_workers,
                     'flows': flows,

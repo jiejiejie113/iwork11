@@ -285,7 +285,7 @@
             <div class="flex-1 overflow-y-auto">
             <!-- 表头（保留 table 视觉，固定不参与过渡）-->
             <div class="text-left text-slate-400 border-b border-slate-700 bg-slate-800 text-xs"
-                 style="display:grid;grid-template-columns:1fr 80px 80px;">
+                 style="display:grid;grid-template-columns:1fr 80px 140px;">
                 <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
                 <div class="py-2 px-3 text-right">产量</div>
                 <div class="py-2 px-3 text-right">信息</div>
@@ -296,7 +296,7 @@
                     <div v-for="row in productRows" :key="row.key"
                         @click="toggleRow(row)"
                         class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer text-xs"
-                        style="display:grid;grid-template-columns:1fr 80px 80px;align-items:center;"
+                        style="display:grid;grid-template-columns:1fr 80px 140px;align-items:center;"
                         :class="row.depth === 0 ? '' : row.depth === 1 ? 'bg-slate-800/50' : row.depth === 2 ? 'bg-slate-900/30' : 'bg-slate-900/50'">
                         <div class="py-1.5 px-3 flex items-center gap-1"
                             :style="{ paddingLeft: (8 + row.depth * 24) + 'px' }">
@@ -306,10 +306,10 @@
                         </div>
                         <div class="py-1.5 px-3 text-right"
                             :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</div>
-                        <div class="py-1.5 px-3 text-right text-slate-500 text-[10px]">{[ row.info ]}</div>
+                        <div class="py-1.5 px-3 text-right text-slate-500 text-[10px] whitespace-nowrap">{[ row.info ]}</div>
                     </div>
                     <div v-if="productRows.length === 0" key="empty-row" class="border-b border-slate-700 text-xs"
-                        style="display:grid;grid-template-columns:1fr 80px 80px;">
+                        style="display:grid;grid-template-columns:1fr 80px 140px;">
                         <div class="py-8 text-center text-slate-500" style="grid-column:1 / span 3;">
                             <template v-if="selectedLevels.length === 0">将维度标签拖入激活区以显示数据</template>
                             <template v-else-if="productList.length === 0">暂无产品数据</template>
@@ -634,14 +634,14 @@ createApp({
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
-        const levelLabels = { product: '产品名称', wrk_order: '工单号', stepno: '工序号', flow: '生产线' };
+        const levelLabels = { product: '产品名称', wrk_order: '本厂款号', stepno: '工序号', flow: '生产线' };
 
         const availableLevels = computed(() => {
             return dimensionPool.filter(d => !selectedLevels.value.includes(d));
         });
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
-        const levelShortLabels = { product: '产品', wrk_order: '工单', stepno: '工序', flow: '线体' };
+        const levelShortLabels = { product: '产品', wrk_order: '款号', stepno: '工序', flow: '线体' };
 
         function pickDim(leaf, dim) {
             if (dim === 'product') return leaf.product_name;
@@ -660,6 +660,8 @@ createApp({
                                 product_name: p.product_name,
                                 wrk_order: wo.wrk_order,
                                 stepno: st.stepno,
+                                step_description: st.description || '',
+                                step_time: st.step_time ?? null,
                                 flow: fl.flow,
                                 qty: fl.qty || 0,
                                 workers: fl.workers || 0,
@@ -671,7 +673,7 @@ createApp({
             return leaves;
         }
 
-        function buildGroupedTree(leaves, levels) {
+        function buildGroupedTree(leaves, levels, ancestorDims = []) {
             if (!levels.length || !leaves.length) return [];
             const curDim = levels[0];
             const restLevels = levels.slice(1);
@@ -685,7 +687,9 @@ createApp({
 
             const nodes = [];
             for (const [val, groupLeaves] of groups) {
-                const children = restLevels.length ? buildGroupedTree(groupLeaves, restLevels) : [];
+                const children = restLevels.length
+                    ? buildGroupedTree(groupLeaves, restLevels, [...ancestorDims, curDim])
+                    : [];
                 const totalQty = groupLeaves.reduce((s, l) => s + l.qty, 0);
                 const totalWorkers = groupLeaves.reduce((s, l) => s + l.workers, 0);
 
@@ -698,7 +702,24 @@ createApp({
                     info = cnt + '个' + levelShortLabels[nextDim];
                 }
 
-                const displayName = curDim === 'stepno' ? '工序' + val : val;
+                const completesStepTimePair = (
+                    (curDim === 'wrk_order' && ancestorDims.includes('stepno'))
+                    || (curDim === 'stepno' && ancestorDims.includes('wrk_order'))
+                );
+                if (completesStepTimePair) {
+                    const stepTimeLeaf = groupLeaves.find(
+                        leaf => leaf.step_time !== null && leaf.step_time !== undefined
+                    );
+                    const stepTime = stepTimeLeaf ? stepTimeLeaf.step_time : '--';
+                    info += ' · 标准工时 ' + stepTime;
+                }
+
+                let displayName = val;
+                if (curDim === 'stepno') {
+                    const descriptionLeaf = groupLeaves.find(leaf => leaf.step_description);
+                    const description = descriptionLeaf ? descriptionLeaf.step_description : '';
+                    displayName = '工序' + val + (description ? ' ' + description : '');
+                }
                 nodes.push({
                     name: displayName,
                     qty: totalQty,

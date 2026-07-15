@@ -12,6 +12,7 @@ from iwork import local_queries as local_q
 # 业务配置引用（统一在 settings.py 中定义）
 MONTHLY_CACHE_TTL = settings.MONTHLY_CACHE_TTL
 QUERY_TIMEOUT = settings.QUERY_TIMEOUT
+PRODUCT_OVERVIEW_CACHE_KEY = 'stats:detail:product_overview:v2'
 
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）
@@ -372,7 +373,7 @@ def cache_detail_batch_to_redis(detail_batch: dict) -> None:
     cache.set('stats:detail:flow_overview', detail_batch['flow_overview'], ttl)
     cache.set('stats:detail:flow_hourly', detail_batch['flow_hourly'], ttl)
     cache.set('stats:detail:stepno_overview', detail_batch['stepno_employees'], ttl)
-    cache.set('stats:detail:product_overview', detail_batch.get('product_overview', {}), ttl)
+    cache.set(PRODUCT_OVERVIEW_CACHE_KEY, detail_batch.get('product_overview', {}), ttl)
 
     flow_count = len(detail_batch['flow_employees'])
     for flow_name, employees in detail_batch['flow_employees'].items():

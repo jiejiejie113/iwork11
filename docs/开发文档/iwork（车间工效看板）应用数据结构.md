@@ -263,7 +263,7 @@ iwork 未使用 DRF Serializer，分层查询直接将数据库结果转为 dict
 - get_batch_flow_overview() — Flow概览
 - get_batch_flow_employees() — Flow下员工明细
 - get_batch_stepno_employees() — 工序下员工明细
-- get_batch_product_overview() — 产品四层结构
+- get_batch_product_overview() — 产品名称 → 本厂款号（`wrk_order`）→ 工序 → 生产线四层结构，工序节点包含 description 和 StepTime
 
 #### 产量看板查询 (queries.py / local_queries.py)
 

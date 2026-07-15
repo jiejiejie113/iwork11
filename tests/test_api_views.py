@@ -722,6 +722,30 @@ class TestStepnoDetailEndpoint:
         assert response.data['stepno'] == 70
 
 
+class TestProductOverviewEndpoint:
+    """GET /api/dashboard/detail/product-overview/"""
+
+    @patch('iwork.api_views.cache')
+    def test_uses_versioned_cache_key(self, mock_cache):
+        from iwork.api_views import product_overview
+
+        cached = {
+            'products': [{
+                'wrk_orders': [{
+                    'stepnos': [{'stepno': 70, 'description': '后整', 'step_time': 0.331}],
+                }],
+            }],
+        }
+        mock_cache.get.return_value = cached
+        request = APIRequestFactory().get('/api/dashboard/detail/product-overview/')
+
+        response = product_overview(request)
+
+        assert response.status_code == 200
+        assert response.data == cached
+        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v2')
+
+
 # ============================================================================
 # SSE 推送 + 目标产量设置 测试
 

@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, date, time
 from unittest.mock import Mock
-from iwork.models import Pywrkstp, Pytckreg3
+from iwork.models import Pydefstp, Pywrkstp, Pytckreg3
 
 
 class TestPytckreg3Model:
@@ -118,3 +118,21 @@ class TestPywrkstpModel:
         """ORM 使用 WrkOrder + StepNo，不生成远端不存在的 id 字段。"""
         assert Pywrkstp._meta.pk.field_names == ('WrkOrder', 'StepNo')
         assert 'id' not in {field.name for field in Pywrkstp._meta.fields}
+
+    def test_step_time_is_float_field(self):
+        """标准工时字段按远端浮点列映射。"""
+        from django.db.models import FloatField
+
+        assert isinstance(Pywrkstp._meta.get_field('StepTime'), FloatField)
+
+
+class TestPydefstpModel:
+    """工序字典表模型测试。"""
+
+    def test_description_is_available(self):
+        """工序描述字段存在，并允许远端空值映射为空字符串。"""
+        field = Pydefstp._meta.get_field('description')
+
+        assert field.max_length == 255
+        assert field.blank is True
+        assert field.default == ''

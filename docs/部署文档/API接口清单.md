@@ -556,6 +556,51 @@ GET /api/dashboard/detail/stepno/<stepno>/
 
 ---
 
+### 5.5 产品名称概览
+
+```http
+GET /api/dashboard/detail/product-overview/
+```
+
+按产品名称、本厂款号、工序和生产线返回可重组的四层明细。接口字段仍使用
+`wrk_order`，在该模块中的业务名称为“本厂款号”，并保留完整值用于和
+`pywrkstp.WrkOrder` 精确匹配。
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `date` | string | 否 | 今日 | 目标日期，格式 `YYYY-MM-DD` |
+| `mode` | string | 否 | `remote` | `local` 使用本地历史产量数据 |
+
+**响应示例**：
+
+```json
+{
+  "products": [{
+    "product_name": "OLLIE TEE",
+    "total_qty": 100,
+    "wrk_orders": [{
+      "wrk_order": "BU0724",
+      "qty": 100,
+      "stepnos": [{
+        "stepno": 70,
+        "description": "后整",
+        "step_time": 0.331,
+        "qty": 100,
+        "workers": 5,
+        "flows": [{"flow": "VCO-L5", "qty": 100, "workers": 5}]
+      }]
+    }]
+  }]
+}
+```
+
+`description` 缺失时返回空字符串；`step_time` 缺失时返回 `null`，数据库中的
+`0` 保持为数值 `0`。
+
+---
+
 ## 六、生产详情页面
 
 ### 6.1 生产详情主页

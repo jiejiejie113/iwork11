@@ -752,7 +752,8 @@ def get_batch_product_overview(target_date: date) -> dict:
                 wrk_order_count: int,
                 wrk_orders: [{
                     wrk_order: str, qty: int, stepno_count: int,
-                    stepnos: [{stepno: int, qty: int, workers: int,
+                    stepnos: [{stepno: int, description: str, step_time: float | None,
+                               qty: int, workers: int,
                                flows: [{flow: str, qty: int, workers: int}]}]
                 }]
             }]
@@ -769,6 +770,10 @@ def get_batch_product_overview(target_date: date) -> dict:
         )
         .order_by('WrkOrder', 'StepNo', 'Flow')
     )
+
+    wrk_orders = sorted({r['WrkOrder'] for r in rows if r['WrkOrder']})
+    step_descriptions = get_all_step_descriptions()
+    step_times = get_batch_step_times(wrk_orders)
 
     target_wo = set()
     for r in rows:
@@ -834,6 +839,8 @@ def get_batch_product_overview(target_date: date) -> dict:
                 sn_workers = sum(f['workers'] for f in flows)
                 stepno_list.append({
                     'stepno': sn,
+                    'description': step_descriptions.get(sn, ''),
+                    'step_time': step_times.get((wo_name, sn)),
                     'qty': sn_qty,
                     'workers': sn_workers,
                     'flows': flows,

@@ -322,3 +322,33 @@ class TestGetBatchStepnoEmployeesLocal:
         assert employees[1]['reg_per_sys_id'] == 1002
         assert employees[1]['qty'] == 150
         assert employees[1]['flows'] == ['Flow_A']
+
+
+class TestGetBatchProductOverviewLocal:
+    """本地历史概览保持与实时接口一致的元数据字段。"""
+
+    @patch('iwork.queries.get_batch_step_times', side_effect=ConnectionError('remote unavailable'))
+    @patch('iwork.queries.get_all_step_descriptions', side_effect=ConnectionError('remote unavailable'))
+    @patch('iwork.local_queries.ProductionOrder')
+    @patch('iwork.local_queries.get_records_queryset')
+    def test_remote_metadata_failure_degrades_to_empty_values(
+        self, mock_records, mock_order, _mock_descriptions, _mock_step_times,
+    ):
+        from iwork.local_queries import get_batch_product_overview
+
+        queryset = mock_records.return_value
+        queryset.exclude.return_value = queryset
+        queryset.filter.return_value = queryset
+        queryset.values.return_value.annotate.return_value.order_by.return_value = [
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'VCO-L5', 'qty': 100, 'workers': 2},
+        ]
+        order_query = mock_order.objects.using.return_value.filter.return_value
+        order_query.values.return_value.distinct.return_value = [
+            {'style_no': 'BU0724', 'product_name': 'OLLIE TEE', 'order_no': 'PO-1'},
+        ]
+
+        result = get_batch_product_overview(date(2026, 7, 14))
+
+        step = result['products'][0]['wrk_orders'][0]['stepnos'][0]
+        assert step['description'] == ''
+        assert step['step_time'] is None

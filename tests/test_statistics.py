@@ -391,6 +391,7 @@ class TestCacheDetailBatchToRedis:
             'flow_hourly': {'VCO-L5': [{'hour': 8, 'qty': 100}]},
             'flow_employees': {'VCO-L5': [{'reg_per_sys_id': 1001, 'total_qty': 500}]},
             'stepno_employees': {70: [{'reg_per_sys_id': 1001, 'qty': 300, 'flows': ['VCO-L5']}]},
+            'product_overview': {'products': []},
         }
 
         cache_detail_batch_to_redis(detail_batch)
@@ -398,3 +399,6 @@ class TestCacheDetailBatchToRedis:
         mock_cache.set.assert_any_call('stats:detail:flow_hourly', detail_batch['flow_hourly'], 36000)
         mock_cache.set.assert_any_call('stats:detail:flow:VCO-L5', detail_batch['flow_employees']['VCO-L5'], 36000)
         mock_cache.set.assert_any_call('stats:detail:stepno_overview', detail_batch['stepno_employees'], 36000)
+        mock_cache.set.assert_any_call(
+            'stats:detail:product_overview:v2', detail_batch['product_overview'], 36000,
+        )
