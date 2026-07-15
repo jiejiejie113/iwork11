@@ -772,8 +772,7 @@ def get_batch_product_overview(target_date: date) -> dict:
     )
 
     wrk_orders = sorted({r['WrkOrder'] for r in rows if r['WrkOrder']})
-    step_descriptions = get_all_step_descriptions()
-    step_times = get_batch_step_times(wrk_orders)
+    step_metadata = get_batch_step_metadata(wrk_orders)
 
     target_wo = set()
     for r in rows:
@@ -837,10 +836,11 @@ def get_batch_product_overview(target_date: date) -> dict:
                 flows = sorted(sn_data['flows'].values(), key=lambda f: f['qty'], reverse=True)
                 sn_qty = sum(f['qty'] for f in flows)
                 sn_workers = sum(f['workers'] for f in flows)
+                metadata = step_metadata.get((wo_name, sn), {})
                 stepno_list.append({
                     'stepno': sn,
-                    'description': step_descriptions.get(sn, ''),
-                    'step_time': step_times.get((wo_name, sn)),
+                    'description': metadata.get('description', ''),
+                    'step_time': metadata.get('step_time'),
                     'qty': sn_qty,
                     'workers': sn_workers,
                     'flows': flows,
@@ -1129,35 +1129,24 @@ def get_kanban_filter_options(target_date, stepnos=None, wrk_orders=None,
 
 
 # ======
-# 工序描述与标准工时查询
+# 工单工序描述与标准工时查询
 
-def get_all_step_descriptions() -> dict[int, str]:
+def get_step_description(wrk_order: str, stepno: int) -> str:
     """
-    获取所有工序号的描述信息
-
-    Returns:
-        dict[int, str]: {工序号: 工序描述} 字典
-    """
-    from iwork.models import Pydefstp
-    rows = Pydefstp.objects.using('iwork').values('StepNo', 'description')
-    return {r['StepNo']: r['description'] for r in rows}
-
-
-def get_step_description(stepno: int) -> str:
-    """
-    获取单个工序号的描述
+    获取指定本厂款号和工序号的描述。
 
     Args:
+        wrk_order (str): 本厂款号
         stepno (int): 工序号
 
     Returns:
         str: 工序描述，未找到返回空字符串
     """
-    from iwork.models import Pydefstp
+    from iwork.models import Pywrkstp
     try:
-        obj = Pydefstp.objects.using('iwork').get(StepNo=stepno)
-        return obj.description
-    except Pydefstp.DoesNotExist:
+        obj = Pywrkstp.objects.using('iwork').get(WrkOrder=wrk_order, StepNo=stepno)
+        return obj.Description or ''
+    except Pywrkstp.DoesNotExist:
         return ''
 
 
@@ -1180,20 +1169,33 @@ def get_step_time(wrk_order: str, stepno: int) -> float | None:
         return None
 
 
-def get_batch_step_times(wrk_orders: list[str]) -> dict[tuple[str, int], float]:
+def get_batch_step_times(wrk_orders: list[str]) -> dict[tuple[str, int], float | None]:
     """
     批量获取多个工单的工序标准工时
 
     Args:
-        wrk_orders (list[str]): 工单号列表
+        wrk_orders (list[str]): 本厂款号列表
 
     Returns:
-        dict[tuple[str, int], float]: {(工单号, 工序号): 标准工时} 字典
+        dict[tuple[str, int], float | None]: {(本厂款号, 工序号): 标准工时} 字典
     """
+    metadata = get_batch_step_metadata(wrk_orders)
+    return {key: value['step_time'] for key, value in metadata.items()}
+
+
+def get_batch_step_metadata(wrk_orders: list[str]) -> dict[tuple[str, int], dict]:
+    """批量获取本厂款号与工序组合对应的描述和标准工时。"""
     if not wrk_orders:
         return {}
+
     from iwork.models import Pywrkstp
     rows = Pywrkstp.objects.using('iwork').filter(
         WrkOrder__in=wrk_orders
-    ).values('WrkOrder', 'StepNo', 'StepTime')
-    return {(r['WrkOrder'], r['StepNo']): r['StepTime'] for r in rows}
+    ).values('WrkOrder', 'StepNo', 'Description', 'StepTime')
+    return {
+        (row['WrkOrder'], row['StepNo']): {
+            'description': row['Description'] or '',
+            'step_time': row['StepTime'],
+        }
+        for row in rows
+    }

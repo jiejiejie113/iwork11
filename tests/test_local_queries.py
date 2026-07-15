@@ -327,12 +327,11 @@ class TestGetBatchStepnoEmployeesLocal:
 class TestGetBatchProductOverviewLocal:
     """本地历史概览保持与实时接口一致的元数据字段。"""
 
-    @patch('iwork.queries.get_batch_step_times', side_effect=ConnectionError('remote unavailable'))
-    @patch('iwork.queries.get_all_step_descriptions', side_effect=ConnectionError('remote unavailable'))
+    @patch('iwork.queries.get_batch_step_metadata', side_effect=ConnectionError('remote unavailable'))
     @patch('iwork.local_queries.ProductionOrder')
     @patch('iwork.local_queries.get_records_queryset')
     def test_remote_metadata_failure_degrades_to_empty_values(
-        self, mock_records, mock_order, _mock_descriptions, _mock_step_times,
+        self, mock_records, mock_order, _mock_metadata,
     ):
         from iwork.local_queries import get_batch_product_overview
 

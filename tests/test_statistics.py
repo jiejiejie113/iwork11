@@ -400,5 +400,5 @@ class TestCacheDetailBatchToRedis:
         mock_cache.set.assert_any_call('stats:detail:flow:VCO-L5', detail_batch['flow_employees']['VCO-L5'], 36000)
         mock_cache.set.assert_any_call('stats:detail:stepno_overview', detail_batch['stepno_employees'], 36000)
         mock_cache.set.assert_any_call(
-            'stats:detail:product_overview:v2', detail_batch['product_overview'], 36000,
+            'stats:detail:product_overview:v3', detail_batch['product_overview'], 36000,
         )

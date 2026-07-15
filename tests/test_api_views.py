@@ -743,7 +743,7 @@ class TestProductOverviewEndpoint:
 
         assert response.status_code == 200
         assert response.data == cached
-        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v2')
+        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v3')
 
 
 # ============================================================================

@@ -141,18 +141,20 @@ D:\DM\iwork\iwork\
 
 关联关系：通过 `Pytckreg3.WrkOrder[:6]` 前6位匹配 ProductionOrder.style_no，关联出 product_name 和 order_no。
 
-### 3.5 Pydefstp — 工序字典（只读）
+### 3.5 Pydefstp — 工序定义（只读）
 
 - 数据库：`payroll.pydefstp`（远程，managed=False）
 - 主键：`StepNo`
-- 用途：把工序号映射为工序描述
+- Django 模型只映射 `StepNo`，不映射该表的 `Description`
+- 生产详情不从该表读取工序描述
 
-### 3.6 Pywrkstp — 工单工序标准工时（只读）
+### 3.6 Pywrkstp — 本厂款号工序信息（只读）
 
 - 数据库：`payroll.pywrkstp`（远程，managed=False）
 - 联合主键：`(WrkOrder, StepNo)`
 - Django 映射：`CompositePrimaryKey('WrkOrder', 'StepNo')`
-- 用途：按工单和工序查询 `StepTime`
+- 字段：`Description` 为工序描述，`StepTime` 为标准工时
+- 用途：按完整本厂款号和工序号一次查询 `Description` 与 `StepTime`
 
 该表没有可依赖的 `id` 列。查询、测试和 mock 都必须使用联合主键字段，不能让 ORM 隐式选择 `id`。
 
@@ -263,7 +265,7 @@ iwork 未使用 DRF Serializer，分层查询直接将数据库结果转为 dict
 - get_batch_flow_overview() — Flow概览
 - get_batch_flow_employees() — Flow下员工明细
 - get_batch_stepno_employees() — 工序下员工明细
-- get_batch_product_overview() — 产品名称 → 本厂款号（`wrk_order`）→ 工序 → 生产线四层结构，工序节点包含 description 和 StepTime
+- get_batch_product_overview() — 产品名称 → 本厂款号（`wrk_order`）→ 工序 → 生产线四层结构，工序节点的 description 和 StepTime 均来自 Pywrkstp
 
 #### 产量看板查询 (queries.py / local_queries.py)
 

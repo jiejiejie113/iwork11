@@ -542,12 +542,11 @@ class TestGetBatchStepnoEmployees:
 class TestGetBatchProductOverview:
     """按产品名称概览包含工序字典与标准工时。"""
 
-    @patch('iwork.queries.get_batch_step_times')
-    @patch('iwork.queries.get_all_step_descriptions')
+    @patch('iwork.queries.get_batch_step_metadata')
     @patch('iwork.queries.ProductionOrder')
     @patch('iwork.queries.get_records_queryset')
     def test_includes_description_and_step_time(
-        self, mock_records, mock_order, mock_descriptions, mock_step_times,
+        self, mock_records, mock_order, mock_metadata,
     ):
         from iwork.queries import get_batch_product_overview
 
@@ -562,8 +561,9 @@ class TestGetBatchProductOverview:
         order_query.values.return_value.distinct.return_value = [
             {'style_no': 'BU0724', 'product_name': 'OLLIE TEE', 'order_no': 'PO-1'},
         ]
-        mock_descriptions.return_value = {70: '后整'}
-        mock_step_times.return_value = {('BU0724', 70): 0.0}
+        mock_metadata.return_value = {
+            ('BU0724', 70): {'description': '后整', 'step_time': 0.0},
+        }
 
         result = get_batch_product_overview(date(2026, 7, 15))
 
@@ -572,4 +572,38 @@ class TestGetBatchProductOverview:
         assert steps[0]['step_time'] == 0.0
         assert steps[1]['description'] == ''
         assert steps[1]['step_time'] is None
-        mock_step_times.assert_called_once_with(['BU0724'])
+        mock_metadata.assert_called_once_with(['BU0724'])
+
+
+class TestStepMetadataQueries:
+    """pywrkstp 描述和工时使用同一组合键。"""
+
+    @patch('iwork.models.Pywrkstp')
+    def test_batch_metadata_uses_wrkorder_and_stepno(self, mock_model):
+        from iwork.queries import get_batch_step_metadata
+
+        query = mock_model.objects.using.return_value.filter.return_value
+        query.values.return_value = [{
+            'WrkOrder': 'BU0724',
+            'StepNo': 70,
+            'Description': '后整',
+            'StepTime': 0.331,
+        }]
+
+        result = get_batch_step_metadata(['BU0724'])
+
+        assert result == {
+            ('BU0724', 70): {'description': '后整', 'step_time': 0.331},
+        }
+        query.values.assert_called_once_with('WrkOrder', 'StepNo', 'Description', 'StepTime')
+
+    @patch('iwork.models.Pywrkstp')
+    def test_single_description_filters_full_composite_key(self, mock_model):
+        from iwork.queries import get_step_description
+
+        mock_model.objects.using.return_value.get.return_value.Description = '后整'
+
+        assert get_step_description('BU0724', 70) == '后整'
+        mock_model.objects.using.return_value.get.assert_called_once_with(
+            WrkOrder='BU0724', StepNo=70,
+        )

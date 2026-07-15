@@ -703,19 +703,13 @@ def get_batch_product_overview(target_date: date) -> dict:
     )
 
     wrk_orders = sorted({r['WrkOrder'] for r in rows if r['WrkOrder']})
-    from iwork.queries import get_all_step_descriptions, get_batch_step_times
+    from iwork.queries import get_batch_step_metadata
 
     try:
-        step_descriptions = get_all_step_descriptions()
+        step_metadata = get_batch_step_metadata(wrk_orders)
     except Exception as exc:
-        logger.warning('本地产品概览读取工序描述失败，使用空描述: {}', exc)
-        step_descriptions = {}
-
-    try:
-        step_times = get_batch_step_times(wrk_orders)
-    except Exception as exc:
-        logger.warning('本地产品概览读取标准工时失败，使用空工时: {}', exc)
-        step_times = {}
+        logger.warning('本地产品概览读取工序描述和标准工时失败，使用空元数据: {}', exc)
+        step_metadata = {}
 
     target_wo = set()
     for r in rows:
@@ -778,10 +772,11 @@ def get_batch_product_overview(target_date: date) -> dict:
                 flows = sorted(sn_data['flows'].values(), key=lambda f: f['qty'], reverse=True)
                 sn_qty = sum(f['qty'] for f in flows)
                 sn_workers = sum(f['workers'] for f in flows)
+                metadata = step_metadata.get((wo_name, sn), {})
                 stepno_list.append({
                     'stepno': sn,
-                    'description': step_descriptions.get(sn, ''),
-                    'step_time': step_times.get((wo_name, sn)),
+                    'description': metadata.get('description', ''),
+                    'step_time': metadata.get('step_time'),
                     'qty': sn_qty,
                     'workers': sn_workers,
                     'flows': flows,

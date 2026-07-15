@@ -61,35 +61,35 @@ class Pytckreg3(models.Model):
 
 class Pydefstp(models.Model):
     """
-    工序字典表（只读）
+    工序定义表（只读）
     映射到远程 pydefstp 表
-    StepNo 为主键，description 为工序描述
+    生产详情不使用该表的 Description 字段。
     """
 
     StepNo = models.IntegerField('工序号', primary_key=True)
-    description = models.CharField('工序描述', max_length=255, blank=True, default='')
 
     class Meta:
         app_label = 'iwork'
         db_table = 'pydefstp'
         managed = False
-        verbose_name = '工序字典'
-        verbose_name_plural = '工序字典'
+        verbose_name = '工序定义'
+        verbose_name_plural = '工序定义'
 
     def __str__(self) -> str:
-        return f'{self.StepNo}: {self.description}'
+        return str(self.StepNo)
 
 
 class Pywrkstp(models.Model):
     """
     工单工序工时表（只读）
     映射到远程 pywrkstp 表
-    StepNo + WrkOrder 联合确定 StepTime（标准工时）
+    StepNo + WrkOrder 联合确定 Description（工序描述）和 StepTime（标准工时）
     """
 
     pk = models.CompositePrimaryKey('WrkOrder', 'StepNo')
     StepNo = models.IntegerField('工序号', default=0)
     WrkOrder = models.CharField('工单号', max_length=14, blank=True, default='')
+    Description = models.CharField('工序描述', max_length=120, null=True, blank=True, default='')
     StepTime = models.FloatField('标准工时', default=0.0)
 
     class Meta:
@@ -101,4 +101,4 @@ class Pywrkstp(models.Model):
         verbose_name_plural = '工单工序工时'
 
     def __str__(self) -> str:
-        return f'{self.WrkOrder} / Step {self.StepNo}: {self.StepTime}'
+        return f'{self.WrkOrder} / Step {self.StepNo}: {self.Description or ""} / {self.StepTime}'

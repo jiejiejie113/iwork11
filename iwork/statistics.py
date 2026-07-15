@@ -12,7 +12,7 @@ from iwork import local_queries as local_q
 # 业务配置引用（统一在 settings.py 中定义）
 MONTHLY_CACHE_TTL = settings.MONTHLY_CACHE_TTL
 QUERY_TIMEOUT = settings.QUERY_TIMEOUT
-PRODUCT_OVERVIEW_CACHE_KEY = 'stats:detail:product_overview:v2'
+PRODUCT_OVERVIEW_CACHE_KEY = 'stats:detail:product_overview:v3'
 
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）

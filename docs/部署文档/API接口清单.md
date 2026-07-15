@@ -564,7 +564,8 @@ GET /api/dashboard/detail/product-overview/
 
 按产品名称、本厂款号、工序和生产线返回可重组的四层明细。接口字段仍使用
 `wrk_order`，在该模块中的业务名称为“本厂款号”，并保留完整值用于和
-`pywrkstp.WrkOrder` 精确匹配。
+`pywrkstp.WrkOrder` 精确匹配。工序节点的 `description` 与 `step_time` 均从
+`pywrkstp` 按 `(WrkOrder, StepNo)` 同时读取，不使用 `pydefstp.Description`。
 
 **查询参数**：
 

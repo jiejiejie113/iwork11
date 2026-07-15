@@ -125,14 +125,18 @@ class TestPywrkstpModel:
 
         assert isinstance(Pywrkstp._meta.get_field('StepTime'), FloatField)
 
+    def test_description_matches_remote_column(self):
+        """工单工序描述来自 pywrkstp.Description。"""
+        field = Pywrkstp._meta.get_field('Description')
+
+        assert field.max_length == 120
+        assert field.null is True
+
 
 class TestPydefstpModel:
     """工序字典表模型测试。"""
 
-    def test_description_is_available(self):
-        """工序描述字段存在，并允许远端空值映射为空字符串。"""
-        field = Pydefstp._meta.get_field('description')
-
-        assert field.max_length == 255
-        assert field.blank is True
-        assert field.default == ''
+    def test_description_is_not_mapped(self):
+        """pydefstp 不再作为生产详情的工序描述来源。"""
+        assert 'description' not in {field.name for field in Pydefstp._meta.fields}
+        assert 'Description' not in {field.name for field in Pydefstp._meta.fields}
