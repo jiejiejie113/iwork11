@@ -7,6 +7,7 @@
 
 | 日期 | 文件 | 范围 | 说明 |
 |------|------|------|------|
+| 2026-07-15 | [2026-07-15-product-step-metadata-output-value.md](2026-07-15-product-step-metadata-output-value.md) | 生产详情按产品名称 | 组合键工序描述/工时、独立列、产值字段及产量/产值图表切换 |
 | 2026-07-09 | [2026-07-09-tag-drag-placeholder-tree-wrap.md](2026-07-09-tag-drag-placeholder-tree-wrap.md) | 生产明细数据页 | 激活区拖拽改为占位虚线框挤压 + 树形表格外框先过渡再淡入 |
 
 ## 文档约定
