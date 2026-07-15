@@ -282,12 +282,14 @@
             </div>
 
             <!-- 动态树形表格 -->
-            <div class="flex-1 overflow-y-auto">
+            <div class="flex-1 overflow-auto">
             <!-- 表头（保留 table 视觉，固定不参与过渡）-->
             <div class="text-left text-slate-400 border-b border-slate-700 bg-slate-800 text-xs"
-                 style="display:grid;grid-template-columns:1fr 80px 140px;">
+                 :style="{ display: 'grid', gridTemplateColumns: productGridColumns }">
                 <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
+                <div v-if="showStepMetadataColumns" class="py-2 px-3">工序描述</div>
                 <div class="py-2 px-3 text-right">产量</div>
+                <div v-if="showStepMetadataColumns" class="py-2 px-3 text-right">标准工时</div>
                 <div class="py-2 px-3 text-right">信息</div>
             </div>
             <!-- tree-wrap：外框高度先过渡；tree-body：内部行 enter/leave -->
@@ -296,7 +298,7 @@
                     <div v-for="row in productRows" :key="row.key"
                         @click="toggleRow(row)"
                         class="border-b border-slate-700 hover:bg-slate-700/20 cursor-pointer text-xs"
-                        style="display:grid;grid-template-columns:1fr 80px 140px;align-items:center;"
+                        :style="{ display: 'grid', gridTemplateColumns: productGridColumns, alignItems: 'center' }"
                         :class="row.depth === 0 ? '' : row.depth === 1 ? 'bg-slate-800/50' : row.depth === 2 ? 'bg-slate-900/30' : 'bg-slate-900/50'">
                         <div class="py-1.5 px-3 flex items-center gap-1"
                             :style="{ paddingLeft: (8 + row.depth * 24) + 'px' }">
@@ -304,13 +306,20 @@
                             <span v-else class="w-4"></span>
                             <span :class="row.depth === 0 ? 'text-blue-400 font-semibold' : row.depth === 1 ? 'text-slate-300' : row.depth === 2 ? 'text-slate-400' : 'text-slate-500'">{[ row.name ]}</span>
                         </div>
+                        <div v-if="showStepMetadataColumns" class="py-1.5 px-3 text-slate-400 truncate"
+                            :title="row.metadataResolved ? (row.description || '--') : '--'">
+                            {[ row.metadataResolved ? (row.description || '--') : '--' ]}
+                        </div>
                         <div class="py-1.5 px-3 text-right"
                             :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</div>
+                        <div v-if="showStepMetadataColumns" class="py-1.5 px-3 text-right text-slate-300 tabular-nums">
+                            {[ row.metadataResolved && row.stepTime !== null && row.stepTime !== undefined ? row.stepTime : '--' ]}
+                        </div>
                         <div class="py-1.5 px-3 text-right text-slate-500 text-[10px] whitespace-nowrap">{[ row.info ]}</div>
                     </div>
                     <div v-if="productRows.length === 0" key="empty-row" class="border-b border-slate-700 text-xs"
-                        style="display:grid;grid-template-columns:1fr 80px 140px;">
-                        <div class="py-8 text-center text-slate-500" style="grid-column:1 / span 3;">
+                        :style="{ display: 'grid', gridTemplateColumns: productGridColumns }">
+                        <div class="py-8 text-center text-slate-500" style="grid-column:1 / -1;">
                             <template v-if="selectedLevels.length === 0">将维度标签拖入激活区以显示数据</template>
                             <template v-else-if="productList.length === 0">暂无产品数据</template>
                             <template v-else>点击展开查看详情</template>
@@ -639,6 +648,16 @@ createApp({
         const availableLevels = computed(() => {
             return dimensionPool.filter(d => !selectedLevels.value.includes(d));
         });
+        const showStepMetadataColumns = computed(() => {
+            return selectedLevels.value.includes('wrk_order')
+                && selectedLevels.value.includes('stepno');
+        });
+        const productGridColumns = computed(() => {
+            if (showStepMetadataColumns.value) {
+                return 'minmax(260px, 1fr) minmax(180px, 240px) 80px 110px 100px';
+            }
+            return 'minmax(260px, 1fr) 80px 140px';
+        });
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
         const levelShortLabels = { product: '产品', wrk_order: '款号', stepno: '工序', flow: '线体' };
@@ -702,28 +721,19 @@ createApp({
                     info = cnt + '个' + levelShortLabels[nextDim];
                 }
 
-                const completesStepTimePair = (
+                const completesStepMetadataPair = (
                     (curDim === 'wrk_order' && ancestorDims.includes('stepno'))
                     || (curDim === 'stepno' && ancestorDims.includes('wrk_order'))
                 );
-                if (completesStepTimePair) {
-                    const stepTimeLeaf = groupLeaves.find(
-                        leaf => leaf.step_time !== null && leaf.step_time !== undefined
-                    );
-                    const stepTime = stepTimeLeaf ? stepTimeLeaf.step_time : '--';
-                    info += ' · 标准工时 ' + stepTime;
-                }
-
-                let displayName = val;
-                if (curDim === 'stepno') {
-                    const descriptionLeaf = groupLeaves.find(leaf => leaf.step_description);
-                    const description = descriptionLeaf ? descriptionLeaf.step_description : '';
-                    displayName = '工序' + val + (description ? ' ' + description : '');
-                }
+                const metadataLeaf = completesStepMetadataPair ? groupLeaves[0] : null;
+                const displayName = curDim === 'stepno' ? '工序' + val : val;
                 nodes.push({
                     name: displayName,
                     qty: totalQty,
                     info,
+                    metadataResolved: completesStepMetadataPair,
+                    description: metadataLeaf ? metadataLeaf.step_description : null,
+                    stepTime: metadataLeaf ? metadataLeaf.step_time : null,
                     children,
                     hasChildren: children.length > 0,
                     _rawVal: val,
@@ -754,6 +764,9 @@ createApp({
                         name: node.name,
                         qty: node.qty,
                         info: node.info,
+                        metadataResolved: node.metadataResolved,
+                        description: node.description,
+                        stepTime: node.stepTime,
                         hasChildren: node.hasChildren,
                         expanded: isExpanded,
                     });
@@ -1930,6 +1943,7 @@ createApp({
             sortBy, startEditing, cancelEditing,
             fmtNum, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
+            showStepMetadataColumns, productGridColumns,
             productRows, productChartTitle, toggleRow, treeWrapEl,
             activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragHeight, tagDragStyle,
             onTagPointerDown,
