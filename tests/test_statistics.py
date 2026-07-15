@@ -4,6 +4,7 @@
 import pytest
 from unittest.mock import patch, Mock
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 class TestCalculateFlowEfficiency:
@@ -43,6 +44,63 @@ class TestCalculateFlowEfficiency:
         """baseline=0 → None（避免除零）"""
         from iwork.statistics import calculate_flow_efficiency
         assert calculate_flow_efficiency(avg_time=5, baseline=0) is None
+
+
+class TestEmployeeEfficiency:
+    """Flow 员工效率使用 UTC+7 有效上班分钟。"""
+
+    def test_morning_work_minutes_start_at_seven(self):
+        from iwork.statistics import get_effective_work_minutes
+
+        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
+
+        assert get_effective_work_minutes(date(2026, 7, 15), now) == 210
+
+    def test_business_date_uses_bangkok_timezone(self):
+        from iwork.statistics import get_business_date
+
+        utc_evening = datetime(
+            2026, 7, 14, 18, 0,
+            tzinfo=ZoneInfo('UTC'),
+        )
+
+        assert get_business_date(utc_evening) == date(2026, 7, 15)
+
+    @pytest.mark.parametrize(
+        ('hour', 'minute', 'expected'),
+        [
+            (6, 59, None),
+            (7, 0, 0),
+            (11, 0, 240),
+            (11, 30, 240),
+            (12, 0, 240),
+            (13, 0, 300),
+        ],
+    )
+    def test_work_minutes_cover_shift_boundaries(self, hour, minute, expected):
+        from iwork.statistics import get_effective_work_minutes
+
+        now = datetime(
+            2026, 7, 15, hour, minute, 59,
+            tzinfo=ZoneInfo('Asia/Bangkok'),
+        )
+
+        assert get_effective_work_minutes(date(2026, 7, 15), now) == expected
+
+    def test_historical_date_has_no_live_work_minutes(self):
+        from iwork.statistics import get_effective_work_minutes
+
+        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
+
+        assert get_effective_work_minutes(date(2026, 7, 14), now) is None
+
+    def test_output_value_divided_by_minutes_returns_percentage(self):
+        from iwork.statistics import calculate_employee_efficiency
+
+        assert calculate_employee_efficiency(420, 210) == 200.0
+        assert calculate_employee_efficiency(0, 210) == 0.0
+        assert calculate_employee_efficiency(None, 210) is None
+        assert calculate_employee_efficiency(420, 0) is None
 
 
 class TestSecondsToMidnight:
@@ -397,7 +455,7 @@ class TestCacheDetailBatchToRedis:
         cache_detail_batch_to_redis(detail_batch)
         mock_cache.set.assert_any_call('stats:detail:flow_overview', detail_batch['flow_overview'], 36000)
         mock_cache.set.assert_any_call('stats:detail:flow_hourly', detail_batch['flow_hourly'], 36000)
-        mock_cache.set.assert_any_call('stats:detail:flow:VCO-L5', detail_batch['flow_employees']['VCO-L5'], 36000)
+        mock_cache.set.assert_any_call('stats:detail:flow:v2:VCO-L5', detail_batch['flow_employees']['VCO-L5'], 36000)
         mock_cache.set.assert_any_call('stats:detail:stepno_overview', detail_batch['stepno_employees'], 36000)
         mock_cache.set.assert_any_call(
             'stats:detail:product_overview:v4', detail_batch['product_overview'], 36000,

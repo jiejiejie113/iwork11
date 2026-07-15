@@ -263,7 +263,7 @@ iwork 未使用 DRF Serializer，分层查询直接将数据库结果转为 dict
 - get_batch_hourly_stats() — 每个工序小时趋势
 - get_batch_process_by_flow() — 工序×Flow对比
 - get_batch_flow_overview() — Flow概览
-- get_batch_flow_employees() — Flow下员工明细
+- get_batch_flow_employees() — Flow 下员工明细；按 `(WrkOrder, StepNo)` 注入 Description、StepTime、工序产值并汇总员工产值
 - get_batch_stepno_employees() — 工序下员工明细
 - get_batch_product_overview() — 产品名称 → 本厂款号（`wrk_order`）→ 工序 → 生产线四层结构；工序节点的 description 和 StepTime 均来自 Pywrkstp，并返回 `output_value = qty × StepTime`
 

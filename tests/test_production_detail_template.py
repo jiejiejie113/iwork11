@@ -38,3 +38,31 @@ def test_product_chart_switches_and_sorts_by_selected_metric():
     assert "setProductChartMetric('qty')" in TEMPLATE
     assert "setProductChartMetric('output_value')" in TEMPLATE
     assert 'items.sort((a, b) => b.value - a.value)' in TEMPLATE
+
+
+def test_flow_table_uses_composite_key_step_rows():
+    assert '>本厂款号</th>' in TEMPLATE
+    assert '>工序号</th>' in TEMPLATE
+    assert 'row._step.description' in TEMPLATE
+    assert 'row._step.step_time' in TEMPLATE
+    assert 'row._step.output_value' in TEMPLATE
+    assert 'row._woFirst' in TEMPLATE
+    assert 'row._empFirst' in TEMPLATE
+    assert "collapsed ? 'min-w-[780px]' : 'min-w-[1180px]'" in TEMPLATE
+    assert ':colspan="collapsed ? 6 : 12"' in TEMPLATE
+    assert 'max-lg:h-[220px]' in TEMPLATE
+
+
+def test_flow_table_separates_target_rate_and_employee_efficiency():
+    assert '>目标达成率</th>' in TEMPLATE
+    assert '>员工效率</th>' in TEMPLATE
+    assert 'row.emp.employee_efficiency' in TEMPLATE
+    assert '· 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}' in TEMPLATE
+    assert '· 产值 {[ fmtNum(detailSummary.targeted_qty) ]}' not in TEMPLATE
+
+
+def test_detail_default_date_uses_business_timezone():
+    assert 'function businessDateString()' in TEMPLATE
+    assert "timeZone: 'Asia/Bangkok'" in TEMPLATE
+    assert 'const selectedDate = ref(businessDateString());' in TEMPLATE
+    assert "new Date().toISOString().split('T')[0]" not in TEMPLATE

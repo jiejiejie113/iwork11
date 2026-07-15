@@ -114,6 +114,16 @@ flows = list(settings.VISIBLE_FLOWS)
 {stepno: [{'wrk_order': str, 'total_qty': int, 'flows': list[str]}]}
 ```
 
+### 4.4 Flow 员工明细
+
+`get_batch_flow_employees` 按 `(WrkOrder, StepNo)` 从 `Pywrkstp` 批量注入
+`description`、`step_time` 和 `output_value`。员工节点汇总 `output_value`；任一工序
+缺少标准工时时汇总值为 `null`。本地历史查询远程元数据失败时保留产量并将元数据
+和产值降级为空。
+
+Flow 详情缓存使用 `stats:detail:flow:v2:<flow_name>`。缓存不保存实时效率；接口按
+请求时刻注入 `work_minutes` 和 `employee_efficiency`。
+
 `statistics.py` 中 `get_batch_stats` 合并工单时，`flows` 字段会跨工序合并去重。
 
 ---
@@ -125,6 +135,12 @@ flows = list(settings.VISIBLE_FLOWS)
 ```javascript
 new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' })
 ```
+
+生产详情默认日期也必须使用 `Asia/Bangkok`，不得使用 UTC 的
+`new Date().toISOString()`。后端 Flow 详情使用同一业务日期判断“今日”缓存。
+
+员工有效上班分钟从 07:00 起算，11:00-12:00 固定为 240 分钟，12:00 后扣除一
+小时午休；历史日期、07:00 前和分钟数为 0 时不计算员工效率。
 
 **适用位置**：
 - `dashboard.html`：`lastUpdate`（SSE 接收时更新）
@@ -227,6 +243,11 @@ const workorderItems = computed(() => {
 | `flow_overview` | `flowCards` | Flow 概览卡片 |
 | `workorders.items` | `workorderList` | 工单汇总列表 |
 | `employees` | `employees` | 员工明细（详情页） |
+| `employees[].steps[].description` | `row._step.description` | 组合键工序描述 |
+| `employees[].steps[].step_time` | `row._step.step_time` | 标准工时 |
+| `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
+| `employees[].output_value` | `emp.output_value` | 员工总产值 |
+| `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
 
 ### 8.3 修改规则
 

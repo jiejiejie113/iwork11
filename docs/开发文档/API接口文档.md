@@ -269,9 +269,40 @@ Celery Beat (每 60s)
 | `date`      | string | 否   | 今天      | 日期，ISO 格式 |
 | `mode`      | string | 否   | `remote` | 数据源         |
 
-返回：`{ "flow": "...", "date": "...", "total_qty": N, "worker_count": N, "hourly_trend": [...], "employees": [{ "reg_per_sys_id": ..., "total_qty": ..., "steps": [...] }] }`
+响应顶层包含当前有效上班分钟，员工节点包含总产值与员工效率，工序节点按
+`(workorder, stepno)` 返回元数据：
 
-缓存：今日 `stats:detail:flow:<name>`（TTL 到午夜）。
+```json
+{
+  "flow": "SO3-L3A",
+  "date": "2026-07-15",
+  "total_qty": 516,
+  "worker_count": 1,
+  "work_minutes": 210,
+  "hourly_trend": [],
+  "employees": [{
+    "reg_per_sys_id": 2122,
+    "total_qty": 516,
+    "output_value": 420.0,
+    "employee_efficiency": 200.0,
+    "steps": [{
+      "workorder": "BU0724",
+      "stepno": 15,
+      "description": "走定领底边线",
+      "step_time": 0.266,
+      "qty": 172,
+      "output_value": 45.752
+    }]
+  }]
+}
+```
+
+员工效率为 `output_value / work_minutes * 100`。`work_minutes` 使用 UTC+7：
+07:00 起算，11:00-12:00 固定 240 分钟，12:00 后扣除一小时午休。历史日期、
+尚未上班、工时缺失或分钟数为 0 时效率返回 `null`。
+
+缓存：今日 `stats:detail:flow:v2:<name>`（TTL 到午夜）。缓存产值快照；上班分钟和
+员工效率在请求时计算。
 
 ---
 

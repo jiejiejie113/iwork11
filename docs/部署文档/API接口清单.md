@@ -493,7 +493,7 @@ GET /api/dashboard/detail/flows/
 GET /api/dashboard/detail/flow/<flow_name>/
 ```
 
-获取指定 Flow 分组的员工级别明细数据。
+获取指定 Flow 分组的员工明细、组合键工序元数据、产值与实时员工效率。
 
 **路径参数**：
 
@@ -506,18 +506,37 @@ GET /api/dashboard/detail/flow/<flow_name>/
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `date` | string | 否 | 今日 | 目标日期，格式 `YYYY-MM-DD` |
+| `mode` | string | 否 | `remote` | `local` 使用本地历史数据 |
 
 **响应示例**：
 
 ```json
 {
-  "flow_name": "SO10-L10A",
-  "date": "2026-05-29",
-  "workers": [
-    {"employee_id": 1001, "name": "张三", "qty": 120, "stepno": 5, "station_id": "A01"}
-  ]
+  "flow": "SO3-L3A",
+  "date": "2026-07-15",
+  "total_qty": 516,
+  "worker_count": 1,
+  "work_minutes": 210,
+  "hourly_trend": [],
+  "employees": [{
+    "reg_per_sys_id": 2122,
+    "total_qty": 516,
+    "output_value": 420.0,
+    "employee_efficiency": 200.0,
+    "steps": [{
+      "workorder": "BU0724",
+      "stepno": 15,
+      "description": "走定领底边线",
+      "step_time": 0.266,
+      "qty": 172,
+      "output_value": 45.752
+    }]
+  }]
 }
 ```
+
+`output_value = qty * step_time`。员工任一工序缺少标准工时时，总产值和员工效率
+返回 `null`。员工效率按 UTC+7 当日有效上班分钟实时计算，历史日期返回 `null`。
 
 ---
 

@@ -13,8 +13,12 @@ from datetime import date, datetime
 from loguru import logger
 
 from iwork.statistics import (
+    FLOW_DETAIL_CACHE_PREFIX,
     PRODUCT_OVERVIEW_CACHE_KEY,
     _seconds_to_midnight,
+    calculate_employee_efficiency,
+    get_business_date,
+    get_effective_work_minutes,
     get_realtime_stats,
 )
 from iwork.queries import (
@@ -314,6 +318,20 @@ def _get_wo_targets_with_fallback(target_date):
         return {}
 
 
+def _with_employee_efficiency(employees, target_date):
+    """复制员工快照并按请求时刻注入有效上班分钟对应的效率。"""
+    work_minutes = get_effective_work_minutes(target_date)
+    enriched = []
+    for employee in employees:
+        item = dict(employee)
+        item['employee_efficiency'] = calculate_employee_efficiency(
+            item.get('output_value'),
+            work_minutes,
+        )
+        enriched.append(item)
+    return work_minutes, enriched
+
+
 def _get_flow_detail_data(flow_name, target_date, mode='remote'):
     """
     获取指定 Flow 的完整详情数据
@@ -344,11 +362,14 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
         emp['target'] = int(targets_dict.get(eid, 0))
         emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
 
+    work_minutes, employees = _with_employee_efficiency(employees, target_date)
+
     return {
         'flow': flow_name,
         'date': target_date.isoformat(),
         'total_qty': total_qty,
         'worker_count': len(employees),
+        'work_minutes': work_minutes,
         'hourly_trend': hourly_data.get(flow_name, []),
         'employees': employees,
     }
@@ -467,14 +488,16 @@ def flow_detail(request, flow_name):
         ?mode=local  历史视图模式
     """
     try:
-        date_str = request.query_params.get('date', date.today().isoformat())
+        business_today = get_business_date()
+        date_str = request.query_params.get('date', business_today.isoformat())
         target_date = date.fromisoformat(date_str)
         mode = request.query_params.get('mode', 'remote')
 
         # 今日优先读缓存，所有字段统一来自 Redis 快照，避免混用新旧数据
-        if target_date == date.today() and mode == 'remote':
-            cached_employees = cache.get(f'stats:detail:flow:{flow_name}')
+        if target_date == business_today and mode == 'remote':
+            cached_employees = cache.get(f'{FLOW_DETAIL_CACHE_PREFIX}:{flow_name}')
             if cached_employees is not None:
+                cached_employees = [dict(employee) for employee in cached_employees]
                 total_qty = sum(e['total_qty'] for e in cached_employees)
                 hourly_cache = cache.get('stats:detail:flow_hourly') or {}
                 hourly_trend = hourly_cache.get(flow_name, [])
@@ -486,11 +509,16 @@ def flow_detail(request, flow_name):
                     eid = str(emp['reg_per_sys_id'])
                     emp['target'] = int(targets_dict.get(eid, 0))
                     emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
+                work_minutes, cached_employees = _with_employee_efficiency(
+                    cached_employees,
+                    target_date,
+                )
                 return Response({
                     'flow': flow_name,
                     'date': target_date.isoformat(),
                     'total_qty': total_qty,
                     'worker_count': len(cached_employees),
+                    'work_minutes': work_minutes,
                     'hourly_trend': hourly_trend,
                     'employees': cached_employees,
                 }, status=status.HTTP_200_OK)

@@ -682,16 +682,31 @@ class TestFlowOverviewEndpoint:
 class TestFlowDetailEndpoint:
     """GET /api/dashboard/detail/flow/<name>/"""
 
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
     @patch('iwork.api_views.cache')
     @patch('iwork.api_views.remote_get_batch_flow_employees')
     @patch('iwork.api_views.remote_get_batch_flow_hourly')
-    def test_returns_flow_employees(self, mock_hourly, mock_employees, mock_cache):
+    def test_returns_flow_employees(
+        self, mock_hourly, mock_employees, mock_cache, _mock_minutes,
+    ):
         """返回指定 Flow 的员工明细和小时趋势"""
         from iwork.api_views import flow_detail
         from rest_framework.test import APIRequestFactory
 
         mock_employees.return_value = {
-            'VCO-L5': [{'reg_per_sys_id': 1001, 'total_qty': 500, 'steps': [{'stepno': 70, 'qty': 300}]}],
+            'VCO-L5': [{
+                'reg_per_sys_id': 1001,
+                'total_qty': 500,
+                'output_value': 420.0,
+                'steps': [{
+                    'stepno': 70,
+                    'workorder': 'BU0724',
+                    'description': '后整',
+                    'step_time': 1.4,
+                    'qty': 300,
+                    'output_value': 420.0,
+                }],
+            }],
         }
         mock_hourly.return_value = {'VCO-L5': [{'hour': 8, 'qty': 100}]}
         mock_cache.get.return_value = None  # 缓存未命中
@@ -700,7 +715,43 @@ class TestFlowDetailEndpoint:
         response = flow_detail(request, flow_name='VCO-L5')
         assert response.status_code == 200
         assert response.data['flow'] == 'VCO-L5'
+        assert response.data['work_minutes'] == 210
         assert len(response.data['employees']) == 1
+        assert response.data['employees'][0]['employee_efficiency'] == 200.0
+        mock_cache.get.assert_any_call('stats:detail:flow:v2:VCO-L5')
+
+    @patch('iwork.api_views._get_wo_targets_with_fallback', return_value={})
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    @patch('iwork.api_views.cache')
+    def test_cached_snapshot_gets_request_time_efficiency(
+        self, mock_cache, _mock_minutes, _mock_wo_targets,
+    ):
+        from iwork.api_views import flow_detail
+
+        cached_employees = [{
+            'reg_per_sys_id': 1001,
+            'total_qty': 300,
+            'output_value': 420.0,
+            'steps': [],
+        }]
+
+        def cache_get(key):
+            if key == 'stats:detail:flow:v2:VCO-L5':
+                return cached_employees
+            if key == 'stats:detail:flow_hourly':
+                return {'VCO-L5': [{'hour': 10, 'qty': 300}]}
+            return None
+
+        mock_cache.get.side_effect = cache_get
+        request = APIRequestFactory().get('/api/dashboard/detail/flow/VCO-L5/')
+
+        response = flow_detail(request, flow_name='VCO-L5')
+
+        assert response.status_code == 200
+        assert response.data['work_minutes'] == 210
+        assert response.data['employees'][0]['employee_efficiency'] == 200.0
+        assert 'employee_efficiency' not in cached_employees[0]
+        assert 'target' not in cached_employees[0]
 
 
 class TestStepnoDetailEndpoint:

@@ -267,8 +267,11 @@ class TestGetBatchFlowHourlyLocal:
 class TestGetBatchFlowEmployeesLocal:
     """get_batch_flow_employees"""
 
+    @patch('iwork.queries.get_batch_step_metadata')
     @patch('iwork.local_queries.LocalPytckreg3')
-    def test_returns_employees_per_flow_sorted_by_total_qty_desc(self, mock_model):
+    def test_returns_employees_per_flow_sorted_by_total_qty_desc(
+        self, mock_model, mock_metadata,
+    ):
         """返回每个 Flow 下的员工明细，按 total_qty 降序排列"""
         from iwork.local_queries import get_batch_flow_employees
 
@@ -280,6 +283,11 @@ class TestGetBatchFlowEmployeesLocal:
             {'Flow': 'Flow_A', 'RegPerSysID': 1001, 'StepNo': 69, 'WrkOrder': 'W001', 'qty': 100},
             {'Flow': 'Flow_A', 'RegPerSysID': 1002, 'StepNo': 70, 'WrkOrder': 'W002', 'qty': 150},
         ]
+        mock_metadata.return_value = {
+            ('W001', 70): {'description': '后整', 'step_time': 0.25},
+            ('W001', 69): {'description': '包装', 'step_time': 0.5},
+            ('W002', 70): {'description': '车缝', 'step_time': 0.0},
+        }
 
         result = get_batch_flow_employees(date(2026, 5, 12))
         assert 'Flow_A' in result
@@ -288,10 +296,46 @@ class TestGetBatchFlowEmployeesLocal:
         # 按 total_qty 降序：1001 (300) > 1002 (150)
         assert employees[0]['reg_per_sys_id'] == 1001
         assert employees[0]['total_qty'] == 300
+        assert employees[0]['output_value'] == 100.0
+        assert employees[0]['steps'][0]['description'] == '后整'
         assert len(employees[0]['steps']) == 2
         assert employees[1]['reg_per_sys_id'] == 1002
         assert employees[1]['total_qty'] == 150
+        assert employees[1]['output_value'] == 0.0
         assert len(employees[1]['steps']) == 1
+
+    @patch(
+        'iwork.queries.get_batch_step_metadata',
+        side_effect=ConnectionError('remote unavailable'),
+    )
+    @patch('iwork.local_queries.LocalPytckreg3')
+    def test_remote_metadata_failure_keeps_quantity_data(
+        self, mock_model, _mock_metadata,
+    ):
+        from iwork.local_queries import get_batch_flow_employees
+
+        mock_qs = mock_model.objects.using.return_value.filter.return_value
+        mock_qs.exclude.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
+            {
+                'Flow': 'SO3-L3A', 'RegPerSysID': 1001,
+                'StepNo': 15, 'WrkOrder': 'BU0724', 'qty': 100,
+            },
+        ]
+
+        employee = get_batch_flow_employees(date(2026, 7, 14))['SO3-L3A'][0]
+
+        assert employee['total_qty'] == 100
+        assert employee['output_value'] is None
+        assert employee['steps'][0] == {
+            'stepno': 15,
+            'qty': 100,
+            'workorder': 'BU0724',
+            'description': '',
+            'step_time': None,
+            'output_value': None,
+        }
 
 
 class TestGetBatchStepnoEmployeesLocal:

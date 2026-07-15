@@ -1,6 +1,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.cache import cache
 from loguru import logger
@@ -13,6 +14,8 @@ from iwork import local_queries as local_q
 MONTHLY_CACHE_TTL = settings.MONTHLY_CACHE_TTL
 QUERY_TIMEOUT = settings.QUERY_TIMEOUT
 PRODUCT_OVERVIEW_CACHE_KEY = 'stats:detail:product_overview:v4'
+FLOW_DETAIL_CACHE_PREFIX = 'stats:detail:flow:v2'
+BUSINESS_TIME_ZONE = ZoneInfo('Asia/Bangkok')
 
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）
@@ -67,6 +70,47 @@ def calculate_flow_efficiency(avg_time: float | None, baseline: float | None) ->
         return 0.0
     efficiency = 1 - (avg_time / baseline)
     return max(0.0, min(1.0, efficiency))
+
+
+def _as_business_time(current_time: datetime | None = None) -> datetime:
+    now = current_time or datetime.now(BUSINESS_TIME_ZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=BUSINESS_TIME_ZONE)
+    return now.astimezone(BUSINESS_TIME_ZONE)
+
+
+def get_business_date(current_time: datetime | None = None) -> date:
+    """返回 UTC+7 业务日期。"""
+    return _as_business_time(current_time).date()
+
+
+def get_effective_work_minutes(
+    target_date: date,
+    current_time: datetime | None = None,
+) -> int | None:
+    """返回 UTC+7 当日从 07:00 起、扣除 11:00-12:00 午休的分钟数。"""
+    now = _as_business_time(current_time)
+    if target_date != now.date():
+        return None
+
+    current_minutes = now.hour * 60 + now.minute
+    if current_minutes < 7 * 60:
+        return None
+    if current_minutes < 11 * 60:
+        return current_minutes - 7 * 60
+    if current_minutes < 12 * 60:
+        return 4 * 60
+    return current_minutes - 8 * 60
+
+
+def calculate_employee_efficiency(
+    output_value: float | None,
+    work_minutes: int | None,
+) -> float | None:
+    """按员工总产值与有效上班分钟计算百分比效率。"""
+    if output_value is None or work_minutes is None or work_minutes <= 0:
+        return None
+    return output_value / work_minutes * 100
 
 
 # ============================================================================
@@ -377,7 +421,7 @@ def cache_detail_batch_to_redis(detail_batch: dict) -> None:
 
     flow_count = len(detail_batch['flow_employees'])
     for flow_name, employees in detail_batch['flow_employees'].items():
-        cache.set(f'stats:detail:flow:{flow_name}', employees, ttl)
+        cache.set(f'{FLOW_DETAIL_CACHE_PREFIX}:{flow_name}', employees, ttl)
     logger.info('详情 Redis 缓存写入完成，{} 个 key，耗时 {:.1f}s', flow_count + 4, time.time() - t1)
 
 

@@ -587,10 +587,12 @@ def get_batch_flow_employees(target_date: date) -> dict:
         target_date (date): 目标日期
 
     Returns:
-        dict: {flow_name: [{reg_per_sys_id, total_qty, steps: [{stepno, qty}], workorders: [str]}, ...], ...}
+        dict: {flow_name: [{reg_per_sys_id, total_qty, output_value,
+               steps: [{stepno, qty, workorder, description, step_time,
+                        output_value}], workorders: [str]}, ...], ...}
         组内员工按 total_qty 降序排列
     """
-    from iwork.queries import _groupby
+    from iwork.queries import _build_flow_employees, get_batch_step_metadata
 
     records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
@@ -598,33 +600,13 @@ def get_batch_flow_employees(target_date: date) -> dict:
         .annotate(qty=Sum('Qty'))
         .order_by('Flow')
     )
-    result: dict = {}
-    for flow_name, flow_rows in _groupby(rows, 'Flow'):
-        emp_map: dict[int, dict] = {}
-        for r in flow_rows:
-            emp_id = r['RegPerSysID']
-            if emp_id not in emp_map:
-                emp_map[emp_id] = {'total_qty': 0, 'steps': [], 'workorders': set()}
-            emp_map[emp_id]['total_qty'] += (r['qty'] or 0)
-            emp_map[emp_id]['steps'].append({'stepno': r['StepNo'], 'qty': r['qty'] or 0, 'workorder': r['WrkOrder'] or ''})
-            if r['WrkOrder']:
-                emp_map[emp_id]['workorders'].add(r['WrkOrder'])
-
-        employees = sorted(
-            [
-                {
-                    'reg_per_sys_id': eid,
-                    'total_qty': v['total_qty'],
-                    'steps': v['steps'],
-                    'workorders': sorted(v['workorders']),
-                }
-                for eid, v in emp_map.items()
-            ],
-            key=lambda x: x['total_qty'],
-            reverse=True,
-        )
-        result[flow_name] = employees
-    return result
+    wrk_orders = sorted({row['WrkOrder'] for row in rows if row['WrkOrder']})
+    try:
+        step_metadata = get_batch_step_metadata(wrk_orders)
+    except Exception as exc:
+        logger.warning('本地 Flow 明细读取工序元数据失败，使用空元数据: {}', exc)
+        step_metadata = {}
+    return _build_flow_employees(rows, step_metadata)
 
 
 def get_batch_stepno_employees(target_date: date) -> dict:

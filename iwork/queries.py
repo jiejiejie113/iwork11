@@ -646,6 +646,64 @@ def get_batch_flow_hourly(target_date: date) -> dict:
     return result
 
 
+def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
+    """将 Flow 聚合行构建为带工序元数据和产值的员工明细。"""
+    result: dict = {}
+    for flow_name, flow_rows in _groupby(rows, 'Flow'):
+        emp_map: dict[int, dict] = {}
+        for row in flow_rows:
+            emp_id = row['RegPerSysID']
+            if emp_id not in emp_map:
+                emp_map[emp_id] = {
+                    'total_qty': 0,
+                    'output_value': 0.0,
+                    'output_complete': True,
+                    'steps': [],
+                    'workorders': set(),
+                }
+
+            qty = row['qty'] or 0
+            workorder = row['WrkOrder'] or ''
+            metadata = step_metadata.get((workorder, row['StepNo']), {})
+            step_time = metadata.get('step_time')
+            output_value = qty * step_time if step_time is not None else None
+
+            employee = emp_map[emp_id]
+            employee['total_qty'] += qty
+            employee['steps'].append({
+                'stepno': row['StepNo'],
+                'qty': qty,
+                'workorder': workorder,
+                'description': metadata.get('description', ''),
+                'step_time': step_time,
+                'output_value': output_value,
+            })
+            if output_value is None:
+                employee['output_complete'] = False
+            else:
+                employee['output_value'] += output_value
+            if workorder:
+                employee['workorders'].add(workorder)
+
+        employees = []
+        for employee_id, values in emp_map.items():
+            employees.append({
+                'reg_per_sys_id': employee_id,
+                'total_qty': values['total_qty'],
+                'output_value': (
+                    values['output_value'] if values['output_complete'] else None
+                ),
+                'steps': values['steps'],
+                'workorders': sorted(values['workorders']),
+            })
+        result[flow_name] = sorted(
+            employees,
+            key=lambda employee: employee['total_qty'],
+            reverse=True,
+        )
+    return result
+
+
 def get_batch_flow_employees(target_date: date) -> dict:
     """
     获取每个 Flow 下的员工明细，按员工总产量降序排列
@@ -657,7 +715,9 @@ def get_batch_flow_employees(target_date: date) -> dict:
         target_date (date): 目标日期
 
     Returns:
-        dict: {flow_name: [{reg_per_sys_id, total_qty, steps: [{stepno, qty}], workorders: [str]}, ...], ...}
+        dict: {flow_name: [{reg_per_sys_id, total_qty, output_value,
+               steps: [{stepno, qty, workorder, description, step_time,
+                        output_value}], workorders: [str]}, ...], ...}
         组内员工按 total_qty 降序排列
     """
     records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
@@ -666,33 +726,9 @@ def get_batch_flow_employees(target_date: date) -> dict:
         .annotate(qty=Sum('Qty'))
         .order_by('Flow')
     )
-    result: dict = {}
-    for flow_name, flow_rows in _groupby(rows, 'Flow'):
-        emp_map: dict[int, dict] = {}
-        for r in flow_rows:
-            emp_id = r['RegPerSysID']
-            if emp_id not in emp_map:
-                emp_map[emp_id] = {'total_qty': 0, 'steps': [], 'workorders': set()}
-            emp_map[emp_id]['total_qty'] += (r['qty'] or 0)
-            emp_map[emp_id]['steps'].append({'stepno': r['StepNo'], 'qty': r['qty'] or 0, 'workorder': r['WrkOrder'] or ''})
-            if r['WrkOrder']:
-                emp_map[emp_id]['workorders'].add(r['WrkOrder'])
-
-        employees = sorted(
-            [
-                {
-                    'reg_per_sys_id': eid,
-                    'total_qty': v['total_qty'],
-                    'steps': v['steps'],
-                    'workorders': sorted(v['workorders']),
-                }
-                for eid, v in emp_map.items()
-            ],
-            key=lambda x: x['total_qty'],
-            reverse=True,
-        )
-        result[flow_name] = employees
-    return result
+    wrk_orders = sorted({row['WrkOrder'] for row in rows if row['WrkOrder']})
+    step_metadata = get_batch_step_metadata(wrk_orders)
+    return _build_flow_employees(rows, step_metadata)
 
 
 def get_batch_stepno_employees(target_date: date) -> dict:

@@ -467,9 +467,10 @@ class TestGetBatchFlowHourly:
 class TestGetBatchFlowEmployees:
     """get_batch_flow_employees — 每个 Flow 的员工明细，按产量降序"""
 
+    @patch('iwork.queries.get_batch_step_metadata')
     @patch('iwork.models.Pytckreg3')
-    def test_returns_employee_details_grouped_by_flow(self, mock_model):
-        """返回 {flow: [{reg_per_sys_id, total_qty, steps, workorders}], ...}，组内按 total_qty 降序"""
+    def test_returns_employee_details_grouped_by_flow(self, mock_model, mock_metadata):
+        """工序组合键元数据与产值随员工明细返回。"""
         from iwork.queries import get_batch_flow_employees
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
@@ -481,6 +482,11 @@ class TestGetBatchFlowEmployees:
             {'Flow': 'VCO-L5', 'RegPerSysID': 1002, 'StepNo': 70, 'WrkOrder': 'SO002', 'qty': 50},
             {'Flow': 'VCO-C1', 'RegPerSysID': 1003, 'StepNo': 70, 'WrkOrder': 'SO003', 'qty': 300},
         ]
+        mock_metadata.return_value = {
+            ('SO001', 70): {'description': '后整', 'step_time': 0.25},
+            ('SO001', 69): {'description': '包装', 'step_time': 0.0},
+            ('SO003', 70): {'description': '车缝', 'step_time': 0.5},
+        }
 
         result = get_batch_flow_employees(date(2026, 5, 12))
 
@@ -489,11 +495,19 @@ class TestGetBatchFlowEmployees:
         assert result['VCO-L5'][0]['reg_per_sys_id'] == 1001
         assert result['VCO-L5'][0]['total_qty'] == 300
         assert len(result['VCO-L5'][0]['steps']) == 2
-        assert {'stepno': 70, 'qty': 200, 'workorder': 'SO001'} in result['VCO-L5'][0]['steps']
-        assert {'stepno': 69, 'qty': 100, 'workorder': 'SO001'} in result['VCO-L5'][0]['steps']
+        assert {
+            'stepno': 70, 'qty': 200, 'workorder': 'SO001',
+            'description': '后整', 'step_time': 0.25, 'output_value': 50.0,
+        } in result['VCO-L5'][0]['steps']
+        assert {
+            'stepno': 69, 'qty': 100, 'workorder': 'SO001',
+            'description': '包装', 'step_time': 0.0, 'output_value': 0.0,
+        } in result['VCO-L5'][0]['steps']
+        assert result['VCO-L5'][0]['output_value'] == 50.0
         assert result['VCO-L5'][0]['workorders'] == ['SO001']
         assert result['VCO-L5'][1]['reg_per_sys_id'] == 1002
         assert result['VCO-L5'][1]['total_qty'] == 50
+        assert result['VCO-L5'][1]['output_value'] is None
         assert len(result['VCO-L5'][1]['steps']) == 1
         assert result['VCO-L5'][1]['workorders'] == ['SO002']
 
@@ -501,6 +515,8 @@ class TestGetBatchFlowEmployees:
         assert len(result['VCO-C1']) == 1
         assert result['VCO-C1'][0]['reg_per_sys_id'] == 1003
         assert result['VCO-C1'][0]['total_qty'] == 300
+        assert result['VCO-C1'][0]['output_value'] == 150.0
+        mock_metadata.assert_called_once_with(['SO001', 'SO002', 'SO003'])
 
 
 class TestGetBatchStepnoEmployees:
