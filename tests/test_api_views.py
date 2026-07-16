@@ -1,5 +1,6 @@
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import date
 from django.test import RequestFactory
@@ -248,8 +249,9 @@ class TestWorkorderDetail:
 class TestLocalDateStatsAPI:
     """本地日期统计API集成测试"""
 
-    def test_local_date_stats_returns_correct_source(self):
-        """测试本地日期统计返回 source=local"""
+    @patch('iwork.api_views_local.HistoricalSyncState.objects')
+    def test_local_date_stats_returns_correct_source(self, mock_states):
+        """测试本地日期统计返回本地快照来源。"""
         from django.test import Client
         from django.urls import reverse
 
@@ -262,6 +264,10 @@ class TestLocalDateStatsAPI:
             'station_ranking': [], 'top_processes': [],
         }
 
+        mock_states.using.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            snapshot_version=2,
+            completed_at=None,
+        )
         with patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
             response = client.get(
                 reverse('history:local-date-stats', kwargs={'target_date': '2026-04-24'})
@@ -269,12 +275,13 @@ class TestLocalDateStatsAPI:
 
         assert response.status_code == 200
         data = json.loads(response.content)
-        assert data['source'] == 'local'
+        assert data['source'] == 'local_snapshot'
+        assert data['snapshot_version'] == 2
         assert data['date'] == '2026-04-24'
         assert data['workorder_count'] == 50
 
-    def test_local_date_stats_invalid_date_returns_500(self):
-        """测试无效日期返回500"""
+    def test_local_date_stats_invalid_date_returns_400(self):
+        """测试无效日期返回400。"""
         from django.test import Client
         from django.urls import reverse
         
@@ -282,9 +289,10 @@ class TestLocalDateStatsAPI:
         response = client.get(
             reverse('history:local-date-stats', kwargs={'target_date': 'not-a-date'})
         )
-        assert response.status_code == 500
+        assert response.status_code == 400
 
-    def test_local_date_stats_includes_all_sections(self):
+    @patch('iwork.api_views_local.HistoricalSyncState.objects')
+    def test_local_date_stats_includes_all_sections(self, mock_states):
         """测试本地日期统计包含所有数据段"""
         from django.test import Client
         from django.urls import reverse
@@ -303,6 +311,10 @@ class TestLocalDateStatsAPI:
             'top_processes': [{'step': 70, 'qty': 200}],
         }
 
+        mock_states.using.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            snapshot_version=1,
+            completed_at=None,
+        )
         with patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
             response = client.get(
                 reverse('history:local-date-stats', kwargs={'target_date': '2026-04-24'})
@@ -331,7 +343,7 @@ class TestAvailableDatesAPI:
         
         assert response.status_code == 200
         data = json.loads(response.content)
-        assert data['mode'] == 'local'
+        assert data['source'] == 'local_snapshot'
         assert len(data['dates']) == 2
         assert '2026-04-23' in data['dates']
         assert '2026-04-24' in data['dates']
@@ -351,53 +363,28 @@ class TestAvailableDatesAPI:
         assert data['dates'] == []
 
 
-class TestSyncDateAPI:
-    """同步API集成测试"""
+class TestEnsureHistorySnapshotAPI:
+    """自动确保历史快照 API。"""
 
-    def test_sync_date_returns_success(self):
-        """测试同步API返回成功结果"""
+    @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+    def test_rejects_current_or_future_date(self, _mock_business_date):
         from django.test import Client
         from django.urls import reverse
-        
-        client = Client()
-        mock_stats = {'synced_count': 100, 'updated_count': 10, 'skipped_count': 5}
-        
-        with patch('iwork.api_views_local.sync_date_data', return_value=mock_stats):
-            response = client.post(
-                reverse('history:sync-date', kwargs={'target_date': '2026-04-24'})
-            )
-        
-        assert response.status_code == 200
-        data = json.loads(response.content)
-        assert data['success'] is True
-        assert data['synced_count'] == 100
-        assert data['updated_count'] == 10
-        assert data['skipped_count'] == 5
 
-    def test_sync_date_invalid_date_returns_500(self):
-        """测试同步无效日期返回500"""
-        from django.test import Client
-        from django.urls import reverse
-        
-        client = Client()
-        response = client.post(
-            reverse('history:sync-date', kwargs={'target_date': 'invalid'})
+        response = Client().post(
+            reverse('history:ensure-snapshot', kwargs={'target_date': '2026-07-16'})
         )
-        assert response.status_code == 500
 
-    def test_sync_date_exception_returns_500(self):
-        """测试同步异常返回500"""
+        assert response.status_code == 400
+        assert response.json()['error'] == '只能构建已经结束的历史日期'
+
+    def test_rejects_invalid_date(self):
         from django.test import Client
-        from django.urls import reverse
-        
-        client = Client()
-        
-        with patch('iwork.api_views_local.sync_date_data', side_effect=Exception('DB Error')):
-            response = client.post(
-                reverse('history:sync-date', kwargs={'target_date': '2026-04-24'})
-            )
 
-        assert response.status_code == 500
+        response = Client().post('/api/history/snapshots/not-a-date/ensure/')
+
+        assert response.status_code == 400
+        assert response.json()['error'] == '日期格式错误，需为 YYYY-MM-DD'
 
 
 class TestParseStepno:
@@ -592,12 +579,13 @@ class TestProcessListEndpoint:
         assert response.data['stepnos'] == [70, 69, 68]
         assert response.data['mode'] == 'remote'
 
-    def test_local_mode_returns_local_data(self):
-        """mode=local → 查本地库"""
+    @patch('iwork.api_views._snapshot_state', return_value=object())
+    def test_historical_date_ignores_mode_and_returns_local_data(self, _mock_snapshot):
+        """历史日期即使携带旧 mode 参数也只查本地快照。"""
         from iwork.api_views import process_list
         from rest_framework.test import APIRequestFactory
 
-        request = APIRequestFactory().get('/?mode=local&date=2026-05-12')
+        request = APIRequestFactory().get('/?mode=remote&date=2026-05-12')
         with patch('iwork.api_views.local_get_all_stepnos', return_value=[70, 65]):
             response = process_list(request)
 
@@ -740,6 +728,8 @@ class TestFlowDetailEndpoint:
                 return cached_employees
             if key == 'stats:detail:flow_hourly':
                 return {'VCO-L5': [{'hour': 10, 'qty': 300}]}
+            if key.startswith('targets:'):
+                return json.dumps({'1001': 250})
             return None
 
         mock_cache.get.side_effect = cache_get
@@ -750,8 +740,11 @@ class TestFlowDetailEndpoint:
         assert response.status_code == 200
         assert response.data['work_minutes'] == 210
         assert response.data['employees'][0]['employee_efficiency'] == 200.0
+        assert response.data['employees'][0]['target'] == 250
         assert 'employee_efficiency' not in cached_employees[0]
         assert 'target' not in cached_employees[0]
+        from iwork.statistics import get_business_date
+        mock_cache.get.assert_any_call(f'targets:{get_business_date().isoformat()}')
 
 
 class TestStepnoDetailEndpoint:

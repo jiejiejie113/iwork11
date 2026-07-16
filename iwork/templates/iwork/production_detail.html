@@ -149,8 +149,12 @@
                 class="px-2 py-1 text-xs text-emerald-300 bg-emerald-950 border border-emerald-700 rounded-md">
                 本地历史快照
             </span>
+            <span v-if="isHistoricalDate && historySnapshotMessage"
+                class="px-2 py-1 text-xs text-emerald-200 bg-emerald-950 border border-emerald-700 rounded-md">
+                {[ historySnapshotMessage ]}
+            </span>
         </div>
-        <span class="text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
+        <span v-if="!isHistoricalDate" class="text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
         </div>
     </header>
 
@@ -719,6 +723,8 @@ createApp({
         const isLoading = ref(false);
         const loadError = ref('');
         const loadingProgress = ref(0);
+        const historySnapshotMessage = ref('');
+        const historySnapshotPromises = new Map();
         let loadingTimer = null;
 
         function showLoading() {
@@ -735,7 +741,9 @@ createApp({
         function hideLoading() {
             clearInterval(loadingTimer);
             loadingProgress.value = 100;
-            lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+            if (!isHistoricalDate.value) {
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+            }
             setTimeout(() => {
                 isLoading.value = false;
                 loadingProgress.value = 0;
@@ -930,10 +938,75 @@ createApp({
             return rows;
         }
 
+        async function ensureHistorySnapshot(snapshotDate) {
+            if (historySnapshotPromises.has(snapshotDate)) {
+                return historySnapshotPromises.get(snapshotDate);
+            }
+            if (selectedDate.value === snapshotDate) {
+                historySnapshotMessage.value = `正在构建 ${snapshotDate} 的本地历史快照...`;
+            }
+            const buildPromise = (async () => {
+                while (true) {
+                    const response = await fetch(
+                        `${basePath}api/history/snapshots/${snapshotDate}/ensure/`,
+                        {
+                            method: 'POST',
+                            headers: { 'X-CSRFToken': getCookie('csrftoken') || '' },
+                        },
+                    );
+                    const payload = await response.json();
+                    if (response.status === 202 && payload.code === 'history_snapshot_building') {
+                        await new Promise(resolve => setTimeout(
+                            resolve,
+                            Number(payload.retry_after || 2) * 1000,
+                        ));
+                        continue;
+                    }
+                    if (!response.ok) {
+                        throw new Error(payload.error || `历史快照构建失败 (${response.status})`);
+                    }
+                    const snapshot = payload.snapshot || {};
+                    if (selectedDate.value === snapshotDate) {
+                        historySnapshotMessage.value = payload.created
+                            ? `已构建 ${snapshot.date} 快照 v${snapshot.version}`
+                            : `已加载 ${snapshot.date} 快照 v${snapshot.version}`;
+                    }
+                    return payload;
+                }
+            })();
+            historySnapshotPromises.set(snapshotDate, buildPromise);
+            try {
+                return await buildPromise;
+            } finally {
+                historySnapshotPromises.delete(snapshotDate);
+            }
+        }
+
         async function readResponse(response) {
-            const payload = await response.json();
+            const responseUrl = new URL(response.url, window.location.origin);
+            const snapshotDate = responseUrl.searchParams.get('date') || selectedDate.value;
+            const isHistoricalResponse = snapshotDate < businessDateString();
+            let payload = await response.json();
+            if (
+                response.status === 404
+                && payload.code === 'history_snapshot_not_found'
+                && isHistoricalResponse
+            ) {
+                const retryUrl = response.url;
+                await ensureHistorySnapshot(snapshotDate);
+                response = await fetch(retryUrl);
+                payload = await response.json();
+            }
             if (!response.ok) {
                 throw new Error(payload.error || `请求失败 (${response.status})`);
+            }
+            if (
+                isHistoricalResponse
+                && selectedDate.value === snapshotDate
+                && !historySnapshotMessage.value
+                && payload.source === 'local_snapshot'
+            ) {
+                historySnapshotMessage.value = `已加载 ${payload.snapshot_date} 快照 v${payload.snapshot_version}`;
             }
             return payload;
         }
@@ -1259,7 +1332,7 @@ createApp({
         }
         function cancelEditing() {
             // 丢弃 draft，恢复到原始目标值
-            const t = targets[detailKey.value] || {};
+            const t = targets[detailTargetScopeKey()] || {};
             employees.value.forEach(emp => {
                 emp.target = t[String(emp.reg_per_sys_id)] || 0;
                 emp.efficiency = emp.target > 0 ? (emp.qty / emp.target * 100) : null;
@@ -1273,6 +1346,14 @@ createApp({
         const stepnoCards = ref([]);
         const employees = ref([]);
         const targets = reactive({});
+
+        function detailTargetScopeKey(
+            type = detailType.value,
+            key = detailKey.value,
+            targetDate = selectedDate.value,
+        ) {
+            return `${targetDate}:${type}:${key}`;
+        }
         const charts = {};
 
         // 计算属性
@@ -1799,8 +1880,10 @@ createApp({
                     fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
                     fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
                 ]);
-                const flowData = await readResponse(flowResp);
-                const woData = await readResponse(woResp);
+                const [flowData, woData] = await Promise.all([
+                    readResponse(flowResp),
+                    readResponse(woResp),
+                ]);
 
                 // 处理 Flow 卡片数据（全部工序）
                 const cards = [];
@@ -1839,6 +1922,7 @@ createApp({
             url.searchParams.set('date', selectedDate.value);
             window.history.replaceState({}, '', url);
             isEditing.value = false;
+            historySnapshotMessage.value = '';
             if (currentView.value === 'detail') {
                 loadDetail(detailType.value, detailKey.value);
             } else if (groupMode.value === 'product') {
@@ -1907,14 +1991,11 @@ createApp({
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${key}/?date=${selectedDate.value}`);
                 }
                 const data = await readResponse(resp);
-                // 从 localStorage 读取目标作为兜底
-                const dateStr = selectedDate.value || businessDateString();
-                const localTargets = JSON.parse(localStorage.getItem(`targets:${dateStr}`) || '{}');
-                // 同步初始化 targets 对象，供 cancelEditing 恢复使用
-                targets[detailKey.value] = localTargets;
+                const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
-                    const target = emp.target || localTargets[String(emp.reg_per_sys_id)] || 0;
+                    const target = emp.target || 0;
+                    responseTargets[String(emp.reg_per_sys_id)] = target;
                     return {
                         ...emp,
                         qty: totalQty,
@@ -1923,6 +2004,7 @@ createApp({
                         efficiency: target > 0 ? (totalQty / target * 100) : null,
                     };
                 });
+                targets[detailTargetScopeKey(type, key)] = responseTargets;
                 currentView.value = 'detail';
                 loadCardOrder();
             } catch (e) { loadError.value = e.message; console.error('加载详情失败:', e); }
@@ -1938,12 +2020,11 @@ createApp({
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${detailKey.value}/?date=${selectedDate.value}`);
                 }
                 const data = await resp.json();
-                // 从 localStorage 读取目标作为兜底
-                const dateStr = selectedDate.value || businessDateString();
-                const localTargets = JSON.parse(localStorage.getItem(`targets:${dateStr}`) || '{}');
+                const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
-                    const target = emp.target || localTargets[String(emp.reg_per_sys_id)] || 0;
+                    const target = emp.target || 0;
+                    responseTargets[String(emp.reg_per_sys_id)] = target;
                     return {
                         ...emp,
                         qty: totalQty,
@@ -1952,6 +2033,7 @@ createApp({
                         efficiency: target > 0 ? (totalQty / target * 100) : null,
                     };
                 });
+                targets[detailTargetScopeKey()] = responseTargets;
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { /* 静默忽略 */ }
         }
@@ -2122,12 +2204,7 @@ createApp({
                     body: JSON.stringify(payload),
                 });
                 if (resp.ok) {
-                    const dateStr = selectedDate.value || businessDateString();
-                    localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
-                    if (Object.keys(wo).length > 0) {
-                        localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
-                    }
-                    targets[detailKey.value] = t;
+                    targets[detailTargetScopeKey()] = t;
                     // 回写工单目标到 employees，确保展开模式立即显示
                     employees.value.forEach(emp => {
                         const empWo = {};
@@ -2138,25 +2215,12 @@ createApp({
                         emp.wo_targets = empWo;
                     });
                 } else {
-                    alert('保存失败: ' + resp.statusText);
+                    throw new Error('保存失败: ' + resp.statusText);
                 }
             } catch (e) {
                 console.error('保存目标失败:', e);
-                const dateStr = selectedDate.value || businessDateString();
-                localStorage.setItem(`targets:${dateStr}`, JSON.stringify(t));
-                if (Object.keys(wo).length > 0) {
-                    localStorage.setItem(`wo_targets:${dateStr}`, JSON.stringify(wo));
-                }
-                targets[detailKey.value] = t;
-                // 回写工单目标到 employees
-                employees.value.forEach(emp => {
-                    const empWo = {};
-                    const prefix = emp.reg_per_sys_id + '@';
-                    Object.entries(wo).forEach(([k, v]) => {
-                        if (k.startsWith(prefix)) empWo[k.slice(prefix.length)] = v;
-                    });
-                    emp.wo_targets = empWo;
-                });
+                alert(e.message || '保存目标失败');
+                return;
             }
             isEditing.value = false;
         }
@@ -2196,7 +2260,7 @@ createApp({
             searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             selectedDate, isHistoricalDate, overviewUrl, changeProductionDate,
-            isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime,
+            isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,

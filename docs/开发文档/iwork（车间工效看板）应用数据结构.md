@@ -161,10 +161,10 @@ D:\DM\iwork\iwork\
 ## 四、模型关系简图
 
 ```
-┌────────────────────────────┐      sync_date_data()       ┌────────────────────────────┐
-│   Pytckreg3 (远程只读)     │ ───────────────────────> │  LocalPytckreg3 (本地)    │
-│   iwork_system.pytckreg3   │   逐条对比+写入           │  iwork_local.pytckreg3    │
-│   managed=False            │                           │  managed=False            │
+┌────────────────────────────┐   按日聚合 + 原子发布    ┌────────────────────────────┐
+│   Pytckreg3 (远程只读)     │ ───────────────────────> │ HistoricalProductionFact │
+│   payroll.pytckreg3        │                           │ iwork_local 聚合事实表     │
+│   managed=False            │                           │ managed=True              │
 └─────────────┬──────────────┘                           └────────────────────────────┘
               │ WrkOrder[:6]
               ▼
@@ -227,7 +227,7 @@ D:\DM\iwork\iwork\
 | -------------------------------- | -------- |
 | /api/history/date/<target_date>/ | GET      |
 | /api/history/dates/              | GET      |
-| /api/history/sync/<target_date>/ | POST     |
+| /api/history/snapshots/<target_date>/ensure/ | POST |
 
 ## 六、查询层架构
 
@@ -289,8 +289,8 @@ iwork 未使用 DRF Serializer，分层查询直接将数据库结果转为 dict
 ## 八、数据流总览
 
 ```
-┌─────────────┐    每秒打卡    ┌────────────────────┐      sync任务      ┌────────────────────┐
-│  payroll系统 │ ───────────> │  Pytckreg3(远程只读)│ ──sync_date──> │ LocalPytck(本地副本)│
+┌─────────────┐    每秒打卡    ┌────────────────────┐   快照任务/按需构建  ┌────────────────────┐
+│  payroll系统 │ ───────────> │  Pytckreg3(远程只读)│ ───────────────> │ 本地历史聚合快照    │
 └─────────────┘                └──────────┬─────────┘                    └──────────┬─────────┘
                                           │                                   │
                                           ▼                                   ▼
@@ -324,4 +324,4 @@ iwork 未使用 DRF Serializer，分层查询直接将数据库结果转为 dict
 2. **双数据库架构**：远程库只读（规避事故），本地库可读写（存储同步副本+业务自定义数据）
 3. **并行查询**：使用 ThreadPoolExecutor(6线程) 单次SQL并行执行多查询维度
 4. **SSE 实时推送**：异步协程，每15秒心跳保活，每60秒推送最新Redis数据
-5. **历史数据隔离**：mode=local 参数切换本地库查询，支持历史回溯
+5. **历史数据隔离**：历史日期固定读取本地成功快照，缺失时由前端自动请求按需构建

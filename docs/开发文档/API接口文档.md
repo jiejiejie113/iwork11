@@ -1,6 +1,6 @@
 # iWork 项目 API 接口文档
 
-> 最后更新：2026-06-11
+> 最后更新：2026-07-16
 
 ## 一、架构概览
 
@@ -11,7 +11,7 @@
   ├── GET /production/detail-data/       → HTML 页面（生产详情模块）
   ├── GET /api/dashboard/*               → 实时数据 API（来源：api_views.py）
   ├── GET /api/history/*                 → 历史数据 API（来源：api_views_local.py）
-  ├── POST /api/history/sync/*           → 同步触发
+  ├── POST /api/history/snapshots/*/ensure/ → 缺失快照按需构建
   ├── GET /api/dashboard/stream/         → SSE 实时推送
   └── POST /api/dashboard/set-targets/   → 目标产量设置
 
@@ -23,11 +23,10 @@ Celery Beat (每 60s)
 
 **数据源路由：**
 
-| 模式        | 参数             | 查询模块                | 数据库                       |
-| ----------- | ---------------- | ----------------------- | ---------------------------- |
-| 实时        | 无（默认远程）   | `iwork.queries`       | 远程 `iwork`（只读）       |
-| 历史 local  | `?mode=local`  | `iwork.local_queries` | 本地 `iwork_local`（读写） |
-| 历史 remote | `?mode=remote` | `iwork.queries`       | 远程 `iwork`（只读）       |
+| 日期 | 参数 | 查询模块 | 数据库 |
+| --- | --- | --- | --- |
+| 今日 | 无 | `iwork.queries` / Redis | 远程 `iwork`（只读） |
+| 历史 | `?date=YYYY-MM-DD` | `iwork.historical_queries` / `local_queries` | 本地 `iwork_local`（只读快照） |
 
 **共享工具函数 `_parse_stepno(request)`：**
 将 `?stepno=70,69` 解析为 `[70, 69]`，空参数返回 `None`（全工序）。
@@ -226,15 +225,16 @@ Celery Beat (每 60s)
 
 ---
 
-### `POST /api/history/sync/<target_date>/`
+### `POST /api/history/snapshots/<target_date>/ensure/`
 
-触发远程→本地数据同步。
+确保指定已结束日期存在本地历史快照；已有成功快照时直接返回，缺失时从远程只读源
+聚合并原子发布。前端自动调用，不提供手动同步按钮。
 
 | 参数            | 类型 | 必填 | 说明                   |
 | --------------- | ---- | ---- | ---------------------- |
-| `target_date` | path | 是   | 要同步的日期，ISO 格式 |
+| `target_date` | path | 是   | 要确保快照的日期，ISO 格式 |
 
-返回：`{ "success": true, "synced_count": N, "updated_count": N, "skipped_count": N }`
+返回：`{ "created": true, "snapshot": { "date": "...", "version": 1 } }`
 
 ---
 
@@ -243,7 +243,7 @@ Celery Beat (每 60s)
 > 来源：`iwork/api_views.py`，注册于 `iwork/urls.py`
 
 今日视图优先读取 Redis。早于曼谷业务日期的请求默认读取 `iwork_local` 中已经发布的
-历史快照，不访问远程生产库；显式 `mode=remote` 仅用于管理员对账。
+历史快照，不访问远程生产库，也不支持 `mode` 切换。
 
 ### `GET /api/dashboard/detail/flows/`
 
@@ -252,7 +252,6 @@ Celery Beat (每 60s)
 | 参数     | 类型   | 必填 | 默认值    | 说明                      |
 | -------- | ------ | ---- | --------- | ------------------------- |
 | `date` | string | 否   | 今天      | 日期，ISO 格式            |
-| `mode` | string | 否   | 自动       | 今日为 `remote`，历史日期为 `local` |
 
 返回：`{ "VCO-L5": { "total_qty": 800, "worker_count": 15 }, ... }`
 
@@ -372,17 +371,16 @@ Celery Beat (每 60s)
 | 12 | GET | `/api/dashboard/station-ranking/` | `station_ranking` | `api_views.py` | `date`, `limit`, `stepno` |
 | 13 | GET | `/api/dashboard/stream/` | `dashboard_stream` | `api_views.py` | SSE 实时推送 |
 | 14 | POST | `/api/dashboard/set-targets/` | `set_targets` | `api_views.py` | `targets` JSON body |
-| 15 | GET | `/api/history/date/<date>/` | `local_date_stats` | `api_views_local.py` | `mode`, `stepno` |
-| 16 | GET | `/api/history/dates/` | `available_dates` | `api_views_local.py` | `mode` |
-| 17 | GET | `/api/history/processes/` | `process_list` | `api_views_local.py` | `mode`, `date` |
-| 18 | POST | `/api/history/sync/<date>/` | `sync_date` | `api_views_local.py` | - |
+| 15 | GET | `/api/history/date/<date>/` | `local_date_stats` | `api_views_local.py` | `stepno` |
+| 16 | GET | `/api/history/dates/` | `available_dates` | `api_views_local.py` | - |
+| 17 | POST | `/api/history/snapshots/<date>/ensure/` | `ensure_snapshot` | `api_views_local.py` | - |
 | 19 | GET | `/production/detail-data/` | `production_detail` | `views.py` | - |
 | 20 | GET | `/production/detail-data/flow/<name>/` | `production_detail_flow` | `views.py` | - |
 | 21 | GET | `/production/detail-data/stepno/<n>/` | `production_detail_stepno` | `views.py` | - |
-| 22 | GET | `/api/dashboard/detail/stepno-overview/` | `stepno_overview` | `api_views.py` | `date`, `mode` |
-| 23 | GET | `/api/dashboard/detail/flows/` | `flow_overview` | `api_views.py` | `date`, `mode` |
-| 24 | GET | `/api/dashboard/detail/flow/<name>/` | `flow_detail` | `api_views.py` | `date`, `mode` |
-| 25 | GET | `/api/dashboard/detail/stepno/<n>/` | `stepno_detail` | `api_views.py` | `date`, `mode` |
+| 22 | GET | `/api/dashboard/detail/stepno-overview/` | `stepno_overview` | `api_views.py` | `date` |
+| 23 | GET | `/api/dashboard/detail/flows/` | `flow_overview` | `api_views.py` | `date` |
+| 24 | GET | `/api/dashboard/detail/flow/<name>/` | `flow_detail` | `api_views.py` | `date` |
+| 25 | GET | `/api/dashboard/detail/stepno/<n>/` | `stepno_detail` | `api_views.py` | `date` |
 
 ---
 

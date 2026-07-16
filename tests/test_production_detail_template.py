@@ -9,6 +9,14 @@ TEMPLATE = (
     / 'production_detail.html'
 ).read_text(encoding='utf-8')
 
+DASHBOARD_TEMPLATE = (
+    Path(__file__).parents[1]
+    / 'iwork'
+    / 'templates'
+    / 'iwork'
+    / 'dashboard.html'
+).read_text(encoding='utf-8')
+
 
 def test_step_metadata_uses_dedicated_columns():
     assert '>工序描述</div>' in TEMPLATE
@@ -86,3 +94,26 @@ def test_historical_detail_keeps_date_and_disables_live_actions():
     assert 'v-if="loadError"' in TEMPLATE
     assert 'payload.error || `请求失败 (${response.status})`' in TEMPLATE
     assert "new Date().toISOString().split('T')[0]" not in TEMPLATE
+
+
+def test_history_dashboard_auto_builds_snapshots_without_source_controls():
+    assert '>本地</button>' not in DASHBOARD_TEMPLATE
+    assert '>远程</button>' not in DASHBOARD_TEMPLATE
+    assert '同步数据' not in DASHBOARD_TEMPLATE
+    assert 'currentMode' not in DASHBOARD_TEMPLATE
+    assert 'api/history/sync/' not in DASHBOARD_TEMPLATE
+    assert 'api/history/snapshots/${snapshotDate}/ensure/' in DASHBOARD_TEMPLATE
+    assert 'historySnapshotMessage' in DASHBOARD_TEMPLATE
+    assert 'const historySnapshotPromises = new Map();' in DASHBOARD_TEMPLATE
+    assert 'let historyLoadSequence = 0;' in DASHBOARD_TEMPLATE
+    assert 'historySnapshotError' in DASHBOARD_TEMPLATE
+    assert 'const selectedDate = ref(businessDateString(-1));' in DASHBOARD_TEMPLATE
+    assert "new Date().toISOString().split('T')[0]" not in DASHBOARD_TEMPLATE
+
+
+def test_historical_production_detail_builds_snapshot_and_hides_update_time():
+    assert 'api/history/snapshots/${snapshotDate}/ensure/' in TEMPLATE
+    assert 'historySnapshotMessage' in TEMPLATE
+    assert 'const historySnapshotPromises = new Map();' in TEMPLATE
+    assert 'v-if="!isHistoricalDate"' in TEMPLATE
+    assert 'localStorage.getItem(`targets:${dateStr}`)' not in TEMPLATE

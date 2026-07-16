@@ -6,5 +6,9 @@ app_name = 'history'
 urlpatterns = [
     path('date/<str:target_date>/', api_views_local.local_date_stats, name='local-date-stats'),
     path('dates/', api_views_local.available_dates, name='available-dates'),
-    path('sync/<str:target_date>/', api_views_local.sync_date, name='sync-date'),
+    path(
+        'snapshots/<str:target_date>/ensure/',
+        api_views_local.ensure_snapshot,
+        name='ensure-snapshot',
+    ),
 ]

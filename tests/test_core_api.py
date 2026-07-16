@@ -6,6 +6,7 @@ iwork 核心 API 单元测试 — mock 所有外部依赖，无需数据库/Redi
 import json
 from unittest.mock import patch, Mock
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from django.test import Client
@@ -81,33 +82,38 @@ class TestLocalDateStats:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.client = Client()
+        with patch(
+            'iwork.api_views_local._snapshot_state',
+            return_value=SimpleNamespace(snapshot_version=4, completed_at=None),
+        ):
+            yield
 
-    def test_local_mode_returns_source_local(self):
+    def test_legacy_local_mode_returns_snapshot_source(self):
         with patch('iwork.api_views_local.get_local_date_stats', return_value=_make_stats()):
             resp = self.client.get('/api/history/date/2026-04-24/?mode=local')
 
         assert resp.status_code == 200
         data = json.loads(resp.content)
-        assert data['source'] == 'local'
+        assert data['source'] == 'local_snapshot'
         assert data['date'] == '2026-04-24'
         assert data['total_qty'] == 1500
 
-    def test_remote_mode_returns_source_remote(self):
-        with patch('iwork.api_views_local.get_date_stats', return_value=_make_stats()):
+    def test_legacy_remote_mode_is_ignored(self):
+        with patch('iwork.api_views_local.get_local_date_stats', return_value=_make_stats()):
             resp = self.client.get('/api/history/date/2026-04-24/?mode=remote')
 
         assert resp.status_code == 200
-        assert json.loads(resp.content)['source'] == 'remote'
+        assert json.loads(resp.content)['source'] == 'local_snapshot'
 
     def test_defaults_to_local(self):
         with patch('iwork.api_views_local.get_local_date_stats', return_value=_make_stats()):
             resp = self.client.get('/api/history/date/2026-04-24/')
 
-        assert json.loads(resp.content)['source'] == 'local'
+        assert json.loads(resp.content)['source'] == 'local_snapshot'
 
-    def test_invalid_date_returns_500(self):
+    def test_invalid_date_returns_400(self):
         resp = self.client.get('/api/history/date/not-a-date/')
-        assert resp.status_code == 500
+        assert resp.status_code == 400
 
     def test_db_error_returns_500(self):
         with patch('iwork.api_views_local.get_local_date_stats', side_effect=ValueError('DB down')):
@@ -164,15 +170,15 @@ class TestAvailableDates:
 
         assert resp.status_code == 200
         data = json.loads(resp.content)
-        assert data['mode'] == 'local'
+        assert data['source'] == 'local_snapshot'
         assert data['dates'] == ['2026-04-24', '2026-04-23']
 
-    def test_remote_mode(self):
+    def test_legacy_remote_mode_is_ignored(self):
         with patch('iwork.api_views_local.get_available_dates', return_value=[date(2026, 4, 24)]):
             resp = self.client.get('/api/history/dates/?mode=remote')
 
         assert resp.status_code == 200
-        assert json.loads(resp.content)['mode'] == 'remote'
+        assert json.loads(resp.content)['source'] == 'local_snapshot'
 
     def test_error_returns_500(self):
         with patch('iwork.api_views_local.get_available_dates', side_effect=Exception('fail')):

@@ -74,20 +74,10 @@
 
             <!-- 日期选择器（历史视图） -->
             <div v-if="currentView === 'history'" class="flex items-center gap-2">
-                <input type="date" v-model="selectedDate" @change="loadProcessList"
+                <input type="date" v-model="selectedDate" @change="loadHistoryData"
                     class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-                <div v-if="currentView === 'history'" class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-                    <button @click="currentMode = 'local'; loadProcessList()"
-                        :class="currentMode === 'local' ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'"
-                        class="px-3 py-1 rounded-md text-xs transition-colors">本地</button>
-                    <button @click="currentMode = 'remote'; loadProcessList()"
-                        :class="currentMode === 'remote' ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'"
-                        class="px-3 py-1 rounded-md text-xs transition-colors">远程</button>
-                </div>
-                <button @click="loadHistoryData" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">加载数据</button>
                 <a :href="basePath + 'production/detail-data/?date=' + selectedDate"
                     class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors">查看生产详情</a>
-                <button @click="syncData" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">同步数据</button>
             </div>
 
             <!-- 实时连接状态 -->
@@ -103,6 +93,15 @@
             <span v-if="currentView === 'realtime'" class="text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
         </div>
     </header>
+
+    <div v-if="currentView === 'history' && historySnapshotMessage"
+        class="mb-3 px-3 py-2 text-sm text-emerald-200 bg-emerald-950 border border-emerald-700 rounded-md">
+        {[ historySnapshotMessage ]}
+    </div>
+    <div v-if="currentView === 'history' && historySnapshotError"
+        class="mb-3 px-3 py-2 text-sm text-red-200 bg-red-950 border border-red-700 rounded-md">
+        {[ historySnapshotError ]}
+    </div>
 
     <!-- ========== 第1行：KPI 卡片 ========== -->
     <section class="grid grid-cols-3 gap-4 mb-3">
@@ -318,16 +317,34 @@ createApp({
         const appEl = document.getElementById('app');
         const initialView = appEl?.dataset.initialView || 'realtime';
         const currentView = ref(initialView);
-        const currentMode = ref('local');
         const isPaused = ref(false);
         const wsConnected = ref(false);
         const wsStatus = ref('未连接');
         const lastUpdate = ref('');
         const currentHour = ref(parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false })));
-        const selectedDate = ref(new Date().toISOString().split('T')[0]);
+        function businessDateString(dayOffset = 0) {
+            const parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Bangkok',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).formatToParts(new Date());
+            const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+            const dateValue = new Date(Date.UTC(
+                Number(values.year),
+                Number(values.month) - 1,
+                Number(values.day) + dayOffset,
+            ));
+            return dateValue.toISOString().slice(0, 10);
+        }
+        const selectedDate = ref(businessDateString(-1));
         const showStepnoDropdown = ref(false);
         const stepnoFilter = ref(70);
         const isLoading = ref(false);
+        const historySnapshotMessage = ref('');
+        const historySnapshotError = ref('');
+        const historySnapshotPromises = new Map();
+        let historyLoadSequence = 0;
         const pfSteps = ref([]);
         const activePfStep = ref(null);
         const pfJumpInput = ref('');
@@ -420,13 +437,14 @@ createApp({
 
 
 
-        async function fetchWorkorderPage(page) {
+        async function fetchWorkorderPage(page, requestedDate = selectedDate.value, requestId = null) {
             const params = [`page=${page}`, `page_size=20`, buildStepnoParam()];
             if (currentView.value === 'history') {
-                params.push(`mode=${currentMode.value}`, `date=${selectedDate.value}`);
+                params.push(`date=${requestedDate}`);
             }
             const resp = await fetch(`${basePath}api/dashboard/workorders/?${params.filter(Boolean).join('&')}`);
             const result = await resp.json();
+            if (requestId !== null && requestId !== historyLoadSequence) return;
             workorderCache[page] = result.items;
             workorderPagination.total = result.total;
             workorderPagination.total_pages = result.total_pages;
@@ -602,12 +620,17 @@ createApp({
 
         async function loadHistoryData() {
             if (!selectedDate.value) return;
+            const requestId = ++historyLoadSequence;
+            const requestedDate = selectedDate.value;
             isLoading.value = true;
+            historySnapshotMessage.value = '';
+            historySnapshotError.value = '';
             try {
                 const params = buildStepnoParam();
-                const qs = [`mode=${currentMode.value}`, params].filter(Boolean).join('&');
-                const resp = await fetch(`${basePath}api/history/date/${selectedDate.value}/?${qs}`);
-                const result = await resp.json();
+                const qs = [params].filter(Boolean).join('&');
+                const url = `${basePath}api/history/date/${requestedDate}/${qs ? '?' + qs : ''}`;
+                const result = await fetchHistoricalJson(url, requestedDate);
+                if (requestId !== historyLoadSequence) return;
                 Object.assign(data, {
                     total_qty: result.total_qty || 0,
                     workorder_count: result.workorder_count || 0,
@@ -622,22 +645,111 @@ createApp({
                     station_ranking: result.station_ranking || [],
                     all_stepnos: result.all_stepnos || [],
                 });
-                // 清空工单缓存（日期/模式变化导致数据不同）
+                // 清空工单缓存（日期或工序变化导致数据不同）
                 Object.keys(workorderCache).forEach(k => delete workorderCache[k]);
                 workorderPage.value = 1;
                 workorderPagination.page = 1;  // 同步更新分页状态
                 // 获取工单分页信息
-                await fetchWorkorderPage(1);
+                await fetchWorkorderPage(1, requestedDate, requestId);
+                if (requestId !== historyLoadSequence) return;
                 renderAllCharts();
-            } catch (e) { console.error('加载历史数据失败:', e); }
-            finally { isLoading.value = false; }
+            } catch (e) {
+                if (requestId !== historyLoadSequence) return;
+                historySnapshotMessage.value = '';
+                historySnapshotError.value = e.message || '历史数据加载失败';
+                Object.assign(data, {
+                    total_qty: 0,
+                    workorder_count: 0,
+                    date: requestedDate,
+                    hourly_stats: [],
+                    station_stats: [],
+                    workorders: [],
+                    process_flow_stats: [],
+                    monthly_process_stats: [],
+                    monthly_total_trend: [],
+                    heatmap_matrix: null,
+                    station_ranking: [],
+                    all_stepnos: [],
+                });
+                Object.keys(workorderCache).forEach(k => delete workorderCache[k]);
+                renderAllCharts();
+                console.error('加载历史数据失败:', e);
+            }
+            finally {
+                if (requestId === historyLoadSequence) isLoading.value = false;
+            }
+        }
+
+        async function ensureHistorySnapshot(snapshotDate) {
+            if (historySnapshotPromises.has(snapshotDate)) {
+                return historySnapshotPromises.get(snapshotDate);
+            }
+            if (selectedDate.value === snapshotDate) {
+                historySnapshotMessage.value = `正在构建 ${snapshotDate} 的本地历史快照...`;
+            }
+            const buildPromise = (async () => {
+                while (true) {
+                    const response = await fetch(
+                        `${basePath}api/history/snapshots/${snapshotDate}/ensure/`,
+                        {
+                            method: 'POST',
+                            headers: { 'X-CSRFToken': getCookie('csrftoken') || '' },
+                        },
+                    );
+                    const payload = await response.json();
+                    if (response.status === 202 && payload.code === 'history_snapshot_building') {
+                        await new Promise(resolve => setTimeout(
+                            resolve,
+                            Number(payload.retry_after || 2) * 1000,
+                        ));
+                        continue;
+                    }
+                    if (!response.ok) {
+                        throw new Error(payload.error || `历史快照构建失败 (${response.status})`);
+                    }
+                    const snapshot = payload.snapshot || {};
+                    if (selectedDate.value === snapshotDate) {
+                        historySnapshotMessage.value = payload.created
+                            ? `本地历史快照已构建：${snapshot.date}，版本 v${snapshot.version}，源记录 ${fmtNum(snapshot.source_row_count || 0)} 条`
+                            : `已加载本地历史快照：${snapshot.date}，版本 v${snapshot.version}`;
+                    }
+                    return payload;
+                }
+            })();
+            historySnapshotPromises.set(snapshotDate, buildPromise);
+            try {
+                return await buildPromise;
+            } finally {
+                historySnapshotPromises.delete(snapshotDate);
+            }
+        }
+
+        async function fetchHistoricalJson(url, snapshotDate) {
+            let response = await fetch(url);
+            let payload = await response.json();
+            if (response.status === 404 && payload.code === 'history_snapshot_not_found') {
+                await ensureHistorySnapshot(snapshotDate);
+                response = await fetch(url);
+                payload = await response.json();
+            }
+            if (!response.ok) {
+                throw new Error(payload.error || `请求失败 (${response.status})`);
+            }
+            if (
+                selectedDate.value === snapshotDate
+                && !historySnapshotMessage.value
+                && payload.source === 'local_snapshot'
+            ) {
+                historySnapshotMessage.value = `已加载本地历史快照：${payload.snapshot_date}，版本 v${payload.snapshot_version}`;
+            }
+            return payload;
         }
 
         async function loadProcessList() {
             try {
                 let url = basePath + 'api/dashboard/processes/';
                 if (currentView.value === 'history') {
-                    url += `?mode=${currentMode.value}&date=${selectedDate.value}`;
+                    url += `?date=${selectedDate.value}`;
                 }
                 const resp = await fetch(url);
                 const result = await resp.json();
@@ -645,28 +757,6 @@ createApp({
                     data.all_stepnos = result.stepnos;
                 }
             } catch (e) { console.error('加载工序列表失败:', e); }
-        }
-
-        async function loadAvailableDates() {
-            try {
-                const resp = await fetch(`${basePath}api/history/dates/?mode=${currentMode.value}`);
-                const result = await resp.json();
-                // 不覆盖 selectedDate，保持用户已选或默认今天的日期
-            } catch (e) { console.error('加载可用日期失败:', e); }
-        }
-
-        async function syncData() {
-            if (!selectedDate.value) return;
-            try {
-                const resp = await fetch(`${basePath}api/history/sync/${selectedDate.value}/`, { method: 'POST' });
-                const result = await resp.json();
-                if (result.success) {
-                    alert(`同步完成: 新增 ${result.synced_count}, 更新 ${result.updated_count}, 跳过 ${result.skipped_count}`);
-                    loadHistoryData();
-                } else {
-                    alert('同步失败: ' + (result.error || '未知错误'));
-                }
-            } catch (e) { console.error('同步失败:', e); alert('同步失败'); }
         }
 
         // ---- SSE 实时推送 ----
@@ -751,8 +841,9 @@ createApp({
         function switchView(view) {
             currentView.value = view;
             if (view === 'history') {
-                loadAvailableDates().then(() => loadProcessList());
+                loadHistoryData();
             } else {
+                historySnapshotError.value = '';
                 loadRealtimeData();
                 loadProcessList();
             }
@@ -784,7 +875,7 @@ createApp({
                 loadRealtimeData();
                 loadProcessList();
             } else {
-                loadAvailableDates().then(() => loadProcessList());
+                loadHistoryData();
             }
         });
 
@@ -795,9 +886,10 @@ createApp({
 
         return {
             basePath,
-            currentView, currentMode, isPaused, wsConnected, wsStatus, lastUpdate,
+            currentView, isPaused, wsConnected, wsStatus, lastUpdate,
             currentHour,
             selectedDate, showStepnoDropdown, stepnoFilter, isLoading,
+            historySnapshotMessage, historySnapshotError,
             pfSteps, activePfStep, activePfTotal, pfJumpInput,
             switchPfStep, jumpPfStep,
             jumpPage, workorderPage,
@@ -805,7 +897,7 @@ createApp({
             fmtNum, heatmapAverages, heatmapCellColor,
             goWorkorderPage,
             switchView, togglePause,
-            loadHistoryData, loadProcessList, loadAvailableDates, syncData,
+            loadHistoryData, loadProcessList,
         };
     }
 }).mount('#app');

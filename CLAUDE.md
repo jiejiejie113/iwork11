@@ -55,7 +55,7 @@ statistics.py       ← 缓存编排层：批量构建 + Redis 读写 + 回退�
 snapshot_history 命令 / history_store.py ← 按日期生成本地聚合快照
 tasks.py            ← Celery 定时任务：每 60s 批量构建统计 → Redis → SSE 推送
 api_views.py        ← 实时看板 API + 生产详情 API
-api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同步 API
+api_views_local.py  ← 本地历史快照读取 + 缺失快照按需构建 API
 ```
 
 ## 认证架构
@@ -86,7 +86,8 @@ api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同�
 ### 关键设计决策
 
 - **今日数据**：通过 Celery 预计算到 Redis（`stats:realtime:{stepno_key}`），TTL 到午夜。API 直接读缓存，缓存未命中时回退到数据库实时查询。
-- **历史数据**：读取本地按日发布的聚合快照；显式 `mode=remote` 只用于管理员对账。
+- **历史数据**：只读取本地按日发布的成功快照；缺失时由前端请求确保接口构建，
+  不提供 `mode=remote` 绕过路径。
 - **月趋势**：Redis 独立缓存（`batch_monthly:{year}{month}`），TTL 30 天。每日只查今日数据并追加到已有缓存，避免全月重查。
 - **本地库用途**：用于历史数据查询（减少远程库压力）和离线分析。
 

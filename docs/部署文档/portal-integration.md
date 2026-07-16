@@ -51,9 +51,9 @@
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/history/date/<date>/` | GET | 指定日期统计（支持 mode=local/remote） |
-| `/api/history/dates/` | GET | 有数据的可用日期列表 |
-| `/api/history/sync/<date>/` | POST | 同步远程数据到本地 |
+| `/api/history/date/<date>/` | GET | 从本地成功快照读取指定日期统计 |
+| `/api/history/dates/` | GET | 已有成功快照的可用日期列表 |
+| `/api/history/snapshots/<date>/ensure/` | POST | 缺失时按需构建本地历史快照 |
 
 ### 图表与排行 API
 
@@ -127,7 +127,7 @@ curl -X GET https://dktportal.dongming.local/iwork/api/dashboard/workorders/ \
 ### 获取历史数据
 
 ```bash
-curl -X GET "https://dktportal.dongming.local/iwork/api/history/date/2026-06-08/?mode=local" \
+curl -X GET "https://dktportal.dongming.local/iwork/api/history/date/2026-06-08/" \
   -H "Content-Type: application/json" \
   -H "Cookie: _oauth2_proxy=..."
 ```

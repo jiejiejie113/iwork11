@@ -10,7 +10,7 @@
 - 📈 **产品视图**: 4 层树形表格（产品→工单→Flow→工序）+ 拖拽自定义层级排序
 - 🎯 **目标管理**: 工单级目标产量 + 展开/收起 + 效率追踪
 - 🔥 **热力图**: 工序侧边栏红绿渐变色条 + 瓶颈高亮
-- 📅 **历史回溯**: 本地/远程双模式，按日查询完整统计
+- 📅 **历史回溯**: 本地聚合快照，缺失日期按需自动回填
 - 🖥️ **GUI 导出工具**: 基于 CustomTkinter 的桌面导出应用
 
 ## 技术栈
@@ -107,9 +107,9 @@ iwork 不实现应用内认证，安全边界由 Nginx + oauth2-proxy + Keycloak
 |------|------|------|
 | `/api/dashboard/realtime/` | GET | 实时统计数据 |
 | `/api/dashboard/stream/` | GET | SSE 实时推送 |
-| `/api/history/date/<date>/` | GET | 按日历史数据（local/remote） |
-| `/api/history/dates/` | GET | 可用日期列表 |
-| `/api/history/sync/<date>/` | POST | 远程数据同步 |
+| `/api/history/date/<date>/` | GET | 从本地成功快照读取按日历史数据 |
+| `/api/history/dates/` | GET | 已有成功快照的日期列表 |
+| `/api/history/snapshots/<date>/ensure/` | POST | 缺失时按需构建本地历史快照 |
 | `/api/dashboard/detail/flows/` | GET | 生产线概览 |
 | `/api/dashboard/detail/stepno/<stepno>/` | GET | 工序员工明细 |
 | `/api/kanban/stats/` | GET | 产量看板统计 |

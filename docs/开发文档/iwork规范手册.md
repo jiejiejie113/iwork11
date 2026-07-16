@@ -11,7 +11,7 @@
 Uvicorn ASGI (4 workers)
     ├── 实时数据：Celery Beat (60s) → statistics.py → Redis → SSE 推送 + API 读缓存
     ├── 历史数据：API → local_queries.py → 本地历史事实表
-    ├── 历史同步：Celery/管理命令 → history_store.py → 本地事务快照
+    ├── 历史快照：Celery/管理命令/按需确保 API → history_store.py → 本地事务快照
     └── 生产详情：今日读 Redis；历史读 historical_queries.py
 ```
 
@@ -23,7 +23,7 @@ Uvicorn ASGI (4 workers)
 | `history_store.py` | 远程只读聚合、校验和本地事务发布 |
 | `statistics.py` | 缓存编排层：批量构建 + Redis 读写 + 回退逻辑 |
 | `api_views.py` | 实时看板 API + 生产详情 API（含异步 SSE） |
-| `api_views_local.py` | 历史数据 API + 数据同步 API |
+| `api_views_local.py` | 本地历史快照读取 + 缺失快照按需构建 API |
 | `tasks.py` | Celery 定时任务 |
 
 ### 运行与测试环境
@@ -254,8 +254,10 @@ const workorderItems = computed(() => {
 | `snapshot_date` / `snapshot_version` | 历史状态 | 标识快照日期和发布版本 |
 
 历史日期通过 URL 的 `date` 参数传递。Flow、工序和产品视图之间的导航必须保留日期；
-历史日期禁止目标编辑和 60 秒自动刷新。快照不存在时应显示接口返回的明确错误，不能
-把错误 JSON 当作概览卡片数据。
+历史日期禁止目标编辑和 60 秒自动刷新。快照不存在时，前端应调用
+`POST /api/history/snapshots/<date>/ensure/`，显示构建状态并在完成后重试原 GET；构建
+失败时显示明确错误，不能把错误 JSON 或空列表当作有效历史数据。历史目标只使用后端
+按日期返回的 `target` / `wo_targets`，不得使用浏览器旧值覆盖。
 
 ### 8.3 修改规则
 

@@ -9,6 +9,7 @@
 """
 import pytest
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 
@@ -304,8 +305,8 @@ class TestPublicAPI:
 class TestHistoryAPIResponse:
     """历史 API 响应结构测试 —— 模拟真实 HTTP 请求"""
 
-    def test_remote_mode_returns_all_chart_fields(self):
-        """mode=remote 返回全部 12 个图表字段"""
+    def test_legacy_remote_mode_still_returns_local_snapshot_fields(self):
+        """旧 mode=remote 参数不会绕过本地快照，且字段保持完整。"""
         from iwork.api_views_local import local_date_stats
         from rest_framework.test import APIRequestFactory
         from unittest.mock import patch
@@ -327,12 +328,15 @@ class TestHistoryAPIResponse:
         factory = APIRequestFactory()
         request = factory.get('/api/history/date/2026-05-09/?mode=remote&stepno=70')
 
-        with patch('iwork.api_views_local.get_date_stats', return_value=mock_full):
+        with patch(
+            'iwork.api_views_local._snapshot_state',
+            return_value=SimpleNamespace(snapshot_version=1, completed_at=None),
+        ), patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
             response = local_date_stats(request, '2026-05-09')
 
         assert response.status_code == 200
         data = response.data
-        assert data['source'] == 'remote'
+        assert data['source'] == 'local_snapshot'
 
         chart_fields = [
             'hourly_stats', 'station_stats', 'workorders',
@@ -340,14 +344,14 @@ class TestHistoryAPIResponse:
             'monthly_total_trend', 'heatmap_matrix', 'station_ranking',
         ]
         for field in chart_fields:
-            assert field in data, f"remote 响应缺少字段: {field}"
+            assert field in data, f"历史快照响应缺少字段: {field}"
             val = data[field]
             # 确保不是 None（热力图除外）
             if field != 'heatmap_matrix':
                 assert val is not None, f"字段 {field} 为 None"
 
-    def test_local_mode_returns_all_chart_fields(self):
-        """mode=local 返回全部 12 个图表字段"""
+    def test_history_snapshot_returns_all_chart_fields(self):
+        """历史快照返回全部图表字段。"""
         from iwork.api_views_local import local_date_stats
         from rest_framework.test import APIRequestFactory
         from unittest.mock import patch
@@ -369,12 +373,15 @@ class TestHistoryAPIResponse:
         factory = APIRequestFactory()
         request = factory.get('/api/history/date/2026-05-09/?mode=local')
 
-        with patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
+        with patch(
+            'iwork.api_views_local._snapshot_state',
+            return_value=SimpleNamespace(snapshot_version=1, completed_at=None),
+        ), patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
             response = local_date_stats(request, '2026-05-09')
 
         assert response.status_code == 200
         data = response.data
-        assert data['source'] == 'local'
+        assert data['source'] == 'local_snapshot'
 
         chart_fields = [
             'hourly_stats', 'station_stats', 'workorders',

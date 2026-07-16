@@ -350,7 +350,8 @@ GET /api/dashboard/station-ranking/
 GET /api/history/date/<target_date>/
 ```
 
-获取指定日期的全量统计数据（字段与实时视图一致）。
+从本地成功快照获取指定历史日期的全量统计数据（字段与实时视图一致）。快照不存在时
+返回 HTTP 404 和 `history_snapshot_not_found`，不会回退查询远程生产库。
 
 **路径参数**：
 
@@ -362,7 +363,6 @@ GET /api/history/date/<target_date>/
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `mode` | string | 否 | `local` | 数据源：`local` 或 `remote` |
 | `stepno` | string | 否 | 全部 | 按工序号过滤，逗号分隔 |
 
 ---
@@ -373,32 +373,39 @@ GET /api/history/date/<target_date>/
 GET /api/history/dates/
 ```
 
-获取本地有同步数据的可用日期列表。
-
-**查询参数**：
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `mode` | string | 否 | `local` | 数据源 |
+获取本地已有成功快照的可用日期列表。
 
 **响应示例**：
 
 ```json
 {
   "dates": ["2026-05-01", "2026-05-02", "2026-05-03"],
-  "mode": "local"
+  "source": "local_snapshot"
 }
 ```
 
 ---
 
-### 4.3 数据同步
+### 4.3 确保历史快照
 
 ```
-POST /api/history/sync/<target_date>/
+POST /api/history/snapshots/<target_date>/ensure/
 ```
 
-手动触发指定日期的数据从远程库同步到本地库。
+确保指定已结束日期存在本地历史快照。已有成功快照时直接返回；缺失时从远程只读库
+聚合并原子发布。本接口由前端在收到 `history_snapshot_not_found` 后自动调用，不提供
+人工“同步数据”按钮。
+
+同一日期已有构建任务时返回 HTTP 202：
+
+```json
+{
+  "created": false,
+  "code": "history_snapshot_building",
+  "message": "本地历史快照正在构建",
+  "retry_after": 2
+}
+```
 
 **路径参数**：
 
@@ -410,11 +417,16 @@ POST /api/history/sync/<target_date>/
 
 ```json
 {
-  "date": "2026-05-29",
-  "synced_count": 12500,
-  "updated_count": 0,
-  "skipped_count": 340,
-  "elapsed": 2.35
+  "created": true,
+  "message": "本地历史快照构建完成",
+  "snapshot": {
+    "date": "2026-05-29",
+    "version": 1,
+    "source_row_count": 12500,
+    "source_total_qty": 58340,
+    "fact_row_count": 2340,
+    "metadata_row_count": 420
+  }
 }
 ```
 
@@ -506,7 +518,6 @@ GET /api/dashboard/detail/flow/<flow_name>/
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `date` | string | 否 | 今日 | 目标日期，格式 `YYYY-MM-DD` |
-| `mode` | string | 否 | `remote` | `local` 使用本地历史数据 |
 
 **响应示例**：
 
@@ -537,6 +548,8 @@ GET /api/dashboard/detail/flow/<flow_name>/
 
 `output_value = qty * step_time`。员工任一工序缺少标准工时时，总产值和员工效率
 返回 `null`。员工效率按 UTC+7 当日有效上班分钟实时计算，历史日期返回 `null`。
+历史目标从 `target_production` 按 `target_date + employee_id + workorder` 读取，响应中的
+`target` 和 `wo_targets` 只属于请求日期；历史页面不可编辑目标。
 
 ---
 
@@ -591,7 +604,6 @@ GET /api/dashboard/detail/product-overview/
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `date` | string | 否 | 今日 | 目标日期，格式 `YYYY-MM-DD` |
-| `mode` | string | 否 | `remote` | `local` 使用本地历史产量数据 |
 
 **响应示例**：
 
@@ -687,7 +699,7 @@ data: {"type":"dashboard_update","timestamp":"2026-05-29T14:30:00","data":{"tota
 - 所有 API 均为 RESTful 风格
 - GET 请求使用查询参数（query string）
 - POST 请求使用 JSON 格式（Content-Type: application/json）
-- 除 `/api/history/sync/<date>/` 外，所有接口均为 GET
+- 历史快照确保接口使用 POST，其余查询接口使用 GET
 
 ### 8.2 日期格式
 
@@ -706,12 +718,11 @@ data: {"type":"dashboard_update","timestamp":"2026-05-29T14:30:00","data":{"tota
 | 404 | 资源不存在（如无效的 flow_name） |
 | 500 | 服务器内部错误 |
 
-### 8.5 数据源模式（mode 参数）
+### 8.5 数据源选择
 
-| 值 | 说明 | 适用场景 |
-|----|------|---------|
-| `remote` | 直连远程业务库（`192.168.3.15`） | 当日实时数据 |
-| `local` | 查询本地同步库（`iwork_local`） | 历史日期查询 |
+数据源由请求日期自动决定：曼谷业务日期当天读取 Redis，并在缓存缺失时回退远程只读
+查询；早于业务日期的请求只读取 `iwork_local` 成功快照。历史接口不支持 `mode`
+切换，旧客户端传入该参数也不会绕过本地快照。
 
 ### 8.6 Flow 白名单
 

@@ -7,6 +7,8 @@
 
 | 日期 | 文件 | 范围 | 说明 |
 |------|------|------|------|
+| 2026-07-16 | [2026-07-16-history-module-implementation-review.md](2026-07-16-history-module-implementation-review.md) | 历史模块详细实施回顾 | 本地聚合快照、历史生产详情、30天回填、性能、验证与运维总结 |
+| 2026-07-16 | [2026-07-16-production-detail-field-audit.md](2026-07-16-production-detail-field-audit.md) | 生产详情字段核对 | SO5-L5C 与按产品名称字段来源、产值、效率和人工核对方法 |
 | 2026-07-15 | [2026-07-15-product-step-metadata-output-value.md](2026-07-15-product-step-metadata-output-value.md) | 生产详情产品/Flow 明细 | 组合键工序元数据、产值、图表切换及员工实时效率 |
 | 2026-07-09 | [2026-07-09-tag-drag-placeholder-tree-wrap.md](2026-07-09-tag-drag-placeholder-tree-wrap.md) | 生产明细数据页 | 激活区拖拽改为占位虚线框挤压 + 树形表格外框先过渡再淡入 |
 

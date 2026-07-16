@@ -3,6 +3,7 @@
 """
 import pytest
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import Client
 from django.urls import reverse
@@ -11,7 +12,8 @@ from django.urls import reverse
 class TestLocalDateStats:
     """本地日期统计API测试"""
     
-    def test_local_date_stats_get(self):
+    @patch('iwork.api_views_local.HistoricalSyncState.objects')
+    def test_local_date_stats_get(self, mock_states):
         """测试获取本地日期统计"""
         client = Client()
         mock_full = {
@@ -22,6 +24,10 @@ class TestLocalDateStats:
             'station_ranking': [], 'top_processes': [],
         }
 
+        mock_states.using.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            snapshot_version=3,
+            completed_at=None,
+        )
         with patch('iwork.api_views_local.get_local_date_stats', return_value=mock_full):
             response = client.get(
                 reverse('history:local-date-stats', kwargs={'target_date': '2026-04-24'})
@@ -30,7 +36,8 @@ class TestLocalDateStats:
         assert response.status_code == 200
         data = json.loads(response.content)
         assert data['date'] == '2026-04-24'
-        assert data['source'] == 'local'
+        assert data['source'] == 'local_snapshot'
+        assert data['snapshot_version'] == 3
     
     def test_local_date_stats_invalid_date(self):
         """测试无效日期格式"""
@@ -38,7 +45,7 @@ class TestLocalDateStats:
         response = client.get(
             reverse('history:local-date-stats', kwargs={'target_date': 'invalid-date'})
         )
-        assert response.status_code == 500
+        assert response.status_code == 400
     
     def test_available_dates_get(self):
         """测试获取可用日期列表"""
@@ -51,4 +58,4 @@ class TestLocalDateStats:
         assert response.status_code == 200
         data = json.loads(response.content)
         assert 'dates' in data
-        assert data['mode'] == 'local'
+        assert data['source'] == 'local_snapshot'

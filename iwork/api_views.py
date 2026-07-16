@@ -50,6 +50,7 @@ from iwork.historical_queries import (
     get_batch_stepno_employees as local_get_batch_stepno_employees,
     get_workorders_paginated as local_get_workorders_paginated,
 )
+from iwork.local_queries import get_workorder_detail as local_get_workorder_detail
 from iwork.local_models import HistoricalSyncState, TargetProduction
 from iwork.request_params import parse_stepno_filter
 
@@ -60,10 +61,7 @@ def _parse_stepno(request) -> list[int] | None:
 
 
 def _detail_mode(request, target_date: date) -> str:
-    """历史日期默认使用已发布的本地快照，显式 mode 参数保留诊断能力。"""
-    explicit_mode = request.query_params.get('mode')
-    if explicit_mode in {'local', 'remote'}:
-        return explicit_mode
+    """历史日期只读本地快照，今日数据读取实时源。"""
     return 'local' if target_date < get_business_date() else 'remote'
 
 
@@ -72,6 +70,13 @@ def _snapshot_state(target_date: date):
         snapshot_date=target_date,
         status=HistoricalSyncState.Status.SUCCESS,
     ).first()
+
+
+def _snapshot_not_found_response():
+    return Response(
+        {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+        status=status.HTTP_404_NOT_FOUND,
+    )
 
 
 @api_view(['GET'])
@@ -99,11 +104,14 @@ def realtime_stats(request):
 
 @api_view(['GET'])
 def process_list(request):
-    """获取可用工序号列表（实时+历史共用，支持 ?mode=local&date=2026-05-12）"""
+    """获取可用工序号列表；历史日期自动读取本地快照。"""
     try:
         date_str = request.query_params.get('date', get_business_date().isoformat())
         date_obj = date.fromisoformat(date_str)
         mode = _detail_mode(request, date_obj)
+
+        if mode == 'local' and _snapshot_state(date_obj) is None:
+            return _snapshot_not_found_response()
 
         stepnos = local_get_all_stepnos(date_obj) if mode == 'local' else remote_get_all_stepnos(date_obj)
 
@@ -152,7 +160,7 @@ def flow_stats(request, flow_name):
 
 @api_view(['GET'])
 def workorder_list(request):
-    """获取工单列表（分页），支持 ?mode=local&date=2026-05-18"""
+    """获取工单列表（分页）；历史日期自动读取本地快照。"""
     try:
         date_str = request.query_params.get('date', get_business_date().isoformat())
         target_date = date.fromisoformat(date_str)
@@ -160,6 +168,9 @@ def workorder_list(request):
         page = int(request.query_params.get('page', 1))
         page_size = int(request.query_params.get('page_size', 20))
         stepno_filter = _parse_stepno(request)
+
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return _snapshot_not_found_response()
 
         if mode == 'local':
             result = local_get_workorders_paginated(
@@ -179,12 +190,19 @@ def workorder_list(request):
 
 @api_view(['GET'])
 def workorder_detail(request, wrk_order):
-    """获取工单详情"""
-    target_date = request.query_params.get('date', date.today().isoformat())
+    """获取工单详情；历史日期自动读取本地快照。"""
+    target_date = request.query_params.get('date', get_business_date().isoformat())
 
     try:
         target = date.fromisoformat(target_date)
-        detail = get_workorder_detail(wrk_order, target)
+        mode = _detail_mode(request, target)
+        if mode == 'local' and _snapshot_state(target) is None:
+            return _snapshot_not_found_response()
+        detail = (
+            local_get_workorder_detail(wrk_order, target)
+            if mode == 'local'
+            else get_workorder_detail(wrk_order, target)
+        )
         return Response(detail, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f'获取工单详情失败: {e}')
@@ -494,7 +512,6 @@ def flow_overview(request):
 
     支持参数：
         ?date=...    目标日期（默认今日）
-        ?mode=local  历史视图模式
     """
     try:
         business_today = get_business_date()
@@ -536,7 +553,6 @@ def flow_detail(request, flow_name):
 
     支持参数：
         ?date=...    目标日期（默认今日）
-        ?mode=local  历史视图模式
     """
     try:
         business_today = get_business_date()
@@ -558,9 +574,7 @@ def flow_detail(request, flow_name):
                 total_qty = sum(e['total_qty'] for e in cached_employees)
                 hourly_cache = cache.get('stats:detail:flow_hourly') or {}
                 hourly_trend = hourly_cache.get(flow_name, [])
-                targets_key = f'targets:{target_date.isoformat()}:{flow_name}'
-                cached_targets = cache.get(targets_key)
-                targets_dict = json.loads(cached_targets) if cached_targets else {}
+                targets_dict = _get_targets_with_fallback(target_date)
                 wo_targets_dict = _get_wo_targets_with_fallback(target_date)
                 for emp in cached_employees:
                     eid = str(emp['reg_per_sys_id'])
@@ -594,7 +608,6 @@ def stepno_detail(request, stepno):
 
     支持参数：
         ?date=...    目标日期（默认今日）
-        ?mode=local  历史视图模式
     """
     try:
         date_str = request.query_params.get('date', get_business_date().isoformat())
@@ -621,7 +634,6 @@ def product_overview(request):
 
     支持参数：
         ?date=...    目标日期（默认今日）
-        ?mode=local  历史视图模式
     """
     try:
         business_today = get_business_date()
