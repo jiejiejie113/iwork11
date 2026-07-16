@@ -80,6 +80,32 @@
         .hide-scrollbar::-webkit-scrollbar {
             display: none;  /* Chrome, Safari and Opera */
         }
+        /* 明细表格横向滚动条：保留滚动入口，颜色贴合深色主题 */
+        .detail-table-scroll {
+            cursor: grab;
+            scrollbar-width: thin;
+            scrollbar-color: #475569 #0f172a;
+        }
+        .detail-table-scroll.is-dragging {
+            cursor: grabbing;
+            user-select: none;
+        }
+        .detail-table-scroll::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .detail-table-scroll::-webkit-scrollbar-track {
+            background: #0f172a;
+            border-radius: 999px;
+        }
+        .detail-table-scroll::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 999px;
+            border: 2px solid #0f172a;
+        }
+        .detail-table-scroll::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
         .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
         .tree-body { position: relative; }
@@ -439,7 +465,9 @@
                         </span>
                     </div>
                 </div>
-                <div class="overflow-auto flex-1 hide-scrollbar">
+                <div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"
+                     :class="{ 'is-dragging': detailTableIsDragging }"
+                     @pointerdown="onDetailTablePointerDown">
                     <table class="w-full text-sm" :class="collapsed ? 'min-w-[780px]' : 'min-w-[1180px]'">
                         <thead>
                             <tr class="text-left text-slate-400 border-b border-slate-700">
@@ -703,6 +731,12 @@ createApp({
         const woDraft = reactive({});   // 工单级目标: {"1001@WO-001": 150}
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
+        const detailTableScrollRef = ref(null);
+        const detailTableIsDragging = ref(false);
+        let detailTableEl = null;
+        let detailTableStartX = 0;
+        let detailTableStartScrollLeft = 0;
+        let detailTablePointerId = null;
 
         // 维度管理（拖拽控制层级）
         const productList = ref([]);
@@ -1586,6 +1620,50 @@ createApp({
             }
         }
 
+        function canStartDetailTableDrag(target) {
+            return !target.closest('button,input,select,textarea,a,[contenteditable="true"]');
+        }
+
+        function stopDetailTableDrag() {
+            if (!detailTableEl) return;
+            detailTableIsDragging.value = false;
+            try {
+                detailTableEl.releasePointerCapture?.(detailTablePointerId);
+            } catch (e) {
+                /* pointer capture may already be released by the browser */
+            }
+            window.removeEventListener('pointermove', onDetailTablePointerMove);
+            window.removeEventListener('pointerup', stopDetailTableDrag);
+            window.removeEventListener('pointercancel', stopDetailTableDrag);
+            detailTableEl = null;
+            detailTablePointerId = null;
+        }
+
+        function onDetailTablePointerMove(e) {
+            if (!detailTableEl) return;
+            const dx = e.clientX - detailTableStartX;
+            detailTableEl.scrollLeft = detailTableStartScrollLeft - dx;
+            if (Math.abs(dx) > 3) {
+                detailTableIsDragging.value = true;
+                e.preventDefault();
+            }
+        }
+
+        function onDetailTablePointerDown(e) {
+            if (e.button !== undefined && e.button !== 0) return;
+            if (!canStartDetailTableDrag(e.target)) return;
+            const el = detailTableScrollRef.value;
+            if (!el || el.scrollWidth <= el.clientWidth) return;
+            detailTableEl = el;
+            detailTablePointerId = e.pointerId;
+            detailTableStartX = e.clientX;
+            detailTableStartScrollLeft = el.scrollLeft;
+            el.setPointerCapture?.(e.pointerId);
+            window.addEventListener('pointermove', onDetailTablePointerMove);
+            window.addEventListener('pointerup', stopDetailTableDrag);
+            window.addEventListener('pointercancel', stopDetailTableDrag);
+        }
+
         // ---- Pointer 拖拽排序（fixed定位 + FLIP 避让） ----
         let dragStartX = 0, dragStartY = 0;
         let dragOriginLeft = 0, dragOriginTop = 0;
@@ -2062,6 +2140,7 @@ createApp({
         // 组件卸载时停止滚动和定时器
         onUnmounted(() => {
             stopWorkorderScroll();
+            stopDetailTableDrag();
             if (autoRefreshTimer) clearInterval(autoRefreshTimer);
         });
 
@@ -2071,6 +2150,7 @@ createApp({
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
             searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
+            detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,

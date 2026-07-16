@@ -53,6 +53,15 @@ def test_flow_table_uses_composite_key_step_rows():
     assert 'max-lg:h-[220px]' in TEMPLATE
 
 
+def test_flow_table_has_visible_themed_horizontal_scroll_and_drag():
+    assert 'detail-table-scroll' in TEMPLATE
+    assert 'ref="detailTableScrollRef"' in TEMPLATE
+    assert '<div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"' in TEMPLATE
+    assert 'function onDetailTablePointerDown' in TEMPLATE
+    assert 'detailTableEl.scrollLeft = detailTableStartScrollLeft - dx;' in TEMPLATE
+    assert 'hide-scrollbar' not in TEMPLATE.split('ref="detailTableScrollRef"', 1)[1].split('<table', 1)[0]
+
+
 def test_flow_table_separates_target_rate_and_employee_efficiency():
     assert '>目标达成率</th>' in TEMPLATE
     assert '>员工效率</th>' in TEMPLATE
