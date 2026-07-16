@@ -143,11 +143,11 @@
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按产品名称</button>
         </div>
         <div class="flex items-center gap-2">
-            <input type="date" v-model="selectedDate" @change="changeProductionDate"
+            <input type="date" v-model="selectedDate" :max="businessToday" @change="changeProductionDate"
                 class="bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
             <span v-if="isHistoricalDate"
                 class="px-2 py-1 text-xs text-emerald-300 bg-emerald-950 border border-emerald-700 rounded-md">
-                本地历史快照
+                已加载历史数据
             </span>
             <span v-if="isHistoricalDate && historySnapshotMessage"
                 class="px-2 py-1 text-xs text-emerald-200 bg-emerald-950 border border-emerald-700 rounded-md">
@@ -714,9 +714,11 @@ createApp({
             const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
             return `${values.year}-${values.month}-${values.day}`;
         }
-        const initialDate = new URLSearchParams(window.location.search).get('date');
-        const selectedDate = ref(initialDate || businessDateString());
-        const isHistoricalDate = computed(() => selectedDate.value < businessDateString());
+        const businessToday = businessDateString();
+        const requestedDate = new URLSearchParams(window.location.search).get('date');
+        const initialDate = requestedDate && requestedDate <= businessToday ? requestedDate : businessToday;
+        const selectedDate = ref(initialDate);
+        const isHistoricalDate = computed(() => selectedDate.value < businessToday);
         const overviewUrl = computed(() => (
             basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
         ));
@@ -943,7 +945,7 @@ createApp({
                 return historySnapshotPromises.get(snapshotDate);
             }
             if (selectedDate.value === snapshotDate) {
-                historySnapshotMessage.value = `正在构建 ${snapshotDate} 的本地历史快照...`;
+                historySnapshotMessage.value = `正在准备 ${snapshotDate} 的历史数据...`;
             }
             const buildPromise = (async () => {
                 while (true) {
@@ -967,9 +969,7 @@ createApp({
                     }
                     const snapshot = payload.snapshot || {};
                     if (selectedDate.value === snapshotDate) {
-                        historySnapshotMessage.value = payload.created
-                            ? `已构建 ${snapshot.date} 快照 v${snapshot.version}`
-                            : `已加载 ${snapshot.date} 快照 v${snapshot.version}`;
+                        historySnapshotMessage.value = `已加载历史数据：${snapshot.date}`;
                     }
                     return payload;
                 }
@@ -1006,7 +1006,7 @@ createApp({
                 && !historySnapshotMessage.value
                 && payload.source === 'local_snapshot'
             ) {
-                historySnapshotMessage.value = `已加载 ${payload.snapshot_date} 快照 v${payload.snapshot_version}`;
+                historySnapshotMessage.value = `已加载历史数据：${payload.snapshot_date}`;
             }
             return payload;
         }
@@ -2259,7 +2259,7 @@ createApp({
             onPointerDown,
             searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
-            selectedDate, isHistoricalDate, overviewUrl, changeProductionDate,
+            selectedDate, businessToday, isHistoricalDate, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,

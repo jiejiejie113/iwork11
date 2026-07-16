@@ -82,11 +82,12 @@ def test_detail_default_date_uses_business_timezone():
     assert 'function businessDateString()' in TEMPLATE
     assert "timeZone: 'Asia/Bangkok'" in TEMPLATE
     assert "new URLSearchParams(window.location.search).get('date')" in TEMPLATE
-    assert 'const selectedDate = ref(initialDate || businessDateString());' in TEMPLATE
+    assert 'requestedDate <= businessToday ? requestedDate : businessToday' in TEMPLATE
+    assert 'const selectedDate = ref(initialDate);' in TEMPLATE
 
 
 def test_historical_detail_keeps_date_and_disables_live_actions():
-    assert '本地历史快照' in TEMPLATE
+    assert '已加载历史数据' in TEMPLATE
     assert 'const isHistoricalDate = computed' in TEMPLATE
     assert "!isEditing && !isHistoricalDate" in TEMPLATE
     assert "if (isHistoricalDate.value) return;" in TEMPLATE
@@ -108,6 +109,9 @@ def test_history_dashboard_auto_builds_snapshots_without_source_controls():
     assert 'let historyLoadSequence = 0;' in DASHBOARD_TEMPLATE
     assert 'historySnapshotError' in DASHBOARD_TEMPLATE
     assert 'const selectedDate = ref(businessDateString(-1));' in DASHBOARD_TEMPLATE
+    assert 'const historyMaxDate = businessDateString(-1);' in DASHBOARD_TEMPLATE
+    assert ':max="historyMaxDate"' in DASHBOARD_TEMPLATE
+    assert '版本 v' not in DASHBOARD_TEMPLATE
     assert "new Date().toISOString().split('T')[0]" not in DASHBOARD_TEMPLATE
 
 
@@ -116,4 +120,7 @@ def test_historical_production_detail_builds_snapshot_and_hides_update_time():
     assert 'historySnapshotMessage' in TEMPLATE
     assert 'const historySnapshotPromises = new Map();' in TEMPLATE
     assert 'v-if="!isHistoricalDate"' in TEMPLATE
+    assert 'const businessToday = businessDateString();' in TEMPLATE
+    assert ':max="businessToday"' in TEMPLATE
+    assert '快照 v' not in TEMPLATE
     assert 'localStorage.getItem(`targets:${dateStr}`)' not in TEMPLATE
