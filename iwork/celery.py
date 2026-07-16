@@ -1,5 +1,6 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'iwork.settings')
 
@@ -7,7 +8,7 @@ app = Celery('iwork')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Celery 进程接入统一日志
-from iwork.logger_config import setup_logging
+from iwork.logger_config import setup_logging  # noqa: E402
 setup_logging('CELERY')
 
 app.autodiscover_tasks()
@@ -22,5 +23,11 @@ app.conf.beat_schedule = {
     'sync-dashboard-stats-every-60s': {
         'task': 'iwork.tasks.sync_dashboard_stats',
         'schedule': 60.0,
+    },
+    # Celery 使用 Asia/Shanghai；03:00 对应曼谷业务时间 02:00。
+    'snapshot-recent-history-daily': {
+        'task': 'iwork.tasks.snapshot_recent_history',
+        'schedule': crontab(hour=3, minute=0),
+        'args': (3,),
     },
 }

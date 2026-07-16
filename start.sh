@@ -20,7 +20,7 @@ echo "Redis is ready"
 # Run database migrations
 echo "Running database migrations..."
 python manage.py migrate --database=default --noinput
-python manage.py migrate --database=iwork_local --noinput 2>/dev/null || true
+python manage.py migrate --database=iwork_local --noinput
 
 # Collect static files
 echo "Collecting static files..."

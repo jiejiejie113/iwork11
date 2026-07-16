@@ -12,7 +12,7 @@ from loguru import logger
 from iwork.statistics import get_local_date_stats, get_date_stats
 from iwork.local_queries import get_available_dates
 from iwork.request_params import parse_stepno_filter
-from iwork.sync import sync_date_data
+from iwork.history_store import snapshot_history_date as sync_date_data
 
 
 def _parse_stepno(request) -> list[int] | None:
@@ -83,14 +83,34 @@ def sync_date(request, target_date):
         date_obj = date.fromisoformat(target_date)
         result = sync_date_data(date_obj)
         elapsed = time.time() - t0
-        logger.success('POST /api/history/sync/{} 完成 ({:.1f}s) 新增{} 更新{} 跳过{}',
-                       target_date, elapsed, result['synced_count'], result['updated_count'], result['skipped_count'])
+        if isinstance(result, dict):
+            synced_count = result['synced_count']
+            fact_row_count = result['updated_count']
+            missing_metadata_count = result['skipped_count']
+            snapshot_version = result.get('snapshot_version', 1)
+        else:
+            synced_count = result.source_row_count
+            fact_row_count = result.fact_row_count
+            missing_metadata_count = result.missing_metadata_count
+            snapshot_version = result.snapshot_version
+        logger.success(
+            'POST /api/history/sync/{} 完成 ({:.1f}s) 源记录{} 事实行{} 缺失元数据{}',
+            target_date,
+            elapsed,
+            synced_count,
+            fact_row_count,
+            missing_metadata_count,
+        )
         return Response({
             'success': True,
             'message': '同步完成',
-            'synced_count': result['synced_count'],
-            'updated_count': result['updated_count'],
-            'skipped_count': result['skipped_count'],
+            'synced_count': synced_count,
+            'updated_count': fact_row_count,
+            'skipped_count': missing_metadata_count,
+            'source_row_count': synced_count,
+            'fact_row_count': fact_row_count,
+            'missing_metadata_count': missing_metadata_count,
+            'snapshot_version': snapshot_version,
         }, status=status.HTTP_200_OK)
 
     except Exception as e:

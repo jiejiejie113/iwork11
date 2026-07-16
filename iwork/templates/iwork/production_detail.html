@@ -142,6 +142,14 @@
                 :class="groupMode === 'product' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按产品名称</button>
         </div>
+        <div class="flex items-center gap-2">
+            <input type="date" v-model="selectedDate" @change="changeProductionDate"
+                class="bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
+            <span v-if="isHistoricalDate"
+                class="px-2 py-1 text-xs text-emerald-300 bg-emerald-950 border border-emerald-700 rounded-md">
+                本地历史快照
+            </span>
+        </div>
         <span class="text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
         </div>
     </header>
@@ -377,7 +385,7 @@
         <!-- 工具栏：面包屑 + 控件组（单行） -->
         <div class="flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap text-sm">
             <!-- 左侧：面包屑 -->
-            <a :href="basePath + 'production/detail-data/'" class="text-blue-400 hover:underline">生产详情</a>
+            <a :href="overviewUrl" class="text-blue-400 hover:underline">生产详情</a>
             <span class="text-slate-600">/</span>
             <span class="font-semibold">{[ detailTitle ]}</span>
             <span class="text-slate-400">
@@ -409,7 +417,7 @@
                 </select>
                 <input v-model="tableSearch" placeholder="搜索员工ID..."
                     class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-                <button v-if="detailLayout === 'table' && !isEditing" @click="startEditing"
+                <button v-if="detailLayout === 'table' && !isEditing && !isHistoricalDate" @click="startEditing"
                     class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
                 <button v-if="detailLayout === 'table' && isEditing" @click="cancelEditing"
                     class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
@@ -699,7 +707,12 @@ createApp({
             const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
             return `${values.year}-${values.month}-${values.day}`;
         }
-        const selectedDate = ref(businessDateString());
+        const initialDate = new URLSearchParams(window.location.search).get('date');
+        const selectedDate = ref(initialDate || businessDateString());
+        const isHistoricalDate = computed(() => selectedDate.value < businessDateString());
+        const overviewUrl = computed(() => (
+            basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
+        ));
         const isLoading = ref(false);
         const loadingProgress = ref(0);
         let loadingTimer = null;
@@ -1808,6 +1821,22 @@ createApp({
             finally { hideLoading(); }
         }
 
+        function changeProductionDate() {
+            const url = new URL(window.location.href);
+            url.searchParams.set('date', selectedDate.value);
+            window.history.replaceState({}, '', url);
+            isEditing.value = false;
+            if (currentView.value === 'detail') {
+                loadDetail(detailType.value, detailKey.value);
+            } else if (groupMode.value === 'product') {
+                loadProductOverview();
+            } else if (groupMode.value === 'stepno') {
+                loadStepnoOverview();
+            } else {
+                loadOverview();
+            }
+        }
+
         async function loadStepnoOverview() {
             showLoading();
             try {
@@ -1950,10 +1979,11 @@ createApp({
         }
 
         function goDetail(type, key) {
+            const query = '?date=' + encodeURIComponent(selectedDate.value);
             if (type === 'flow') {
-                window.location.href = basePath + 'production/detail-data/flow/' + encodeURIComponent(key) + '/';
+                window.location.href = basePath + 'production/detail-data/flow/' + encodeURIComponent(key) + '/' + query;
             } else {
-                window.location.href = basePath + 'production/detail-data/stepno/' + key + '/';
+                window.location.href = basePath + 'production/detail-data/stepno/' + key + '/' + query;
             }
         }
 
@@ -2129,6 +2159,7 @@ createApp({
             }
             // 每60秒自动刷新数据
             autoRefreshTimer = setInterval(() => {
+                if (isHistoricalDate.value) return;
                 if (currentView.value === 'overview') {
                     refreshOverviewSilently();
                 } else if (currentView.value === 'detail') {
@@ -2151,7 +2182,8 @@ createApp({
             onPointerDown,
             searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
-            selectedDate, isLoading, loadingProgress, wsConnected, lastUpdateTime,
+            selectedDate, isHistoricalDate, overviewUrl, changeProductionDate,
+            isLoading, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,

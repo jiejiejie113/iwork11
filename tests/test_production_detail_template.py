@@ -73,5 +73,14 @@ def test_flow_table_separates_target_rate_and_employee_efficiency():
 def test_detail_default_date_uses_business_timezone():
     assert 'function businessDateString()' in TEMPLATE
     assert "timeZone: 'Asia/Bangkok'" in TEMPLATE
-    assert 'const selectedDate = ref(businessDateString());' in TEMPLATE
+    assert "new URLSearchParams(window.location.search).get('date')" in TEMPLATE
+    assert 'const selectedDate = ref(initialDate || businessDateString());' in TEMPLATE
+
+
+def test_historical_detail_keeps_date_and_disables_live_actions():
+    assert '本地历史快照' in TEMPLATE
+    assert 'const isHistoricalDate = computed' in TEMPLATE
+    assert "!isEditing && !isHistoricalDate" in TEMPLATE
+    assert "if (isHistoricalDate.value) return;" in TEMPLATE
+    assert "'?date=' + encodeURIComponent(selectedDate.value)" in TEMPLATE
     assert "new Date().toISOString().split('T')[0]" not in TEMPLATE

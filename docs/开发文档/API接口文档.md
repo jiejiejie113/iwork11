@@ -242,7 +242,8 @@ Celery Beat (每 60s)
 
 > 来源：`iwork/api_views.py`，注册于 `iwork/urls.py`
 
-今日视图**纯读 Redis**（Celery 预计算，<1ms），历史视图**查库+缓存**。
+今日视图优先读取 Redis。早于曼谷业务日期的请求默认读取 `iwork_local` 中已经发布的
+历史快照，不访问远程生产库；显式 `mode=remote` 仅用于管理员对账。
 
 ### `GET /api/dashboard/detail/flows/`
 
@@ -251,11 +252,11 @@ Celery Beat (每 60s)
 | 参数     | 类型   | 必填 | 默认值    | 说明                      |
 | -------- | ------ | ---- | --------- | ------------------------- |
 | `date` | string | 否   | 今天      | 日期，ISO 格式            |
-| `mode` | string | 否   | `remote` | `local` 查本地库        |
+| `mode` | string | 否   | 自动       | 今日为 `remote`，历史日期为 `local` |
 
 返回：`{ "VCO-L5": { "total_qty": 800, "worker_count": 15 }, ... }`
 
-缓存：今日 `stats:detail:flow_overview`（TTL 到午夜），历史 30min（远程）/ 1h（本地）。
+缓存：今日 `stats:detail:flow_overview`（TTL 到午夜）；历史直接查询本地聚合事实表。
 
 ---
 
@@ -267,7 +268,7 @@ Celery Beat (每 60s)
 | ------------- | ------ | ---- | --------- | -------------- |
 | `flow_name` | path   | 是   | -         | Flow 名称      |
 | `date`      | string | 否   | 今天      | 日期，ISO 格式 |
-| `mode`      | string | 否   | `remote` | 数据源         |
+| `mode`      | string | 否   | 自动       | 今日远程/Redis，历史本地快照 |
 
 响应顶层包含当前有效上班分钟，员工节点包含总产值与员工效率，工序节点按
 `(workorder, stepno)` 返回元数据：
@@ -278,6 +279,8 @@ Celery Beat (每 60s)
   "date": "2026-07-15",
   "total_qty": 516,
   "worker_count": 1,
+  "source": "local_snapshot",
+  "snapshot_date": "2026-07-15",
   "work_minutes": 210,
   "hourly_trend": [],
   "employees": [{

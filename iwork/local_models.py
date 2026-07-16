@@ -99,3 +99,90 @@ class ProductionOrder(models.Model):
 
     def __str__(self) -> str:
         return f'{self.order_no} - {self.style_no}'
+
+
+class HistoricalProductionFact(models.Model):
+    """按小时聚合的本地历史生产事实。"""
+
+    production_date = models.DateField('生产日期')
+    event_hour = models.SmallIntegerField('生产小时', default=-1)
+    registered_date = models.DateTimeField('登记日期', db_column='RegDate')
+    registered_time = models.DateTimeField('登记时间', db_column='RegTime', null=True, blank=True)
+    flow = models.CharField('生产线', max_length=40, blank=True, default='')
+    station_id = models.CharField('工位ID', max_length=3, blank=True, default='')
+    employee_id = models.IntegerField('员工系统ID', default=0)
+    wrk_order = models.CharField('本厂款号', max_length=14, blank=True, default='')
+    step_no = models.IntegerField('工序号', default=0)
+    qty = models.BigIntegerField('聚合产量', default=0)
+    source_record_count = models.PositiveIntegerField('源记录数', default=0)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'historical_production_fact'
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'production_date', 'event_hour', 'flow', 'station_id',
+                    'employee_id', 'wrk_order', 'step_no',
+                ],
+                name='uq_history_fact_grain',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['production_date', 'flow', 'employee_id'], name='idx_hist_flow_emp'),
+            models.Index(fields=['production_date', 'wrk_order', 'step_no', 'flow'], name='idx_hist_wo_step_flow'),
+            models.Index(fields=['production_date', 'step_no', 'employee_id'], name='idx_hist_step_emp'),
+            models.Index(fields=['production_date', 'event_hour'], name='idx_hist_date_hour'),
+        ]
+
+
+class HistoricalStepSnapshot(models.Model):
+    """生产日期对应的工序和产品元数据快照。"""
+
+    snapshot_date = models.DateField('快照日期')
+    wrk_order = models.CharField('本厂款号', max_length=14)
+    step_no = models.IntegerField('工序号')
+    description = models.CharField('工序描述', max_length=120, blank=True, default='')
+    step_time = models.FloatField('标准工时', null=True, blank=True)
+    style_no = models.CharField('款号', max_length=50, blank=True, default='')
+    product_name = models.CharField('产品名称', max_length=200, blank=True, default='')
+    order_no = models.CharField('生产单号', max_length=50, blank=True, default='')
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'historical_step_snapshot'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['snapshot_date', 'wrk_order', 'step_no'],
+                name='uq_history_step_snapshot',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['snapshot_date', 'wrk_order'], name='idx_hist_meta_workorder'),
+        ]
+
+
+class HistoricalSyncState(models.Model):
+    """一个生产日期的历史快照发布状态与校验摘要。"""
+
+    class Status(models.TextChoices):
+        RUNNING = 'running', '同步中'
+        SUCCESS = 'success', '成功'
+        FAILED = 'failed', '失败'
+
+    snapshot_date = models.DateField('快照日期', unique=True)
+    status = models.CharField('状态', max_length=16, choices=Status.choices)
+    source_row_count = models.PositiveBigIntegerField('源记录数', default=0)
+    source_total_qty = models.BigIntegerField('源总产量', default=0)
+    fact_row_count = models.PositiveIntegerField('事实行数', default=0)
+    metadata_row_count = models.PositiveIntegerField('元数据行数', default=0)
+    missing_metadata_count = models.PositiveIntegerField('缺失元数据数', default=0)
+    snapshot_version = models.PositiveIntegerField('快照版本', default=1)
+    error_message = models.TextField('错误信息', blank=True, default='')
+    started_at = models.DateTimeField('开始时间', auto_now_add=True)
+    completed_at = models.DateTimeField('完成时间', null=True, blank=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'historical_sync_state'
+        ordering = ['-snapshot_date']

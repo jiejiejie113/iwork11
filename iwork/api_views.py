@@ -41,21 +41,37 @@ from iwork.queries import (
     get_kanban_ranking as remote_get_kanban_ranking,
     get_kanban_filter_options as remote_get_kanban_filter_options,
 )
-from iwork.local_queries import (
+from iwork.historical_queries import (
     get_all_stepnos as local_get_all_stepnos,
     get_batch_flow_overview as local_get_batch_flow_overview,
     get_batch_flow_hourly as local_get_batch_flow_hourly,
     get_batch_flow_employees as local_get_batch_flow_employees,
-    get_batch_stepno_employees as local_get_batch_stepno_employees,
     get_batch_product_overview as local_get_batch_product_overview,
+    get_batch_stepno_employees as local_get_batch_stepno_employees,
+    get_workorders_paginated as local_get_workorders_paginated,
 )
-from iwork.local_models import TargetProduction
+from iwork.local_models import HistoricalSyncState, TargetProduction
 from iwork.request_params import parse_stepno_filter
 
 
 def _parse_stepno(request) -> list[int] | None:
     """从请求参数解析 StepNo 过滤列表，无参数返回 None（全工序）"""
     return parse_stepno_filter(request)
+
+
+def _detail_mode(request, target_date: date) -> str:
+    """历史日期默认使用已发布的本地快照，显式 mode 参数保留诊断能力。"""
+    explicit_mode = request.query_params.get('mode')
+    if explicit_mode in {'local', 'remote'}:
+        return explicit_mode
+    return 'local' if target_date < get_business_date() else 'remote'
+
+
+def _snapshot_state(target_date: date):
+    return HistoricalSyncState.objects.using('iwork_local').filter(
+        snapshot_date=target_date,
+        status=HistoricalSyncState.Status.SUCCESS,
+    ).first()
 
 
 @api_view(['GET'])
@@ -85,9 +101,9 @@ def realtime_stats(request):
 def process_list(request):
     """获取可用工序号列表（实时+历史共用，支持 ?mode=local&date=2026-05-12）"""
     try:
-        mode = request.query_params.get('mode', 'remote')
-        date_str = request.query_params.get('date', date.today().isoformat())
+        date_str = request.query_params.get('date', get_business_date().isoformat())
         date_obj = date.fromisoformat(date_str)
+        mode = _detail_mode(request, date_obj)
 
         stepnos = local_get_all_stepnos(date_obj) if mode == 'local' else remote_get_all_stepnos(date_obj)
 
@@ -138,17 +154,20 @@ def flow_stats(request, flow_name):
 def workorder_list(request):
     """获取工单列表（分页），支持 ?mode=local&date=2026-05-18"""
     try:
-        mode = request.query_params.get('mode', 'remote')
-        date_str = request.query_params.get('date', date.today().isoformat())
+        date_str = request.query_params.get('date', get_business_date().isoformat())
         target_date = date.fromisoformat(date_str)
+        mode = _detail_mode(request, target_date)
         page = int(request.query_params.get('page', 1))
         page_size = int(request.query_params.get('page_size', 20))
         stepno_filter = _parse_stepno(request)
 
         if mode == 'local':
-            from iwork.local_queries import get_workorders_paginated as local_paginated
-            result = local_paginated(target_date, page=page, page_size=page_size,
-                                     stepno_filter=stepno_filter)
+            result = local_get_workorders_paginated(
+                target_date,
+                page=page,
+                page_size=page_size,
+                stepno_filter=stepno_filter,
+            )
         else:
             result = get_workorders_paginated(target_date, page=page, page_size=page_size,
                                               stepno_filter=stepno_filter)
@@ -364,7 +383,7 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
 
     work_minutes, employees = _with_employee_efficiency(employees, target_date)
 
-    return {
+    result = {
         'flow': flow_name,
         'date': target_date.isoformat(),
         'total_qty': total_qty,
@@ -373,6 +392,16 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
         'hourly_trend': hourly_data.get(flow_name, []),
         'employees': employees,
     }
+    if mode == 'local':
+        state = _snapshot_state(target_date)
+        result.update({
+            'source': 'local_snapshot',
+            'snapshot_date': target_date.isoformat(),
+            'snapshot_version': state.snapshot_version if state else None,
+        })
+    else:
+        result['source'] = 'remote'
+    return result
 
 
 def _get_stepno_detail_data(stepno, target_date, mode='remote'):
@@ -400,13 +429,17 @@ def _get_stepno_detail_data(stepno, target_date, mode='remote'):
     for emp in employees:
         emp['target'] = int(targets_dict.get(str(emp['reg_per_sys_id']), 0))
 
-    return {
+    result = {
         'stepno': stepno,
         'date': target_date.isoformat(),
         'total_qty': total_qty,
         'worker_count': len(employees),
         'employees': employees,
     }
+    result['source'] = 'local_snapshot' if mode == 'local' else 'remote'
+    if mode == 'local':
+        result['snapshot_date'] = target_date.isoformat()
+    return result
 
 
 @api_view(['GET'])
@@ -418,10 +451,18 @@ def stepno_overview(request):
         ?date=...    目标日期（默认今日）
     """
     try:
-        date_str = request.query_params.get('date', date.today().isoformat())
+        business_today = get_business_date()
+        date_str = request.query_params.get('date', business_today.isoformat())
         target_date = date.fromisoformat(date_str)
+        mode = _detail_mode(request, target_date)
 
-        if target_date == date.today():
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return Response(
+                {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if target_date == get_business_date() and mode == 'remote':
             cached = cache.get('stats:detail:stepno_overview')
             if cached is not None:
                 result = {}
@@ -430,8 +471,11 @@ def stepno_overview(request):
                     result[stepno] = {'total_qty': total_qty, 'worker_count': len(emps)}
                 return Response(result, status=status.HTTP_200_OK)
 
-        # 历史日期或缓存未命中，实时查询
-        stepno_data = remote_get_batch_stepno_employees(target_date)
+        stepno_data = (
+            local_get_batch_stepno_employees(target_date)
+            if mode == 'local'
+            else remote_get_batch_stepno_employees(target_date)
+        )
         result = {}
         for stepno, emps in stepno_data.items():
             total_qty = sum(e['qty'] for e in emps)
@@ -453,12 +497,19 @@ def flow_overview(request):
         ?mode=local  历史视图模式
     """
     try:
-        date_str = request.query_params.get('date', date.today().isoformat())
+        business_today = get_business_date()
+        date_str = request.query_params.get('date', business_today.isoformat())
         target_date = date.fromisoformat(date_str)
-        mode = request.query_params.get('mode', 'remote')
+        mode = _detail_mode(request, target_date)
+
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return Response(
+                {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         # 今日优先读 Redis
-        if target_date == date.today() and mode == 'remote':
+        if target_date == business_today and mode == 'remote':
             cached = cache.get('stats:detail:flow_overview')
             if cached is not None:
                 return Response(cached, status=status.HTTP_200_OK)
@@ -469,7 +520,7 @@ def flow_overview(request):
             result = remote_get_batch_flow_overview(target_date)
 
         # 今日结果写入 Redis（当天有效）
-        if target_date == date.today() and mode == 'remote':
+        if target_date == business_today and mode == 'remote':
             cache.set('stats:detail:flow_overview', result, 3600)
 
         return Response(result, status=status.HTTP_200_OK)
@@ -491,7 +542,13 @@ def flow_detail(request, flow_name):
         business_today = get_business_date()
         date_str = request.query_params.get('date', business_today.isoformat())
         target_date = date.fromisoformat(date_str)
-        mode = request.query_params.get('mode', 'remote')
+        mode = _detail_mode(request, target_date)
+
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return Response(
+                {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         # 今日优先读缓存，所有字段统一来自 Redis 快照，避免混用新旧数据
         if target_date == business_today and mode == 'remote':
@@ -540,9 +597,15 @@ def stepno_detail(request, stepno):
         ?mode=local  历史视图模式
     """
     try:
-        date_str = request.query_params.get('date', date.today().isoformat())
+        date_str = request.query_params.get('date', get_business_date().isoformat())
         target_date = date.fromisoformat(date_str)
-        mode = request.query_params.get('mode', 'remote')
+        mode = _detail_mode(request, target_date)
+
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return Response(
+                {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         result = _get_stepno_detail_data(stepno, target_date, mode)
         return Response(result, status=status.HTTP_200_OK)
@@ -561,21 +624,35 @@ def product_overview(request):
         ?mode=local  历史视图模式
     """
     try:
-        date_str = request.query_params.get('date', date.today().isoformat())
+        business_today = get_business_date()
+        date_str = request.query_params.get('date', business_today.isoformat())
         target_date = date.fromisoformat(date_str)
-        mode = request.query_params.get('mode', 'remote')
+        mode = _detail_mode(request, target_date)
 
-        if target_date == date.today() and mode == 'remote':
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return Response(
+                {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if target_date == business_today and mode == 'remote':
             cached = cache.get(PRODUCT_OVERVIEW_CACHE_KEY)
             if cached is not None:
                 return Response(cached, status=status.HTTP_200_OK)
 
         if mode == 'local':
             result = local_get_batch_product_overview(target_date)
+            state = _snapshot_state(target_date)
+            result.update({
+                'source': 'local_snapshot',
+                'snapshot_date': target_date.isoformat(),
+                'snapshot_version': state.snapshot_version if state else None,
+            })
         else:
             result = remote_get_batch_product_overview(target_date)
+            result['source'] = 'remote'
 
-        if target_date == date.today() and mode == 'remote':
+        if target_date == business_today and mode == 'remote':
             cache.set(PRODUCT_OVERVIEW_CACHE_KEY, result, 3600)
 
         return Response(result, status=status.HTTP_200_OK)
@@ -649,7 +726,7 @@ def set_targets(request):
     """
     targets = request.data.get('targets', {})
     wo_targets = request.data.get('wo_targets', {})
-    today = date.today()
+    today = get_business_date()
 
     # 1. 保存工单级目标到数据库
     if wo_targets:

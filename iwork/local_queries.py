@@ -1,10 +1,35 @@
 from datetime import date, timedelta
+from contextlib import suppress
+
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Sum, Count
+from django.db.models import Count, F, Sum
+from django.db.models.functions import ExtractHour, TruncDate
 from loguru import logger
 
-from iwork.local_models import LocalPytckreg3, ProductionOrder
+from iwork.local_models import (
+    HistoricalProductionFact,
+    HistoricalSyncState,
+    ProductionOrder,
+)
+
+# 兼容既有测试和内部导入；实际存储已切换为受管理的历史事实表。
+LocalPytckreg3 = HistoricalProductionFact
+
+
+def _history_records():
+    """提供与远程生产表一致的字段名，隐藏本地事实表实现。"""
+    return LocalPytckreg3.objects.using('iwork_local').annotate(
+        TicketNo=F('id'),
+        RegDate=F('registered_date'),
+        RegTime=F('registered_time'),
+        Flow=F('flow'),
+        StationID=F('station_id'),
+        RegPerSysID=F('employee_id'),
+        WrkOrder=F('wrk_order'),
+        StepNo=F('step_no'),
+        Qty=F('qty'),
+    )
 
 
 def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
@@ -40,8 +65,7 @@ def get_date_range(target: date) -> tuple:
 
 def get_records_queryset(target: date) -> object:
     """获取指定日期的 QuerySet（内部使用）"""
-    start, end = get_date_range(target)
-    return LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    return _history_records().filter(production_date=target)
 
 
 def get_basic_stats(target: date, stepno_filter: list[int] | None = None) -> dict:
@@ -65,7 +89,7 @@ def get_hourly_stats(target: date, stepno_filter: list[int] | None = None) -> li
     records = apply_stepno_filter(records, stepno_filter)
     records = apply_flow_filter(records, stepno_filter)
     stats = list(
-        records.extra(select={'hour': 'HOUR(RegTime)'})
+        records.annotate(hour=ExtractHour('registered_time'))
         .values('hour')
         .annotate(qty=Sum('Qty'))
         .order_by('hour')
@@ -199,7 +223,7 @@ def get_workorders_list(target: date, limit: int = 20,
 def get_workorder_detail(wrk_order: str, target: date) -> dict:
     """获取本地工单详情"""
     start, end = get_date_range(target)
-    records = LocalPytckreg3.objects.using('iwork_local').filter(
+    records = _history_records().filter(
         WrkOrder=wrk_order,
         RegDate__gte=start,
         RegDate__lt=end
@@ -223,10 +247,10 @@ def get_monthly_total_trend(start_date: date, end_date: date,
     """获取本地当月每日总产量趋势"""
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
-    records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)
     records = apply_stepno_filter(records, stepno_filter)
     stats = list(
-        records.extra(select={'reg_date': 'DATE(RegDate)'})
+        records.annotate(reg_date=TruncDate('registered_date'))
         .values('reg_date')
         .annotate(qty=Sum('Qty'))
         .order_by('reg_date')
@@ -240,13 +264,13 @@ def get_monthly_process_stats(start_date: date, end_date: date,
     """获取本地当月每日×工序产量"""
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
-    records = LocalPytckreg3.objects.using('iwork_local').filter(
+    records = _history_records().filter(
         RegDate__gte=start,
         RegDate__lt=end,
         StepNo__in=stepno_list
     )
     stats = list(
-        records.extra(select={'reg_date': 'DATE(RegDate)'})
+        records.annotate(reg_date=TruncDate('registered_date'))
         .values('reg_date', 'StepNo')
         .annotate(qty=Sum('Qty'))
         .order_by('reg_date', 'StepNo')
@@ -273,7 +297,7 @@ def get_heatmap_data(target_date: date,
     records = apply_stepno_filter(records, stepno_filter)
     records = records.exclude(Flow='')
     stats = list(
-        records.extra(select={'hour': 'HOUR(RegTime)'})
+        records.annotate(hour=ExtractHour('registered_time'))
         .values('hour', 'Flow')
         .annotate(qty=Sum('Qty'))
         .order_by('hour', 'Flow')
@@ -343,10 +367,12 @@ def get_available_dates(mode: str = 'local') -> list:
         list: 可用日期列表
     """
     if mode == 'local':
-        dates = LocalPytckreg3.objects.using('iwork_local').dates(
-            'RegDate', 'day', order='DESC'
+        return list(
+            HistoricalSyncState.objects.using('iwork_local')
+            .filter(status=HistoricalSyncState.Status.SUCCESS)
+            .values_list('snapshot_date', flat=True)
+            .order_by('-snapshot_date')
         )
-        return list(dates)
     else:
         from iwork.models import Pytckreg3
         dates = Pytckreg3.objects.using('iwork').dates(
@@ -373,7 +399,7 @@ def get_batch_hourly_stats(target_date: date) -> dict:
     records = get_records_queryset(target_date)
     records = apply_batch_flow_filter(records)
     rows = list(
-        records.extra(select={'hour': 'HOUR(RegTime)'})
+        records.annotate(hour=ExtractHour('registered_time'))
         .values('StepNo', 'hour').annotate(qty=Sum('Qty')).order_by('StepNo', 'hour')
     )
     result = {}
@@ -395,7 +421,11 @@ def get_batch_process_by_flow(target_date: date) -> dict:
 def get_batch_heatmap_data(target_date: date) -> dict:
     records = get_records_queryset(target_date).exclude(Flow='')
     records = apply_batch_flow_filter(records)
-    rows = list(records.extra(select={'hour': 'HOUR(RegTime)'}).values('StepNo', 'hour', 'Flow').annotate(qty=Sum('Qty')))
+    rows = list(
+        records.annotate(hour=ExtractHour('registered_time'))
+        .values('StepNo', 'hour', 'Flow')
+        .annotate(qty=Sum('Qty'))
+    )
     from iwork.queries import _groupby
     result = {}
     for stepno_key, group_rows in _groupby(rows, 'StepNo'):
@@ -448,9 +478,9 @@ def get_batch_workorders_list(target_date: date, limit: int = 20) -> dict:
 def get_batch_monthly_total_trend(start_date: date, end_date: date) -> dict:
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
-    records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)
     records = apply_batch_flow_filter(records)
-    rows = list(records.extra(select={'reg_date': 'DATE(RegDate)'})
+    rows = list(records.annotate(reg_date=TruncDate('registered_date'))
                 .values('StepNo', 'reg_date').annotate(qty=Sum('Qty')).order_by('StepNo', 'reg_date'))
     result = {}
     for r in rows:
@@ -461,9 +491,9 @@ def get_batch_monthly_total_trend(start_date: date, end_date: date) -> dict:
 def get_batch_monthly_process_stats(start_date: date, end_date: date) -> dict:
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
-    records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)
     records = apply_batch_flow_filter(records)
-    rows = list(records.extra(select={'reg_date': 'DATE(RegDate)'})
+    rows = list(records.annotate(reg_date=TruncDate('registered_date'))
                 .values('StepNo', 'reg_date').annotate(qty=Sum('Qty')).order_by('StepNo', 'reg_date'))
     result = {}
     for r in rows:
@@ -475,10 +505,13 @@ def get_batch_monthly_hourly_stats(start_date: date, end_date: date) -> dict:
     """月内每天×每小时×工序的产量：{stepno: [{date, hour, qty}]}，单次SQL"""
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
-    records = LocalPytckreg3.objects.using('iwork_local').filter(RegDate__gte=start, RegDate__lt=end)
+    records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)
     records = apply_batch_flow_filter(records)
     rows = list(
-        records.extra(select={'reg_date': 'DATE(RegDate)', 'hour': 'HOUR(RegTime)'})
+        records.annotate(
+            reg_date=TruncDate('registered_date'),
+            hour=ExtractHour('registered_time'),
+        )
         .values('StepNo', 'reg_date', 'hour')
         .annotate(qty=Sum('Qty'))
         .order_by('StepNo', 'reg_date', 'hour')
@@ -565,7 +598,7 @@ def get_batch_flow_hourly(target_date: date) -> dict:
     """
     records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
     rows = list(
-        records.extra(select={'hour': 'HOUR(RegTime)'})
+        records.annotate(hour=ExtractHour('registered_time'))
         .values('Flow', 'hour')
         .annotate(qty=Sum('Qty'))
         .order_by('Flow', 'hour')
@@ -806,10 +839,8 @@ def _apply_kanban_filters(queryset, stepnos=None, wrk_orders=None,
                           flows=None, reg_per_sys_ids=None):
     """产量看板通用筛选器（内部工具函数）"""
     if stepnos:
-        try:
+        with suppress(ValueError, TypeError):
             stepnos = [int(s) for s in stepnos]
-        except (ValueError, TypeError):
-            pass
         queryset = queryset.filter(StepNo__in=stepnos)
     if wrk_orders:
         queryset = queryset.filter(WrkOrder__in=wrk_orders)
@@ -841,7 +872,7 @@ def _merge_worker_rows(rows):
         if r['Flow']:
             entry['flows'].add(r['Flow'])
     result = []
-    for eid, entry in worker_map.items():
+    for entry in worker_map.values():
         result.append({
             'reg_per_sys_id': entry['reg_per_sys_id'],
             'worker_name': entry['worker_name'],
