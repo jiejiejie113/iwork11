@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-07-14
+> 最后更新：2026-07-16
 
 ---
 
@@ -10,15 +10,17 @@
 ```
 Uvicorn ASGI (4 workers)
     ├── 实时数据：Celery Beat (60s) → statistics.py → Redis → SSE 推送 + API 读缓存
-    ├── 历史数据：API → statistics.py → queries.py 直查远程库
-    ├── 本地历史：API → statistics.py → local_queries.py 查本地库
-    └── 生产详情：API → api_views.py → queries/local_queries → Redis 缓存
+    ├── 历史数据：API → local_queries.py → 本地历史事实表
+    ├── 历史同步：Celery/管理命令 → history_store.py → 本地事务快照
+    └── 生产详情：今日读 Redis；历史读 historical_queries.py
 ```
 
 | 文件 | 职责 |
 |------|------|
 | `queries.py` | 远程数据库查询（iwork 只读） |
-| `local_queries.py` | 本地数据库查询（iwork_local 读写），与 queries.py 镜像 |
+| `local_queries.py` | 从本地历史事实表构建历史总览 |
+| `historical_queries.py` | 从历史事实和元数据快照构建生产详情 |
+| `history_store.py` | 远程只读聚合、校验和本地事务发布 |
 | `statistics.py` | 缓存编排层：批量构建 + Redis 读写 + 回退逻辑 |
 | `api_views.py` | 实时看板 API + 生产详情 API（含异步 SSE） |
 | `api_views_local.py` | 历史数据 API + 数据同步 API |
@@ -118,8 +120,8 @@ flows = list(settings.VISIBLE_FLOWS)
 
 `get_batch_flow_employees` 按 `(WrkOrder, StepNo)` 从 `Pywrkstp` 批量注入
 `description`、`step_time` 和 `output_value`。员工节点汇总 `output_value`；任一工序
-缺少标准工时时汇总值为 `null`。本地历史查询远程元数据失败时保留产量并将元数据
-和产值降级为空。
+缺少标准工时时汇总值为 `null`。历史详情必须读取 `HistoricalStepSnapshot`，不得在
+普通请求中回查远程元数据，避免元数据变化改写历史产值。
 
 Flow 详情缓存使用 `stats:detail:flow:v2:<flow_name>`。缓存不保存实时效率；接口按
 请求时刻注入 `work_minutes` 和 `employee_efficiency`。
@@ -248,6 +250,12 @@ const workorderItems = computed(() => {
 | `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
 | `employees[].output_value` | `emp.output_value` | 员工总产值 |
 | `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
+| `source` | 历史快照标识 | `local_snapshot` 表示本地只读历史数据 |
+| `snapshot_date` / `snapshot_version` | 历史状态 | 标识快照日期和发布版本 |
+
+历史日期通过 URL 的 `date` 参数传递。Flow、工序和产品视图之间的导航必须保留日期；
+历史日期禁止目标编辑和 60 秒自动刷新。快照不存在时应显示接口返回的明确错误，不能
+把错误 JSON 当作概览卡片数据。
 
 ### 8.3 修改规则
 

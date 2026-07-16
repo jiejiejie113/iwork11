@@ -156,6 +156,9 @@
 
     <!-- 静默加载条 -->
     <div v-if="isLoading" class="loading-bar" :style="{ width: loadingProgress + '%' }"></div>
+    <div v-if="loadError" class="mb-3 px-3 py-2 text-sm text-red-200 bg-red-950 border border-red-700 rounded-md">
+        {[ loadError ]}
+    </div>
 
     <!-- ===== 概览页 ===== -->
     <div v-if="currentView === 'overview'" class="flex-1 flex flex-col overflow-hidden">
@@ -714,11 +717,13 @@ createApp({
             basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
         ));
         const isLoading = ref(false);
+        const loadError = ref('');
         const loadingProgress = ref(0);
         let loadingTimer = null;
 
         function showLoading() {
             isLoading.value = true;
+            loadError.value = '';
             loadingProgress.value = 0;
             // 模拟进度条增长（最多到 90%，剩余在数据加载完成后到 100%）
             loadingTimer = setInterval(() => {
@@ -923,6 +928,14 @@ createApp({
                 }
             }
             return rows;
+        }
+
+        async function readResponse(response) {
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || `请求失败 (${response.status})`);
+            }
+            return payload;
         }
 
         const productChartItems = computed(() => {
@@ -1786,8 +1799,8 @@ createApp({
                     fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
                     fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
                 ]);
-                const flowData = await flowResp.json();
-                const woData = await woResp.json();
+                const flowData = await readResponse(flowResp);
+                const woData = await readResponse(woResp);
 
                 // 处理 Flow 卡片数据（全部工序）
                 const cards = [];
@@ -1817,7 +1830,7 @@ createApp({
                 renderOverviewCharts();
                 // 启动工单列表自动滚动
                 startWorkorderScroll();
-            } catch (e) { console.error('加载生产线概览失败:', e); }
+            } catch (e) { loadError.value = e.message; console.error('加载生产线概览失败:', e); }
             finally { hideLoading(); }
         }
 
@@ -1842,7 +1855,7 @@ createApp({
             try {
                 // 一次请求拿到所有工序汇总（Batch 引擎已缓存到 Redis）
                 const resp = await fetch(`${basePath}api/dashboard/detail/stepno-overview/?date=${selectedDate.value}`);
-                const data = await resp.json();
+                const data = await readResponse(resp);
                 const cards = [];
                 for (const [stepno, info] of Object.entries(data)) {
                     // 概览页面不显示目标产量（无法精确计算每个工序的目标）
@@ -1856,7 +1869,7 @@ createApp({
                     });
                 }
                 stepnoCards.value = cards.sort((a, b) => a.stepno - b.stepno);
-            } catch (e) { console.error('加载工序概览失败:', e); }
+            } catch (e) { loadError.value = e.message; console.error('加载工序概览失败:', e); }
             finally {
                 hideLoading();
                 await nextTick();
@@ -1869,10 +1882,10 @@ createApp({
             activePath.value = [];
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
-                const data = await resp.json();
+                const data = await readResponse(resp);
                 productList.value = data.products || [];
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
-            } catch (e) { console.error('加载产品概览失败:', e); }
+            } catch (e) { loadError.value = e.message; console.error('加载产品概览失败:', e); }
             finally {
                 hideLoading();
                 await nextTick();
@@ -1893,7 +1906,7 @@ createApp({
                 } else {
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${key}/?date=${selectedDate.value}`);
                 }
-                const data = await resp.json();
+                const data = await readResponse(resp);
                 // 从 localStorage 读取目标作为兜底
                 const dateStr = selectedDate.value || businessDateString();
                 const localTargets = JSON.parse(localStorage.getItem(`targets:${dateStr}`) || '{}');
@@ -1912,7 +1925,7 @@ createApp({
                 });
                 currentView.value = 'detail';
                 loadCardOrder();
-            } catch (e) { console.error('加载详情失败:', e); }
+            } catch (e) { loadError.value = e.message; console.error('加载详情失败:', e); }
             finally { hideLoading(); }
         }
 
@@ -2183,7 +2196,7 @@ createApp({
             searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             selectedDate, isHistoricalDate, overviewUrl, changeProductionDate,
-            isLoading, loadingProgress, wsConnected, lastUpdateTime,
+            isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             filteredFlowCards, filteredStepnoCards,

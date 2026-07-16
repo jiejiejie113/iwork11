@@ -83,4 +83,6 @@ def test_historical_detail_keeps_date_and_disables_live_actions():
     assert "!isEditing && !isHistoricalDate" in TEMPLATE
     assert "if (isHistoricalDate.value) return;" in TEMPLATE
     assert "'?date=' + encodeURIComponent(selectedDate.value)" in TEMPLATE
+    assert 'v-if="loadError"' in TEMPLATE
+    assert 'payload.error || `请求失败 (${response.status})`' in TEMPLATE
     assert "new Date().toISOString().split('T')[0]" not in TEMPLATE

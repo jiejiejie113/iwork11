@@ -34,7 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 数据库路由器：`iwork/database_router.py`。路由规则：
 
-- `app_label='iwork'` 模型 → `iwork` 数据库（只读），但 `LocalPytckreg3` → `iwork_local`（读写）
+- `app_label='iwork'` 模型 → `iwork` 数据库（只读）；本地历史快照、目标和产品映射模型 → `iwork_local`（读写）
 - 其他 app 模型 → `default` 数据库（读写）
 - 远程 `iwork` 数据库 **禁止写入**（`db_for_write` 返回 `None`）
 - 禁止跨数据库建立 `ForeignKey` 关系
@@ -48,9 +48,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```text
 queries.py          ← 远程数据库查询（iwork 只读）
-local_queries.py    ← 本地数据库查询（iwork_local 读写），与 queries.py 函数签名镜像
+local_queries.py    ← 本地历史总览查询（iwork_local）
+historical_queries.py ← 本地历史生产详情查询
+history_store.py    ← 远程只读聚合、校验和本地事务发布
 statistics.py       ← 缓存编排层：批量构建 + Redis 读写 + 回退逻辑
-sync.py             ← 远程→本地数据同步（逐日、逐条对比变更）
+snapshot_history 命令 / history_store.py ← 按日期生成本地聚合快照
 tasks.py            ← Celery 定时任务：每 60s 批量构建统计 → Redis → SSE 推送
 api_views.py        ← 实时看板 API + 生产详情 API
 api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同步 API
@@ -72,19 +74,19 @@ api_views_local.py  ← 历史数据 API（本地/远程双模式）+ 数据同�
 ### 数据流
 
 - **实时视图**：Celery Beat (60s) → `sync_dashboard_stats` → `get_batch_stats()`（6 线程并行）→ Redis → SSE push + API 读缓存
-- **历史视图**：API 请求 → `statistics.get_date_stats()` → `queries.py` 直接查远程库（无缓存，每次实时查询）
-- **本地历史视图**：API 请求 → `statistics.get_local_date_stats()` → `local_queries.py` 查本地库
-- **数据同步**：`POST /api/history/sync/{date}/` → `sync_date_data()` → 逐条对比 → 新增/更新本地记录
+- **历史视图**：API 请求 → `statistics.get_local_date_stats()` → 本地聚合事实表
+- **历史生产详情**：API 请求 → `historical_queries.py` → 本地事实表 + 元数据快照
+- **数据同步**：管理命令/Celery → `snapshot_history_date()` → 远程按日聚合 → 本地事务发布
 
-### 查询模块镜像
+### 历史查询模块
 
-`queries.py` 和 `local_queries.py` 提供相同的函数签名，通过 statistics 层的 `q` 参数切换：
-`get_basic_stats`、`get_hourly_stats`、`get_process_stats`、`get_process_by_flow`、`get_workorders_list`、`get_station_ranking`、`get_all_stepnos` 以及以下 batch 查询：`get_batch_basic_stats`、`get_batch_hourly_stats`、`get_batch_process_by_flow`、`get_batch_station_ranking`、`get_batch_workorders_list`、`get_batch_flow_overview`、`get_batch_flow_hourly`、`get_batch_flow_employees`、`get_batch_stepno_employees`、`get_batch_monthly_total_trend`、`get_batch_monthly_process_stats`。
+`local_queries.py` 保持历史总览所需的统计函数；`historical_queries.py` 专门构建 Flow、
+工序和产品生产详情。历史详情不得在普通请求中回查远程工序元数据。
 
 ### 关键设计决策
 
 - **今日数据**：通过 Celery 预计算到 Redis（`stats:realtime:{stepno_key}`），TTL 到午夜。API 直接读缓存，缓存未命中时回退到数据库实时查询。
-- **历史数据**：每次请求都实时查询数据库（不缓存），因为历史日期数据不再变更。
+- **历史数据**：读取本地按日发布的聚合快照；显式 `mode=remote` 只用于管理员对账。
 - **月趋势**：Redis 独立缓存（`batch_monthly:{year}{month}`），TTL 30 天。每日只查今日数据并追加到已有缓存，避免全月重查。
 - **本地库用途**：用于历史数据查询（减少远程库压力）和离线分析。
 
