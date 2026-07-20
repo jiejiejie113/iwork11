@@ -48,6 +48,13 @@ def test_product_chart_switches_and_sorts_by_selected_metric():
     assert 'items.sort((a, b) => b.value - a.value)' in TEMPLATE
 
 
+def test_product_chart_uses_compact_height_on_tablet_viewports():
+    assert 'class="product-chart-panel ' in TEMPLATE
+    assert '@media (min-width: 768px) and (max-width: 1366px)' in TEMPLATE
+    assert 'height: clamp(180px, 24vh, 220px);' in TEMPLATE
+    assert 'style="height:300px;"' not in TEMPLATE
+
+
 def test_flow_table_uses_composite_key_step_rows():
     assert '>本厂款号</th>' in TEMPLATE
     assert '>工序号</th>' in TEMPLATE
