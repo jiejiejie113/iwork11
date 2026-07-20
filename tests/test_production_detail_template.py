@@ -55,6 +55,16 @@ def test_product_chart_uses_compact_height_on_tablet_viewports():
     assert 'style="height:300px;"' not in TEMPLATE
 
 
+def test_product_dimension_drag_is_frame_throttled_and_composited():
+    assert 'will-change: transform;' in TEMPLATE
+    assert 'let tagDragFrame = null;' in TEMPLATE
+    assert 'requestAnimationFrame(flushTagPointerMove)' in TEMPLATE
+    assert 'translate3d(${dx}px, ${dy}px, 0) scale(1.12)' in TEMPLATE
+    assert "window.addEventListener('pointercancel', onTagPointerCancel);" in TEMPLATE
+    assert "window.removeEventListener('pointercancel', onTagPointerCancel);" in TEMPLATE
+    assert 'if (activeTagDrag.value) onTagPointerCancel();' in TEMPLATE
+
+
 def test_flow_table_uses_composite_key_step_rows():
     assert '>本厂款号</th>' in TEMPLATE
     assert '>工序号</th>' in TEMPLATE
