@@ -1,4 +1,5 @@
 #!/bin/bash
+# 使用 LF 行尾，供 Linux 容器直接执行。
 set -e
 
 echo "=== iwork Docker Startup Script ==="
