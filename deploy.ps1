@@ -63,8 +63,14 @@ if (& docker ps --filter 'name=DKT_kc_nginx' --format '{{.Names}}') {
 
 $deadline = [DateTime]::UtcNow.AddSeconds(60)
 do {
-    & docker exec DKT_iwork python -c "import urllib.request; request = urllib.request.Request('http://127.0.0.1:8000/', headers={'Host': 'iwork'}); response = urllib.request.urlopen(request); assert response.status == 200" 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $healthExitCode = 1
+    try {
+        & docker exec DKT_iwork python -c "import urllib.request; request = urllib.request.Request('http://127.0.0.1:8000/', headers={'Host': 'iwork'}); response = urllib.request.urlopen(request); assert response.status == 200" 2>$null
+        $healthExitCode = $LASTEXITCODE
+    } catch {
+        $healthExitCode = 1
+    }
+    if ($healthExitCode -eq 0) {
         Write-Host "iwork deployment completed: $Environment (HTTP 200)" -ForegroundColor Green
         exit 0
     }
