@@ -1,11 +1,15 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from threading import Event, Thread
 
+from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Count, Sum
 from django.db.models.functions import ExtractHour
 from django.utils import timezone
 from loguru import logger
+from redis.exceptions import LockNotOwnedError
 
 from iwork.local_models import (
     HistoricalProductionFact,
@@ -16,6 +20,20 @@ from iwork.local_models import (
 from iwork.models import Pytckreg3
 from iwork.queries import get_batch_step_metadata, get_date_range
 from iwork.statistics import get_business_date
+
+
+# ======
+# 历史快照锁配置
+HISTORY_SNAPSHOT_LOCK_TIMEOUT = settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT
+HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = settings.HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL
+
+
+class SnapshotBuildInProgressError(RuntimeError):
+    """同一日期的历史快照已经在构建。"""
+
+
+class SnapshotBuildLeaseLostError(SnapshotBuildInProgressError):
+    """历史快照构建任务已失去分布式锁所有权。"""
 
 
 @dataclass(frozen=True)
@@ -30,6 +48,14 @@ class RemoteHistorySource:
     """从远程只读生产库构建一个日期的聚合快照载荷。"""
 
     def load(self, target_date: date) -> HistorySnapshotPayload:
+        """从远程只读库构建指定日期的聚合载荷。
+
+        Args:
+            target_date: 已结束的曼谷业务日期。
+
+        Returns:
+            经过聚合的生产事实、工序元数据和源数据计数。
+        """
         start, end = get_date_range(target_date)
         rows = list(
             Pytckreg3.objects.using('iwork')
@@ -65,6 +91,7 @@ class RemoteHistorySource:
 
     @staticmethod
     def _load_metadata(facts: list[dict]) -> list[dict]:
+        """批量加载快照事实引用的工序与产品元数据。"""
         pairs = sorted({
             (row['wrk_order'], row['step_no'])
             for row in facts
@@ -106,10 +133,100 @@ class RemoteHistorySource:
 
 
 def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState:
-    """构建并原子发布一个已结束生产日期的本地历史快照。"""
+    """构建并原子发布一个已结束生产日期的本地历史快照。
+
+    Args:
+        target_date: 需要生成快照的曼谷业务日期。
+        source: 可选的远程数据源适配器。
+
+    Returns:
+        发布成功后的历史同步状态。
+
+    Raises:
+        SnapshotBuildInProgressError: 同一日期已有其他构建任务。
+        ValueError: 目标日期尚未结束或载荷校验失败。
+    """
+    lock_key = f'history:snapshot:build:{target_date.isoformat()}'
+    lock = cache.lock(
+        lock_key,
+        timeout=HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+        blocking_timeout=0,
+        thread_local=False,
+    )
+    if not lock.acquire(blocking=False):
+        raise SnapshotBuildInProgressError(f'{target_date} 的历史快照正在构建')
+
+    stop_renewal = Event()
+    lease_lost = Event()
+    renewal_thread = Thread(
+        target=_renew_snapshot_lock,
+        args=(lock, target_date, stop_renewal, lease_lost),
+        name=f'history-snapshot-lock-{target_date.isoformat()}',
+        daemon=True,
+    )
+    renewal_thread.start()
+
+    def ensure_lock_owned() -> None:
+        """确认当前任务仍持有同日期快照锁。"""
+        if lease_lost.is_set() or not lock.owned():
+            raise SnapshotBuildLeaseLostError(f'{target_date} 的历史快照构建锁已失效')
+
+    try:
+        return _snapshot_history_date_locked(
+            target_date,
+            source=source,
+            ensure_lock_owned=ensure_lock_owned,
+        )
+    finally:
+        stop_renewal.set()
+        renewal_thread.join(timeout=5)
+        try:
+            lock.release()
+        except LockNotOwnedError:
+            logger.warning('历史快照 {} 的构建锁已过期或所有权已变化，不执行释放', target_date)
+
+
+def _renew_snapshot_lock(lock, target_date: date, stop_event: Event, lease_lost: Event) -> None:
+    """定期续租历史快照锁，防止长查询期间租约自然过期。
+
+    Args:
+        lock: django-redis 分布式锁实例。
+        target_date: 当前构建的曼谷业务日期。
+        stop_event: 主任务完成后用于停止续租线程的事件。
+        lease_lost: 续租失败时通知主任务终止发布的事件。
+    """
+    while not stop_event.wait(HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL):
+        try:
+            if not lock.extend(HISTORY_SNAPSHOT_LOCK_TIMEOUT, replace_ttl=True):
+                lease_lost.set()
+                logger.error('历史快照 {} 的构建锁续租失败', target_date)
+                return
+        except Exception as exc:
+            lease_lost.set()
+            logger.error('历史快照 {} 的构建锁续租异常: {}', target_date, exc)
+            return
+
+
+def _snapshot_history_date_locked(
+    target_date: date,
+    source=None,
+    ensure_lock_owned=None,
+) -> HistoricalSyncState:
+    """在持有单日期构建锁时生成并发布历史快照。
+
+    Args:
+        target_date: 需要生成快照的曼谷业务日期。
+        source: 可选的远程数据源适配器。
+        ensure_lock_owned: 发布前验证分布式锁所有权的回调。
+
+    Returns:
+        发布成功后的历史同步状态。
+    """
     if target_date >= get_business_date():
         raise ValueError('只能持久化已经结束的历史日期')
 
+    ensure_lock_owned = ensure_lock_owned or (lambda: None)
+    ensure_lock_owned()
     source = source or RemoteHistorySource()
     existing = HistoricalSyncState.objects.using('iwork_local').filter(
         snapshot_date=target_date,
@@ -135,6 +252,7 @@ def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState
     try:
         payload = source.load(target_date)
         _validate_payload(payload)
+        ensure_lock_owned()
         registered_date = timezone.make_aware(datetime.combine(target_date, time.min))
         fact_objects = []
         for row in payload.facts:
@@ -156,6 +274,15 @@ def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState
         ]
 
         with transaction.atomic(using='iwork_local'):
+            state = HistoricalSyncState.objects.using('iwork_local').select_for_update().get(
+                pk=state.pk,
+            )
+            ensure_lock_owned()
+            version = (
+                state.snapshot_version + 1
+                if state.status == HistoricalSyncState.Status.SUCCESS
+                else state.snapshot_version
+            )
             HistoricalProductionFact.objects.using('iwork_local').filter(
                 production_date=target_date,
             ).delete()
@@ -170,6 +297,7 @@ def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState
                 metadata_objects,
                 batch_size=2000,
             )
+            ensure_lock_owned()
             state.status = HistoricalSyncState.Status.SUCCESS
             state.source_row_count = payload.source_row_count
             state.source_total_qty = payload.source_total_qty
@@ -199,6 +327,7 @@ def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState
 
 
 def _validate_payload(payload: HistorySnapshotPayload) -> None:
+    """校验聚合载荷与源数据记录数及总产量一致。"""
     fact_row_count = sum(row['source_record_count'] for row in payload.facts)
     fact_total_qty = sum(row['qty'] for row in payload.facts)
     if fact_row_count != payload.source_row_count:

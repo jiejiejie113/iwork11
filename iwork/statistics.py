@@ -13,9 +13,14 @@ from iwork import local_queries as local_q
 # 业务配置引用（统一在 settings.py 中定义）
 MONTHLY_CACHE_TTL = settings.MONTHLY_CACHE_TTL
 QUERY_TIMEOUT = settings.QUERY_TIMEOUT
-PRODUCT_OVERVIEW_CACHE_KEY = 'stats:detail:product_overview:v4'
-FLOW_DETAIL_CACHE_PREFIX = 'stats:detail:flow:v2'
-BUSINESS_TIME_ZONE = ZoneInfo('Asia/Bangkok')
+PRODUCT_OVERVIEW_CACHE_NAME = settings.PRODUCT_OVERVIEW_CACHE_NAME
+FLOW_DETAIL_CACHE_NAME = settings.FLOW_DETAIL_CACHE_NAME
+DETAIL_CACHE_PREFIX = settings.DETAIL_CACHE_PREFIX
+REALTIME_PROCESS_LIST_CACHE_PREFIX = settings.REALTIME_PROCESS_LIST_CACHE_PREFIX
+BUSINESS_TIME_ZONE = ZoneInfo(settings.IWORK_BUSINESS_TIME_ZONE)
+WORKDAY_START_MINUTE = settings.WORKDAY_START_MINUTE
+WORKDAY_LUNCH_START_MINUTE = settings.WORKDAY_LUNCH_START_MINUTE
+WORKDAY_LUNCH_END_MINUTE = settings.WORKDAY_LUNCH_END_MINUTE
 
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）
@@ -44,9 +49,16 @@ def _result_or_cancel(future, name: str, timeout: int = QUERY_TIMEOUT):
         raise
 
 
-def _seconds_to_midnight() -> int:
-    """计算距离今晚 24:00 的剩余秒数"""
-    now = datetime.now()
+def _seconds_to_midnight(current_time: datetime | None = None) -> int:
+    """计算距离曼谷业务日午夜的剩余秒数。
+
+    Args:
+        current_time: 可选的当前时间；主要用于稳定验证跨时区边界。
+
+    Returns:
+        距离下一个曼谷午夜的秒数，并增加五秒边界余量。
+    """
+    now = _as_business_time(current_time)
     midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return int((midnight - now).total_seconds()) + 5  # +5s 兜底避免边界条件
 
@@ -73,6 +85,7 @@ def calculate_flow_efficiency(avg_time: float | None, baseline: float | None) ->
 
 
 def _as_business_time(current_time: datetime | None = None) -> datetime:
+    """将指定时间转换为曼谷业务时区时间。"""
     now = current_time or datetime.now(BUSINESS_TIME_ZONE)
     if now.tzinfo is None:
         now = now.replace(tzinfo=BUSINESS_TIME_ZONE)
@@ -94,13 +107,41 @@ def get_effective_work_minutes(
         return None
 
     current_minutes = now.hour * 60 + now.minute
-    if current_minutes < 7 * 60:
+    if current_minutes < WORKDAY_START_MINUTE:
         return None
-    if current_minutes < 11 * 60:
-        return current_minutes - 7 * 60
-    if current_minutes < 12 * 60:
-        return 4 * 60
-    return current_minutes - 8 * 60
+    if current_minutes < WORKDAY_LUNCH_START_MINUTE:
+        return current_minutes - WORKDAY_START_MINUTE
+    if current_minutes < WORKDAY_LUNCH_END_MINUTE:
+        return WORKDAY_LUNCH_START_MINUTE - WORKDAY_START_MINUTE
+    lunch_minutes = WORKDAY_LUNCH_END_MINUTE - WORKDAY_LUNCH_START_MINUTE
+    return current_minutes - WORKDAY_START_MINUTE - lunch_minutes
+
+
+def detail_cache_key(name: str, target_date: date | None = None) -> str:
+    """生成按曼谷业务日期隔离的详情缓存键。
+
+    Args:
+        name: 详情缓存的逻辑名称。
+        target_date: 缓存所属业务日期；默认取当前曼谷业务日。
+
+    Returns:
+        包含业务日期的详情缓存键。
+    """
+    business_date = target_date or get_business_date()
+    return f'{DETAIL_CACHE_PREFIX}:{business_date.isoformat()}:{name}'
+
+
+def realtime_process_list_cache_key(target_date: date | None = None) -> str:
+    """生成按曼谷业务日期隔离的实时工序列表缓存键。
+
+    Args:
+        target_date: 缓存所属业务日期；默认取当前曼谷业务日。
+
+    Returns:
+        包含业务日期的实时工序列表缓存键。
+    """
+    business_date = target_date or get_business_date()
+    return f'{REALTIME_PROCESS_LIST_CACHE_PREFIX}:{business_date.isoformat()}'
 
 
 def calculate_employee_efficiency(
@@ -126,7 +167,7 @@ def _merge_batch_top_processes(batch_basic: dict) -> list:
 def _merge_batch_station_full(batch_station: dict) -> list:
     """合并全部工序的工站排行（全工序无区分）——用于 'all' 视图"""
     merged = {}
-    for stepno, stations in batch_station.items():
+    for stations in batch_station.values():
         for s in stations:
             merged[s['station']] = merged.get(s['station'], 0) + s['qty']
     return [{'station': k, 'qty': v} for k, v in
@@ -136,7 +177,7 @@ def _merge_batch_station_full(batch_station: dict) -> list:
 def _merge_batch_process_flow(batch_pf: dict) -> list:
     """合并全工序的 Flow 分组数据 → 用于 'all' 视图"""
     merged = []
-    for stepno, items in batch_pf.items():
+    for items in batch_pf.values():
         merged.extend(items)
     return merged
 
@@ -144,7 +185,7 @@ def _merge_batch_process_flow(batch_pf: dict) -> list:
 def _merge_batch_monthly_total(batch_monthly_total: dict) -> list:
     """合并全工序的月总趋势，按 date 聚合求和"""
     merged = {}
-    for stepno, items in batch_monthly_total.items():
+    for items in batch_monthly_total.values():
         for item in items:
             d = item['date']
             merged[d] = merged.get(d, 0) + item['qty']
@@ -223,7 +264,7 @@ def _assemble_stepno_stats(stepno, batch_basic, batch_hourly, batch_pf,
     }
 
 
-def get_batch_stats(q=None) -> dict:
+def get_batch_stats(q=None, target_date: date | None = None) -> dict:
     """
     一次性构建所有工序的统计数据 → {stepno: stats_dict, 'all': stats_dict}
 
@@ -232,7 +273,7 @@ def get_batch_stats(q=None) -> dict:
     if q is None:
         q = remote_q
 
-    today = date.today()
+    today = target_date or get_business_date()
     month_start = date(today.year, today.month, 1)
 
     # ---- 第 1 阶段：并行 batch 查询（6 个维度） ----
@@ -261,7 +302,7 @@ def get_batch_stats(q=None) -> dict:
     else:
         logger.info('第2阶段：月趋势查询开始')
         t2 = time.time()
-        month_key = f'batch_monthly:{today.year}{today.month}'
+        month_key = f'batch_monthly:{today.year}{today.month}:{today.isoformat()}'
         cached_monthly = cache.get(month_key) or {}
         today_str = str(today)
 
@@ -311,7 +352,7 @@ def get_batch_stats(q=None) -> dict:
     all_station_full = _merge_batch_station_full(batch_station)
     all_hourly = []
     hourly_merged = {}
-    for stepno, items in batch_hourly.items():
+    for items in batch_hourly.values():
         for item in items:
             h = item['hour']
             if h is not None:
@@ -321,7 +362,7 @@ def get_batch_stats(q=None) -> dict:
     all_wo = []
     wo_merged = {}
     wo_flows = {}
-    for stepno, items in batch_wo.items():
+    for items in batch_wo.values():
         for item in items:
             k = item['wrk_order']
             wo_merged[k] = wo_merged.get(k, 0) + item['total_qty']
@@ -364,11 +405,15 @@ def get_batch_stats(q=None) -> dict:
     return batch
 
 
-def cache_batch_to_redis(batch: dict) -> None:
-    """将批量结果写入 Redis（每个工序独立 key，TTL 到午夜）"""
+def cache_batch_to_redis(batch: dict, target_date: date | None = None) -> None:
+    """将批量结果写入 Redis，并在曼谷业务日午夜失效。
+
+    Args:
+        batch: 按工序组织的实时统计批次。
+        target_date: 批次所属的曼谷业务日期。
+    """
     ttl = _seconds_to_midnight()
-    today = date.today()
-    month_key = f'batch_monthly:{today.year}{today.month}'
+    business_date = target_date or get_business_date()
 
     t1 = time.time()
     for stepno, stats in batch.items():
@@ -376,16 +421,16 @@ def cache_batch_to_redis(batch: dict) -> None:
         cache.set(key, stats, ttl)
 
     # 缓存工序列表
-    process_list = [s for s in batch.keys() if s != 'all']
-    cache.set('stats:realtime:_process_list', process_list, ttl)
+    process_list = [s for s in batch if s != 'all']
+    cache.set(realtime_process_list_cache_key(business_date), process_list, ttl)
     logger.info('Redis 缓存写入完成，{} 个 key，耗时 {:.1f}s', len(batch), time.time() - t1)
 
 
-def get_batch_detail_stats(q=None) -> dict:
+def get_batch_detail_stats(q=None, target_date: date | None = None) -> dict:
     """批量构建生产详情数据 → {flow_overview, flow_hourly, flow_employees, stepno_employees, product_overview}"""
     if q is None:
         q = remote_q
-    today = date.today()
+    today = target_date or get_business_date()
 
     logger.info('生产详情：5线程并行查询开始')
     t1 = time.time()
@@ -409,19 +454,36 @@ def get_batch_detail_stats(q=None) -> dict:
     return result
 
 
-def cache_detail_batch_to_redis(detail_batch: dict) -> None:
-    """将批量详情结果写入 Redis"""
+def cache_detail_batch_to_redis(
+    detail_batch: dict,
+    target_date: date | None = None,
+) -> None:
+    """将批量详情结果写入按业务日期隔离的 Redis 缓存。
+
+    Args:
+        detail_batch: Flow、工序和产品详情批次。
+        target_date: 批次所属的曼谷业务日期。
+    """
     ttl = _seconds_to_midnight()
+    business_date = target_date or get_business_date()
 
     t1 = time.time()
-    cache.set('stats:detail:flow_overview', detail_batch['flow_overview'], ttl)
-    cache.set('stats:detail:flow_hourly', detail_batch['flow_hourly'], ttl)
-    cache.set('stats:detail:stepno_overview', detail_batch['stepno_employees'], ttl)
-    cache.set(PRODUCT_OVERVIEW_CACHE_KEY, detail_batch.get('product_overview', {}), ttl)
+    cache.set(detail_cache_key('flow_overview', business_date), detail_batch['flow_overview'], ttl)
+    cache.set(detail_cache_key('flow_hourly', business_date), detail_batch['flow_hourly'], ttl)
+    cache.set(detail_cache_key('stepno_overview', business_date), detail_batch['stepno_employees'], ttl)
+    cache.set(
+        detail_cache_key(PRODUCT_OVERVIEW_CACHE_NAME, business_date),
+        detail_batch.get('product_overview', {}),
+        ttl,
+    )
 
     flow_count = len(detail_batch['flow_employees'])
     for flow_name, employees in detail_batch['flow_employees'].items():
-        cache.set(f'{FLOW_DETAIL_CACHE_PREFIX}:{flow_name}', employees, ttl)
+        cache.set(
+            detail_cache_key(f'{FLOW_DETAIL_CACHE_NAME}:{flow_name}', business_date),
+            employees,
+            ttl,
+        )
     logger.info('详情 Redis 缓存写入完成，{} 个 key，耗时 {:.1f}s', flow_count + 4, time.time() - t1)
 
 
@@ -434,12 +496,19 @@ def get_realtime_stats(stepno_filter: list[int] | None = None) -> dict:
     t0 = time.perf_counter()
     key = f'stats:realtime:{_stepno_key(stepno_filter)}'
     cached = cache.get(key)
+    business_date = get_business_date()
+    if isinstance(cached, dict) and cached.get('date') != business_date:
+        logger.warning('Redis 缓存日期不匹配: key={} cached_date={} business_date={}', key, cached.get('date'), business_date)
+        cached = None
     redis_ms = (time.perf_counter() - t0) * 1000
     if cached is None:
         logger.warning('Redis 缓存未命中: {} (Redis读取耗时 {:.0f}ms)，回退数据库查询', key, redis_ms)
         t_fallback = time.perf_counter()
-        stats = _get_date_stats(date.today(), stepno_filter, remote_q)
+        stats = _get_date_stats(business_date, stepno_filter, remote_q)
         fallback_ms = (time.perf_counter() - t_fallback) * 1000
+        if get_business_date() != business_date:
+            logger.warning('实时查询期间已跨过曼谷午夜，放弃写入日期 {} 的旧缓存并重新查询', business_date)
+            return get_realtime_stats(stepno_filter)
         cache.set(key, stats, _seconds_to_midnight())
         logger.debug('[工序产量对比] get_realtime_stats 回退完成 key={} fallback={:.0f}ms total={:.0f}ms',
                      key, fallback_ms, (time.perf_counter() - t0) * 1000)
@@ -460,7 +529,7 @@ def get_local_date_stats(target_date: date, stepno_filter: list[int] | None = No
 
 def get_today_stats(stepno_filter: list[int] | None = None) -> dict:
     """今日数据的全量统计（保留旧接口兼容性）"""
-    return get_date_stats(date.today(), stepno_filter)
+    return get_date_stats(get_business_date(), stepno_filter)
 
 
 def invalidate_local_cache(target_date: date) -> None:

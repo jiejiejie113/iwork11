@@ -1,6 +1,4 @@
-import pytest
-from datetime import datetime, date, time
-from unittest.mock import Mock
+from datetime import datetime
 from iwork.models import Pydefstp, Pywrkstp, Pytckreg3
 
 

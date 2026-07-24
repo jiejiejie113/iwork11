@@ -43,6 +43,7 @@ class TestUnifiedEngine:
     """_get_date_stats 核心逻辑测试"""
 
     def setup_method(self):
+        """每个批量构建测试前清空缓存。"""
         """每个测试前清理缓存，避免跨测试缓存污染"""
         from django.core.cache import cache
         cache.clear()
@@ -171,9 +172,8 @@ class TestUnifiedEngine:
 
     def test_monthly_keys_unique_per_date_and_filter(self):
         """验证月查询缓存键按日期和工序过滤区分，不同参数不串数据"""
-        from iwork.statistics import _get_date_stats, _get_cached_monthly
+        from iwork.statistics import _get_date_stats
         from django.core.cache import cache
-        from unittest.mock import ANY
 
         # 清理缓存确保测试隔离
         cache.clear()
@@ -206,7 +206,7 @@ class TestPublicAPI:
 
     def test_get_today_stats_delegates(self):
         """get_today_stats 委托给 get_date_stats(today)"""
-        from iwork.statistics import get_today_stats, get_date_stats
+        from iwork.statistics import get_today_stats
         from unittest.mock import patch
 
         mock_result = {'workorder_count': 1, 'total_qty': 10}
@@ -218,7 +218,7 @@ class TestPublicAPI:
 
     def test_get_date_stats_uses_remote_module(self):
         """get_date_stats 使用 remote_q 模块"""
-        from iwork.statistics import get_date_stats, _get_date_stats
+        from iwork.statistics import get_date_stats
         from django.core.cache import cache
         from unittest.mock import patch
 
@@ -237,7 +237,7 @@ class TestPublicAPI:
 
     def test_get_local_date_stats_uses_local_module(self):
         """get_local_date_stats 使用 local_q 模块"""
-        from iwork.statistics import get_local_date_stats, _get_date_stats
+        from iwork.statistics import get_local_date_stats
         from django.core.cache import cache
         from unittest.mock import patch
 
@@ -443,6 +443,7 @@ class TestBatchEngine:
     """get_batch_stats 批量构建测试"""
 
     def setup_method(self):
+        """每个批量构建测试前清空缓存。"""
         from django.core.cache import cache
         cache.clear()
 
@@ -527,6 +528,7 @@ class TestCacheLayer:
     """缓存读写 + 过期 + 清空测试"""
 
     def setup_method(self):
+        """每个缓存层测试前清空缓存。"""
         from django.core.cache import cache
         cache.clear()
 
@@ -550,10 +552,10 @@ class TestCacheLayer:
 
     def test_get_realtime_stats_cache_hit(self):
         """get_realtime_stats 优先读缓存"""
-        from iwork.statistics import get_realtime_stats
+        from iwork.statistics import get_business_date, get_realtime_stats
         from django.core.cache import cache
 
-        cache.set('stats:realtime:70', {'total_qty': 999, 'date': date(2026, 5, 9)}, 60)
+        cache.set('stats:realtime:70', {'total_qty': 999, 'date': get_business_date()}, 60)
 
         result = get_realtime_stats([70])
         assert result['total_qty'] == 999
@@ -619,6 +621,45 @@ class TestCacheLayer:
 class TestTasksNewFlow:
     """tasks.py 改用 batch 后的行为测试"""
 
+    def test_snapshot_recent_history_skips_build_in_progress(self):
+        """定时快照遇到同日期构建时应跳过并返回空结果。"""
+        from unittest.mock import patch
+
+        from iwork.history_store import SnapshotBuildInProgressError
+        from iwork.tasks import snapshot_recent_history
+
+        with patch(
+            'iwork.tasks.get_business_date',
+            return_value=date(2026, 7, 24),
+        ), patch(
+            'iwork.tasks.snapshot_history_date',
+            side_effect=SnapshotBuildInProgressError('正在构建'),
+        ) as build_snapshot:
+            result = snapshot_recent_history(days=1)
+
+        assert result == []
+        build_snapshot.assert_called_once_with(date(2026, 7, 23))
+
+    def test_sync_dashboard_stats_discards_results_after_bangkok_midnight(self):
+        """构建期间跨过曼谷午夜时，不得发布上一业务日缓存。"""
+        from unittest.mock import patch
+        from iwork.tasks import sync_dashboard_stats
+
+        with patch(
+            'iwork.tasks.get_business_date',
+            side_effect=[date(2026, 7, 23), date(2026, 7, 24)],
+        ), patch('iwork.tasks.get_batch_stats', return_value={'all': {}}), patch(
+            'iwork.tasks.get_batch_detail_stats',
+            return_value={},
+        ), patch('iwork.tasks.cache_batch_to_redis') as cache_batch, patch(
+            'iwork.tasks.cache_detail_batch_to_redis',
+        ) as cache_detail:
+            result = sync_dashboard_stats()
+
+        assert result == 0
+        cache_batch.assert_not_called()
+        cache_detail.assert_not_called()
+
     def test_sync_dashboard_stats_calls_batch(self):
         """Celery 任务构建并缓存看板及生产详情批次。"""
         from unittest.mock import patch
@@ -638,7 +679,12 @@ class TestTasksNewFlow:
             mock_batch.assert_called_once()
             mock_cache.assert_called_once()
             mock_detail.assert_called_once()
-            mock_detail_cache.assert_called_once_with({})
+            business_date = mock_batch.call_args.kwargs['target_date']
+            mock_cache.assert_called_once_with(
+                mock_batch.return_value,
+                target_date=business_date,
+            )
+            mock_detail_cache.assert_called_once_with({}, target_date=business_date)
             assert result == 2
 
     def test_sync_dashboard_stats_error_retries(self):
@@ -646,9 +692,8 @@ class TestTasksNewFlow:
         from unittest.mock import patch
         from iwork.tasks import sync_dashboard_stats
 
-        with patch('iwork.tasks.get_batch_stats', side_effect=Exception('DB down')):
-            with pytest.raises(Exception):
-                sync_dashboard_stats()
+        with patch('iwork.tasks.get_batch_stats', side_effect=RuntimeError('DB down')), pytest.raises(RuntimeError):
+            sync_dashboard_stats()
 
 
 # ============================================================
@@ -656,11 +701,16 @@ class TestTasksNewFlow:
 # 用法: cd d:\DM\Python代码\Seamus\iwork && python -X utf8 tests\test_unified_engine.py
 # ============================================================
 if __name__ == "__main__":
-    import os, sys
+    import os
+    import sys
+
+    from loguru import logger
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "iwork.settings")
-    import django; django.setup()
+    import django
+
+    django.setup()
 
     from iwork.statistics import get_date_stats, get_local_date_stats
     from iwork.api_views_local import local_date_stats
@@ -670,6 +720,7 @@ if __name__ == "__main__":
     errors = []
 
     def check(description, condition):
+        """记录独立诊断检查的通过或失败状态。"""
         status = "PASS" if condition else "FAIL"
         if not condition:
             errors.append(description)
@@ -700,7 +751,7 @@ if __name__ == "__main__":
         check("heatmap 有 flows", 'flows' in hm1 and len(hm1['flows']) > 0)
         check("heatmap 有 data", 'data' in hm1 and len(hm1['data']) > 0)
 
-    print(f"\n  数据量:")
+    logger.info("\n  数据量:")
     print(f"    total_qty={r1['total_qty']}, workorder_count={r1['workorder_count']}")
     print(f"    hourly_stats={len(r1['hourly_stats'])} 条")
     print(f"    process_flow_stats={len(r1['process_flow_stats'])} 条")
@@ -724,7 +775,7 @@ if __name__ == "__main__":
     check("station_ranking >= 1", len(r2['station_ranking']) >= 1)
     check("heatmap_data 非 None", r2['heatmap_data'] is not None)
 
-    print(f"\n  数据量:")
+    logger.info("\n  数据量:")
     print(f"    total_qty={r2['total_qty']}, workorder_count={r2['workorder_count']}")
     print(f"    top_processes={len(r2['top_processes'])} 条")
     print(f"    station_ranking={len(r2['station_ranking'])} 条")
@@ -739,7 +790,7 @@ if __name__ == "__main__":
     for key in required:
         check(f"本地字段 {key} 存在", key in r3)
 
-    print(f"\n  数据量:")
+    logger.info("\n  数据量:")
     print(f"    total_qty={r3['total_qty']}, workorder_count={r3['workorder_count']}")
     print(f"    hourly_stats={len(r3['hourly_stats'])} 条")
     print(f"    heatmap_data={'有' if r3['heatmap_data'] else '无'}")
@@ -759,7 +810,7 @@ if __name__ == "__main__":
         for f in ['hourly_stats','process_flow_stats','monthly_process_stats',
                    'monthly_total_trend','heatmap_data','station_ranking']:
             check(f"API 字段 {f} 存在", f in d4)
-        print(f"\n  数据量:")
+        logger.info("\n  数据量:")
         for f in ['hourly_stats','process_flow_stats','monthly_process_stats',
                    'monthly_total_trend','station_stats','station_ranking','workorders']:
             val = d4.get(f, [])

@@ -1,4 +1,5 @@
 import time
+from contextlib import suppress
 from datetime import date, timedelta
 from django.conf import settings
 from django.utils import timezone
@@ -937,10 +938,8 @@ def _apply_kanban_filters(queryset, stepnos=None, wrk_orders=None,
         QuerySet: 应用筛选后的 QuerySet
     """
     if stepnos:
-        try:
+        with suppress(ValueError, TypeError):
             stepnos = [int(s) for s in stepnos]
-        except (ValueError, TypeError):
-            pass
         queryset = queryset.filter(StepNo__in=stepnos)
     if wrk_orders:
         queryset = queryset.filter(WrkOrder__in=wrk_orders)
@@ -993,7 +992,7 @@ def _merge_worker_rows(rows):
             entry['flows'].add(r['Flow'])
 
     result = []
-    for eid, entry in worker_map.items():
+    for entry in worker_map.values():
         result.append({
             'reg_per_sys_id': entry['reg_per_sys_id'],
             'worker_name': entry['worker_name'],

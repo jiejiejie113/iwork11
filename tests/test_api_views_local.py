@@ -1,7 +1,6 @@
 """
 本地API视图测试
 """
-import pytest
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,7 +10,7 @@ from django.urls import reverse
 
 class TestLocalDateStats:
     """本地日期统计API测试"""
-    
+
     @patch('iwork.api_views_local.HistoricalSyncState.objects')
     def test_local_date_stats_get(self, mock_states):
         """测试获取本地日期统计"""
@@ -38,7 +37,7 @@ class TestLocalDateStats:
         assert data['date'] == '2026-04-24'
         assert data['source'] == 'local_snapshot'
         assert data['snapshot_version'] == 3
-    
+
     def test_local_date_stats_invalid_date(self):
         """测试无效日期格式"""
         client = Client()
@@ -46,15 +45,15 @@ class TestLocalDateStats:
             reverse('history:local-date-stats', kwargs={'target_date': 'invalid-date'})
         )
         assert response.status_code == 400
-    
+
     def test_available_dates_get(self):
         """测试获取可用日期列表"""
         client = Client()
         mock_dates = []
-        
+
         with patch('iwork.api_views_local.get_available_dates', return_value=mock_dates):
             response = client.get(reverse('history:available-dates'))
-        
+
         assert response.status_code == 200
         data = json.loads(response.content)
         assert 'dates' in data

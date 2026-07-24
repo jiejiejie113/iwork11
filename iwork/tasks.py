@@ -3,7 +3,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from loguru import logger
 
 from iwork.statistics import get_batch_stats, cache_batch_to_redis, get_batch_detail_stats, cache_detail_batch_to_redis
-from iwork.history_store import snapshot_history_date
+from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.statistics import get_business_date
 
 # =====
@@ -32,13 +32,16 @@ def sync_dashboard_stats(self):
     """每 60s：批量构建所有工序数据 → 写入 Redis"""
     try:
         logger.info('开始批量构建看板统计数据')
+        business_date = get_business_date()
 
-        batch = get_batch_stats()
-        cache_batch_to_redis(batch)
+        batch = get_batch_stats(target_date=business_date)
+        detail_batch = get_batch_detail_stats(target_date=business_date)
+        if get_business_date() != business_date:
+            logger.warning('看板构建期间已跨过曼谷午夜，放弃写入日期 {} 的旧数据', business_date)
+            return 0
 
-        # 并行构建生产详情数据
-        detail_batch = get_batch_detail_stats()
-        cache_detail_batch_to_redis(detail_batch)
+        cache_batch_to_redis(batch, target_date=business_date)
+        cache_detail_batch_to_redis(detail_batch, target_date=business_date)
 
         return len(batch)
 
@@ -67,7 +70,11 @@ def snapshot_recent_history(self, days=3):
         business_today = get_business_date()
         for days_ago in range(1, days + 1):
             target_date = business_today - timedelta(days=days_ago)
-            state = snapshot_history_date(target_date)
+            try:
+                state = snapshot_history_date(target_date)
+            except SnapshotBuildInProgressError:
+                logger.info('历史快照 {} 已由其他入口构建，本轮跳过', target_date)
+                continue
             completed.append({
                 'date': target_date.isoformat(),
                 'version': state.snapshot_version,

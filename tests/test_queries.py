@@ -1,7 +1,6 @@
 """
 查询函数测试（queries.py 远程库查询层）
 """
-import pytest
 from unittest.mock import patch, Mock
 from datetime import date
 from django.utils import timezone
@@ -564,6 +563,7 @@ class TestGetBatchProductOverview:
     def test_includes_description_and_step_time(
         self, mock_records, mock_order, mock_metadata,
     ):
+        """查询结果应包含工序描述和标准工时。"""
         from iwork.queries import get_batch_product_overview
 
         queryset = mock_records.return_value
@@ -602,6 +602,7 @@ class TestStepMetadataQueries:
 
     @patch('iwork.models.Pywrkstp')
     def test_batch_metadata_uses_wrkorder_and_stepno(self, mock_model):
+        """批量元数据应使用工单和工序号复合键。"""
         from iwork.queries import get_batch_step_metadata
 
         query = mock_model.objects.using.return_value.filter.return_value
@@ -621,6 +622,7 @@ class TestStepMetadataQueries:
 
     @patch('iwork.models.Pywrkstp')
     def test_single_description_filters_full_composite_key(self, mock_model):
+        """单条描述查询应按完整复合键过滤。"""
         from iwork.queries import get_step_description
 
         mock_model.objects.using.return_value.get.return_value.Description = '后整'

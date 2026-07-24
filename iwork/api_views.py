@@ -13,13 +13,15 @@ from datetime import date, datetime
 from loguru import logger
 
 from iwork.statistics import (
-    FLOW_DETAIL_CACHE_PREFIX,
-    PRODUCT_OVERVIEW_CACHE_KEY,
+    FLOW_DETAIL_CACHE_NAME,
+    PRODUCT_OVERVIEW_CACHE_NAME,
     _seconds_to_midnight,
     calculate_employee_efficiency,
+    detail_cache_key,
     get_business_date,
     get_effective_work_minutes,
     get_realtime_stats,
+    realtime_process_list_cache_key,
 )
 from iwork.queries import (
     get_hourly_stats,
@@ -66,6 +68,14 @@ def _detail_mode(request, target_date: date) -> str:
 
 
 def _snapshot_state(target_date: date):
+    """获取指定日期已成功发布的历史快照状态。
+
+    Args:
+        target_date: 需要查询的生产日期。
+
+    Returns:
+        成功状态记录；不存在时返回 None。
+    """
     return HistoricalSyncState.objects.using('iwork_local').filter(
         snapshot_date=target_date,
         status=HistoricalSyncState.Status.SUCCESS,
@@ -73,6 +83,7 @@ def _snapshot_state(target_date: date):
 
 
 def _snapshot_not_found_response():
+    """构造历史快照不存在的统一 HTTP 404 响应。"""
     return Response(
         {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
         status=status.HTTP_404_NOT_FOUND,
@@ -129,7 +140,7 @@ def process_list(request):
 @api_view(['GET'])
 def hourly_stats(request):
     """获取按小时统计数据"""
-    target_date = request.query_params.get('date', date.today().isoformat())
+    target_date = request.query_params.get('date', get_business_date().isoformat())
     stepno_filter = _parse_stepno(request)
     cache_key = f'dashboard:hourly:{target_date}:{stepno_filter}'
 
@@ -150,7 +161,7 @@ def hourly_stats(request):
 def flow_stats(request, flow_name):
     """获取指定 Flow 组统计数据"""
     try:
-        today = date.today()
+        today = get_business_date()
         stats = get_flow_detail(today, flow_name)
         return Response(stats, status=status.HTTP_200_OK)
     except Exception as e:
@@ -216,7 +227,7 @@ def workorder_detail(request, wrk_order):
 def monthly_trend(request):
     """获取当月总产量日趋势（主题 3c）"""
     try:
-        target_date = request.query_params.get('date', date.today().isoformat())
+        target_date = request.query_params.get('date', get_business_date().isoformat())
         target = date.fromisoformat(target_date)
         month_start = date(target.year, target.month, 1)
         stepno_filter = _parse_stepno(request)
@@ -233,7 +244,7 @@ def process_compare(request):
     """获取工序×Flow 产量对比（主题 3a）"""
     t0 = time.time()
     try:
-        target_date = request.query_params.get('date', date.today().isoformat())
+        target_date = request.query_params.get('date', get_business_date().isoformat())
         target = date.fromisoformat(target_date)
 
         stepnos_raw = request.query_params.get('stepnos', '')
@@ -258,7 +269,7 @@ def process_compare(request):
 def heatmap(request):
     """获取热力图数据（主题 5）"""
     try:
-        target_date = request.query_params.get('date', date.today().isoformat())
+        target_date = request.query_params.get('date', get_business_date().isoformat())
         target = date.fromisoformat(target_date)
         stepno_filter = _parse_stepno(request)
 
@@ -273,7 +284,7 @@ def heatmap(request):
 def station_ranking(request):
     """获取工站产量排行（主题 6）"""
     try:
-        target_date = request.query_params.get('date', date.today().isoformat())
+        target_date = request.query_params.get('date', get_business_date().isoformat())
         target = date.fromisoformat(target_date)
         limit = int(request.query_params.get('limit', 15))
         stepno_filter = _parse_stepno(request)
@@ -480,8 +491,8 @@ def stepno_overview(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if target_date == get_business_date() and mode == 'remote':
-            cached = cache.get('stats:detail:stepno_overview')
+        if target_date == business_today and mode == 'remote':
+            cached = cache.get(detail_cache_key('stepno_overview', target_date))
             if cached is not None:
                 result = {}
                 for stepno, emps in cached.items():
@@ -527,7 +538,7 @@ def flow_overview(request):
 
         # 今日优先读 Redis
         if target_date == business_today and mode == 'remote':
-            cached = cache.get('stats:detail:flow_overview')
+            cached = cache.get(detail_cache_key('flow_overview', target_date))
             if cached is not None:
                 return Response(cached, status=status.HTTP_200_OK)
 
@@ -538,7 +549,7 @@ def flow_overview(request):
 
         # 今日结果写入 Redis（当天有效）
         if target_date == business_today and mode == 'remote':
-            cache.set('stats:detail:flow_overview', result, 3600)
+            cache.set(detail_cache_key('flow_overview', target_date), result, 3600)
 
         return Response(result, status=status.HTTP_200_OK)
     except Exception as e:
@@ -568,11 +579,13 @@ def flow_detail(request, flow_name):
 
         # 今日优先读缓存，所有字段统一来自 Redis 快照，避免混用新旧数据
         if target_date == business_today and mode == 'remote':
-            cached_employees = cache.get(f'{FLOW_DETAIL_CACHE_PREFIX}:{flow_name}')
+            cached_employees = cache.get(
+                detail_cache_key(f'{FLOW_DETAIL_CACHE_NAME}:{flow_name}', target_date),
+            )
             if cached_employees is not None:
                 cached_employees = [dict(employee) for employee in cached_employees]
                 total_qty = sum(e['total_qty'] for e in cached_employees)
-                hourly_cache = cache.get('stats:detail:flow_hourly') or {}
+                hourly_cache = cache.get(detail_cache_key('flow_hourly', target_date)) or {}
                 hourly_trend = hourly_cache.get(flow_name, [])
                 targets_dict = _get_targets_with_fallback(target_date)
                 wo_targets_dict = _get_wo_targets_with_fallback(target_date)
@@ -648,7 +661,7 @@ def product_overview(request):
             )
 
         if target_date == business_today and mode == 'remote':
-            cached = cache.get(PRODUCT_OVERVIEW_CACHE_KEY)
+            cached = cache.get(detail_cache_key(PRODUCT_OVERVIEW_CACHE_NAME, target_date))
             if cached is not None:
                 return Response(cached, status=status.HTTP_200_OK)
 
@@ -665,7 +678,11 @@ def product_overview(request):
             result['source'] = 'remote'
 
         if target_date == business_today and mode == 'remote':
-            cache.set(PRODUCT_OVERVIEW_CACHE_KEY, result, 3600)
+            cache.set(
+                detail_cache_key(PRODUCT_OVERVIEW_CACHE_NAME, target_date),
+                result,
+                3600,
+            )
 
         return Response(result, status=status.HTTP_200_OK)
     except Exception as e:
@@ -694,8 +711,8 @@ async def dashboard_stream(request):
     @sync_to_async
     def _get_data():
         stats = get_realtime_stats(stepno_filter=stepno_filter)
-        process_list = cache.get('stats:realtime:_process_list') or []
-        detail_overview = cache.get('stats:detail:flow_overview') or []
+        process_list = cache.get(realtime_process_list_cache_key()) or []
+        detail_overview = cache.get(detail_cache_key('flow_overview')) or []
         return stats, process_list, detail_overview
 
     async def event_stream():

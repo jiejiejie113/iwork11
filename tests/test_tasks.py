@@ -32,9 +32,13 @@ class TestSyncDashboardStats:
         result = sync_dashboard_stats()
 
         mock_batch_fn.assert_called_once()
-        mock_cache.assert_called_once_with(mock_batch)
+        business_date = mock_batch_fn.call_args.kwargs['target_date']
+        mock_cache.assert_called_once_with(mock_batch, target_date=business_date)
         mock_detail_batch.assert_called_once()
-        mock_detail_cache.assert_called_once_with(mock_detail_batch.return_value)
+        mock_detail_cache.assert_called_once_with(
+            mock_detail_batch.return_value,
+            target_date=business_date,
+        )
         assert result == 2  # 70 + 'all'
 
     @patch('iwork.tasks.cache_detail_batch_to_redis')
@@ -65,9 +69,9 @@ class TestSyncDashboardStats:
         """batch 构建失败时触发重试"""
         from iwork.tasks import sync_dashboard_stats
 
-        mock_batch_fn.side_effect = Exception('DB down')
+        mock_batch_fn.side_effect = RuntimeError('DB down')
 
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError, match='DB down'):
             sync_dashboard_stats()
 
 
@@ -93,4 +97,8 @@ class TestSyncDashboardStats:
         sync_dashboard_stats()
 
         mock_detail_batch.assert_called_once()
-        mock_detail_cache.assert_called_once_with(mock_detail_batch.return_value)
+        business_date = mock_batch.call_args.kwargs['target_date']
+        mock_detail_cache.assert_called_once_with(
+            mock_detail_batch.return_value,
+            target_date=business_date,
+        )

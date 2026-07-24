@@ -50,6 +50,7 @@ class TestEmployeeEfficiency:
     """Flow 员工效率使用 UTC+7 有效上班分钟。"""
 
     def test_morning_work_minutes_start_at_seven(self):
+        """有效工时应从曼谷时间七点开始。"""
         from iwork.statistics import get_effective_work_minutes
 
         now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
@@ -57,6 +58,7 @@ class TestEmployeeEfficiency:
         assert get_effective_work_minutes(date(2026, 7, 15), now) == 210
 
     def test_business_date_uses_bangkok_timezone(self):
+        """业务日期应使用曼谷时区。"""
         from iwork.statistics import get_business_date
 
         utc_evening = datetime(
@@ -78,6 +80,7 @@ class TestEmployeeEfficiency:
         ],
     )
     def test_work_minutes_cover_shift_boundaries(self, hour, minute, expected):
+        """有效工时计算应覆盖班次边界。"""
         from iwork.statistics import get_effective_work_minutes
 
         now = datetime(
@@ -88,6 +91,7 @@ class TestEmployeeEfficiency:
         assert get_effective_work_minutes(date(2026, 7, 15), now) == expected
 
     def test_historical_date_has_no_live_work_minutes(self):
+        """历史日期不应返回实时有效工时。"""
         from iwork.statistics import get_effective_work_minutes
 
         now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
@@ -95,6 +99,7 @@ class TestEmployeeEfficiency:
         assert get_effective_work_minutes(date(2026, 7, 14), now) is None
 
     def test_output_value_divided_by_minutes_returns_percentage(self):
+        """产值除以分钟数应返回百分比效率。"""
         from iwork.statistics import calculate_employee_efficiency
 
         assert calculate_employee_efficiency(420, 210) == 200.0
@@ -105,6 +110,14 @@ class TestEmployeeEfficiency:
 
 class TestSecondsToMidnight:
     """_seconds_to_midnight TTL 计算"""
+
+    def test_uses_bangkok_midnight_for_utc_input(self):
+        """UTC 时间输入应按曼谷午夜计算缓存剩余时间。"""
+        from iwork.statistics import _seconds_to_midnight
+
+        utc_time = datetime(2026, 7, 20, 16, 59, 59, tzinfo=ZoneInfo('UTC'))
+
+        assert _seconds_to_midnight(utc_time) == 6
 
     def test_returns_positive_integer(self):
         """返回正整数"""
@@ -124,7 +137,7 @@ class TestSecondsToMidnight:
         from iwork.statistics import _seconds_to_midnight
 
         # 直接计算预期值
-        now = datetime.now()
+        now = datetime.now(ZoneInfo('Asia/Bangkok'))
         midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         expected = int((midnight - now).total_seconds()) + 5
 
@@ -338,6 +351,60 @@ class TestInvalidateLocalCache:
 class TestGetRealtimeStats:
     """get_realtime_stats（修复后移除死代码）"""
 
+    @patch(
+        'iwork.statistics.get_business_date',
+        side_effect=[
+            date(2026, 7, 23),
+            date(2026, 7, 24),
+            date(2026, 7, 24),
+            date(2026, 7, 24),
+        ],
+    )
+    @patch('iwork.statistics.cache')
+    @patch('iwork.statistics._get_date_stats')
+    def test_query_crossing_midnight_discards_old_result(
+        self,
+        mock_get_stats,
+        mock_cache,
+        _mock_business_date,
+    ):
+        """实时查询跨过曼谷午夜时应重查新日期且只缓存新结果。"""
+        from iwork.statistics import get_realtime_stats, remote_q
+
+        mock_cache.get.return_value = None
+        old_stats = {'date': date(2026, 7, 23), 'total_qty': 100}
+        new_stats = {'date': date(2026, 7, 24), 'total_qty': 200}
+        mock_get_stats.side_effect = [old_stats, new_stats]
+
+        result = get_realtime_stats()
+
+        assert result == new_stats
+        assert mock_get_stats.call_args_list == [
+            ((date(2026, 7, 23), None, remote_q),),
+            ((date(2026, 7, 24), None, remote_q),),
+        ]
+        mock_cache.set.assert_called_once()
+        assert mock_cache.set.call_args.args[1] == new_stats
+
+    @patch('iwork.statistics.get_business_date', return_value=date(2026, 7, 24))
+    @patch('iwork.statistics.cache')
+    @patch('iwork.statistics._get_date_stats')
+    def test_cache_miss_uses_bangkok_business_date(
+        self,
+        mock_get_stats,
+        mock_cache,
+        _mock_business_date,
+    ):
+        """实时缓存未命中时应查询曼谷业务日期。"""
+        from iwork.statistics import get_realtime_stats, remote_q
+
+        mock_cache.get.return_value = None
+        mock_get_stats.return_value = {'date': date(2026, 7, 24), 'total_qty': 0}
+
+        get_realtime_stats()
+
+        mock_get_stats.assert_called_once_with(date(2026, 7, 24), None, remote_q)
+
     @patch('iwork.statistics.cache')
     @patch('iwork.statistics._get_date_stats')
     def test_cache_miss_falls_back_to_live_query(self, mock_get_stats, mock_cache):
@@ -353,12 +420,17 @@ class TestGetRealtimeStats:
         mock_cache.set.assert_called_once()
         assert result['total_qty'] == 500
 
+    @patch('iwork.statistics.get_business_date', return_value=date(2026, 7, 23))
     @patch('iwork.statistics.cache')
-    def test_cache_hit_returns_directly(self, mock_cache):
+    def test_cache_hit_returns_directly(self, mock_cache, _mock_business_date):
         """缓存命中 → 直接返回，不查询 DB"""
         from iwork.statistics import get_realtime_stats
 
-        mock_cache.get.return_value = {'total_qty': 300, 'workorder_count': 8}
+        mock_cache.get.return_value = {
+            'date': date(2026, 7, 23),
+            'total_qty': 300,
+            'workorder_count': 8,
+        }
 
         with patch('iwork.statistics._get_date_stats') as mock_get:
             result = get_realtime_stats(stepno_filter=None)
@@ -372,6 +444,7 @@ class TestGetBatchDetailStats:
 
     @patch('iwork.statistics.remote_q')
     def test_returns_detail_batch_structure(self, mock_remote):
+        """详情批量查询应返回约定结构。"""
         from iwork.statistics import get_batch_detail_stats
 
         mock_remote.get_batch_flow_overview.return_value = {
@@ -396,6 +469,7 @@ class TestGetBatchDetailStats:
 
     @patch('iwork.statistics.remote_q')
     def test_uses_custom_query_module(self, mock_remote):
+        """详情批量查询应支持自定义查询模块。"""
         from iwork.statistics import get_batch_detail_stats
         from unittest.mock import Mock
         custom_q = Mock()
@@ -441,7 +515,8 @@ class TestCacheDetailBatchToRedis:
     @patch('iwork.statistics._seconds_to_midnight')
     @patch('iwork.statistics.cache')
     def test_caches_flow_keys(self, mock_cache, mock_ttl):
-        from iwork.statistics import cache_detail_batch_to_redis
+        """详情批次应写入按日期隔离的 Flow 缓存键。"""
+        from iwork.statistics import cache_detail_batch_to_redis, detail_cache_key
 
         mock_ttl.return_value = 36000
         detail_batch = {
@@ -452,11 +527,12 @@ class TestCacheDetailBatchToRedis:
             'product_overview': {'products': []},
         }
 
-        cache_detail_batch_to_redis(detail_batch)
-        mock_cache.set.assert_any_call('stats:detail:flow_overview', detail_batch['flow_overview'], 36000)
-        mock_cache.set.assert_any_call('stats:detail:flow_hourly', detail_batch['flow_hourly'], 36000)
-        mock_cache.set.assert_any_call('stats:detail:flow:v2:VCO-L5', detail_batch['flow_employees']['VCO-L5'], 36000)
-        mock_cache.set.assert_any_call('stats:detail:stepno_overview', detail_batch['stepno_employees'], 36000)
+        target_date = date(2026, 7, 24)
+        cache_detail_batch_to_redis(detail_batch, target_date=target_date)
+        mock_cache.set.assert_any_call(detail_cache_key('flow_overview', target_date), detail_batch['flow_overview'], 36000)
+        mock_cache.set.assert_any_call(detail_cache_key('flow_hourly', target_date), detail_batch['flow_hourly'], 36000)
+        mock_cache.set.assert_any_call(detail_cache_key('flow:VCO-L5', target_date), detail_batch['flow_employees']['VCO-L5'], 36000)
+        mock_cache.set.assert_any_call(detail_cache_key('stepno_overview', target_date), detail_batch['stepno_employees'], 36000)
         mock_cache.set.assert_any_call(
-            'stats:detail:product_overview:v4', detail_batch['product_overview'], 36000,
+            detail_cache_key('product_overview', target_date), detail_batch['product_overview'], 36000,
         )

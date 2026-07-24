@@ -7,13 +7,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import date
-from django.core.cache import cache
 from loguru import logger
 
 from iwork.statistics import get_business_date, get_local_date_stats
 from iwork.local_queries import get_available_dates
 from iwork.request_params import parse_stepno_filter
-from iwork.history_store import snapshot_history_date
+from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.local_models import HistoricalSyncState
 
 
@@ -23,6 +22,7 @@ def _parse_stepno(request) -> list[int] | None:
 
 
 def _snapshot_state(target_date):
+    """获取指定日期已成功发布的历史快照状态。"""
     return HistoricalSyncState.objects.using('iwork_local').filter(
         snapshot_date=target_date,
         status=HistoricalSyncState.Status.SUCCESS,
@@ -30,6 +30,7 @@ def _snapshot_state(target_date):
 
 
 def _parse_target_date(value):
+    """解析 ISO 日期并在失败时返回 HTTP 400 响应。"""
     try:
         return date.fromisoformat(value), None
     except ValueError:
@@ -101,6 +102,7 @@ def available_dates(request):
 
 
 def _snapshot_payload(state):
+    """将历史快照状态转换为面向客户端的字典。"""
     return {
         'date': state.snapshot_date.isoformat(),
         'version': state.snapshot_version,
@@ -135,15 +137,6 @@ def ensure_snapshot(request, target_date):
             'snapshot': _snapshot_payload(existing),
         }, status=status.HTTP_200_OK)
 
-    lock_key = f'history:snapshot:build:{date_obj.isoformat()}'
-    if not cache.add(lock_key, '1', timeout=900):
-        return Response({
-            'created': False,
-            'code': 'history_snapshot_building',
-            'message': '本地历史快照正在构建',
-            'retry_after': 2,
-        }, status=status.HTTP_202_ACCEPTED)
-
     try:
         result = snapshot_history_date(date_obj)
         elapsed = time.time() - t0
@@ -161,6 +154,13 @@ def ensure_snapshot(request, target_date):
             'snapshot': _snapshot_payload(result),
         }, status=status.HTTP_201_CREATED)
 
+    except SnapshotBuildInProgressError:
+        return Response({
+            'created': False,
+            'code': 'history_snapshot_building',
+            'message': '本地历史快照正在构建',
+            'retry_after': 2,
+        }, status=status.HTTP_202_ACCEPTED)
     except Exception as e:
         logger.error(
             'POST /api/history/snapshots/{}/ensure 失败 ({:.0f}ms): {}',
@@ -169,5 +169,3 @@ def ensure_snapshot(request, target_date):
             e,
         )
         return Response({'error': '历史快照构建失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        cache.delete(lock_key)

@@ -396,6 +396,7 @@ def get_batch_basic_stats(target_date: date) -> dict:
 
 
 def get_batch_hourly_stats(target_date: date) -> dict:
+    """按工序和小时汇总本地历史产量。"""
     records = get_records_queryset(target_date)
     records = apply_batch_flow_filter(records)
     rows = list(
@@ -409,6 +410,7 @@ def get_batch_hourly_stats(target_date: date) -> dict:
 
 
 def get_batch_process_by_flow(target_date: date) -> dict:
+    """按工序和 Flow 汇总本地历史产量。"""
     records = get_records_queryset(target_date).exclude(Flow='')
     records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'Flow').annotate(qty=Sum('Qty')).order_by('StepNo', '-qty'))
@@ -419,6 +421,7 @@ def get_batch_process_by_flow(target_date: date) -> dict:
 
 
 def get_batch_heatmap_data(target_date: date) -> dict:
+    """构建本地历史工序、小时与 Flow 热力图数据。"""
     records = get_records_queryset(target_date).exclude(Flow='')
     records = apply_batch_flow_filter(records)
     rows = list(
@@ -442,6 +445,7 @@ def get_batch_heatmap_data(target_date: date) -> dict:
 
 
 def get_batch_station_ranking(target_date: date, limit: int = 10) -> dict:
+    """获取本地历史工站产量排行。"""
     records = get_records_queryset(target_date).exclude(Flow='').exclude(StationID='')
     records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'Flow', 'StationID').annotate(qty=Sum('Qty')).order_by('StepNo', '-qty'))
@@ -454,6 +458,7 @@ def get_batch_station_ranking(target_date: date, limit: int = 10) -> dict:
 
 
 def get_batch_workorders_list(target_date: date, limit: int = 20) -> dict:
+    """获取本地历史各工序的高产量工单列表。"""
     records = get_records_queryset(target_date)
     records = apply_batch_flow_filter(records)
     rows = list(records.values('StepNo', 'WrkOrder')
@@ -476,6 +481,7 @@ def get_batch_workorders_list(target_date: date, limit: int = 20) -> dict:
 
 
 def get_batch_monthly_total_trend(start_date: date, end_date: date) -> dict:
+    """汇总日期范围内各工序的每日总产量。"""
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)
@@ -489,6 +495,7 @@ def get_batch_monthly_total_trend(start_date: date, end_date: date) -> dict:
 
 
 def get_batch_monthly_process_stats(start_date: date, end_date: date) -> dict:
+    """汇总日期范围内各工序的每日生产趋势。"""
     start = timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()))
     end = timezone.make_aware(timezone.datetime.combine(end_date + timedelta(days=1), timezone.datetime.min.time()))
     records = _history_records().filter(RegDate__gte=start, RegDate__lt=end)

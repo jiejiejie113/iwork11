@@ -8,7 +8,7 @@ env = environ.Env()
 environ.Env.read_env(BASE_DIR / 'iwork' / '.env')
 
 # 初始化统一日志系统（Django 组件）
-from iwork.logger_config import setup_logging
+from iwork.logger_config import setup_logging  # noqa: E402
 setup_logging('DJANGO')
 
 # Quick-start development settings - unsuitable for production
@@ -187,11 +187,28 @@ CELERY_RESULT_BACKEND = f'redis://{REDIS_HOST}:{REDIS_PORT}/2'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'Asia/Shanghai'
-
-
 # ======
 # 业务配置（统一管理，模块内通过 django.conf.settings 引用）
+# iwork 的生产日期、班次和 Celery 调度统一使用曼谷时区。
+IWORK_BUSINESS_TIME_ZONE = env('IWORK_BUSINESS_TIME_ZONE', default='Asia/Bangkok')
+CELERY_TIMEZONE = IWORK_BUSINESS_TIME_ZONE
+WORKDAY_START_MINUTE = 7 * 60
+WORKDAY_LUNCH_START_MINUTE = 11 * 60
+WORKDAY_LUNCH_END_MINUTE = 12 * 60
+
+# 历史快照单日期构建锁超时；应覆盖一次完整的远程聚合与本地发布。
+HISTORY_SNAPSHOT_LOCK_TIMEOUT = env.int('HISTORY_SNAPSHOT_LOCK_TIMEOUT', default=1800)
+HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = env.int(
+    'HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL',
+    default=60,
+)
+
+# 实时与详情缓存按曼谷业务日期隔离，避免跨午夜的旧任务覆盖新数据。
+REALTIME_PROCESS_LIST_CACHE_PREFIX = 'stats:realtime:_process_list'
+DETAIL_CACHE_PREFIX = 'stats:detail:v5'
+PRODUCT_OVERVIEW_CACHE_NAME = 'product_overview'
+FLOW_DETAIL_CACHE_NAME = 'flow'
+
 # Flow 白名单生效工序 — 仅此工序使用 ALLOWED_FLOWS 过滤，其他工序查询全量 Flow
 ALLOWED_FLOWS_STEPNO = 70
 

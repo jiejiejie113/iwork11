@@ -8,12 +8,21 @@ from iwork.queries import _build_flow_employees
 
 
 def _facts(target_date: date):
+    """返回指定日期的历史生产事实查询集。"""
     return HistoricalProductionFact.objects.using('iwork_local').filter(
         production_date=target_date,
     )
 
 
 def get_batch_flow_hourly(target_date: date) -> dict:
+    """按 Flow 和小时汇总指定日期产量。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        以 Flow 为键的小时产量列表。
+    """
     rows = (
         _facts(target_date)
         .exclude(flow='')
@@ -34,6 +43,14 @@ def get_batch_flow_hourly(target_date: date) -> dict:
 
 
 def get_batch_flow_employees(target_date: date) -> dict:
+    """读取指定日期的 Flow 员工明细。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        以 Flow 为键的员工与工序明细。
+    """
     rows = list(
         _facts(target_date)
         .exclude(flow='')
@@ -65,6 +82,14 @@ def get_batch_flow_employees(target_date: date) -> dict:
 
 
 def get_batch_flow_overview(target_date: date) -> dict:
+    """汇总指定日期的 Flow 产量与员工数量。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        以 Flow 为键的工序汇总。
+    """
     facts = _facts(target_date).exclude(flow='').filter(flow__in=settings.ALLOWED_FLOWS)
     rows = (
         facts.values('flow', 'step_no')
@@ -85,6 +110,14 @@ def get_batch_flow_overview(target_date: date) -> dict:
 
 
 def get_all_stepnos(target_date: date) -> list[int]:
+    """获取指定日期存在产量的全部工序号。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        按工序号倒序排列的列表。
+    """
     rows = (
         _facts(target_date)
         .values('step_no')
@@ -95,6 +128,14 @@ def get_all_stepnos(target_date: date) -> list[int]:
 
 
 def get_batch_stepno_employees(target_date: date) -> dict:
+    """按工序汇总指定日期的员工产量。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        以工序号为键的员工产量排行。
+    """
     rows = (
         _facts(target_date)
         .exclude(flow='')
@@ -135,6 +176,17 @@ def get_workorders_paginated(
     page_size: int = 20,
     stepno_filter: list[int] | None = None,
 ) -> dict:
+    """分页读取指定日期的历史工单。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+        page: 从一开始的页码。
+        page_size: 每页工单数量。
+        stepno_filter: 可选的工序号过滤列表。
+
+    Returns:
+        包含工单列表及分页信息的字典。
+    """
     facts = _facts(target_date)
     if stepno_filter:
         facts = facts.filter(step_no__in=stepno_filter)
@@ -185,6 +237,14 @@ def get_workorders_paginated(
 
 
 def get_batch_product_overview(target_date: date) -> dict:
+    """按产品、工单和工序构建历史生产概览。
+
+    Args:
+        target_date: 已发布快照的生产日期。
+
+    Returns:
+        包含产品树和工序产值的概览字典。
+    """
     rows = list(
         _facts(target_date)
         .exclude(flow='')

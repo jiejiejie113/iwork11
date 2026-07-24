@@ -24,7 +24,7 @@ app.conf.beat_schedule = {
         'task': 'iwork.tasks.sync_dashboard_stats',
         'schedule': 60.0,
     },
-    # Celery 使用 Asia/Shanghai；03:00 对应曼谷业务时间 02:00。
+    # Celery 使用曼谷业务时区，每天 03:00 重建最近历史快照。
     'snapshot-recent-history-daily': {
         'task': 'iwork.tasks.snapshot_recent_history',
         'schedule': crontab(hour=3, minute=0),

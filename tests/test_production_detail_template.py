@@ -19,29 +19,34 @@ DASHBOARD_TEMPLATE = (
 
 
 def test_step_metadata_uses_dedicated_columns():
+    """工序元数据应使用独立列。"""
     assert '>工序描述</div>' in TEMPLATE
     assert '>标准工时</div>' in TEMPLATE
     assert "info += ' · 标准工时 '" not in TEMPLATE
 
 
 def test_output_value_has_its_own_table_column():
+    """产值应使用独立表格列。"""
     assert '>产值</div>' in TEMPLATE
     assert 'row.outputValue' in TEMPLATE
 
 
 def test_step_metadata_columns_require_both_dimensions():
+    """工序元数据列应要求两个维度。"""
     assert 'const showStepMetadataColumns = computed' in TEMPLATE
     assert "selectedLevels.value.includes('wrk_order')" in TEMPLATE
     assert "selectedLevels.value.includes('stepno')" in TEMPLATE
 
 
 def test_metadata_is_only_populated_when_composite_key_is_resolved():
+    """复合键解析成功后才应填充元数据。"""
     assert 'completesStepMetadataPair' in TEMPLATE
     assert 'metadataResolved' in TEMPLATE
     assert "const displayName = curDim === 'stepno' ? '工序' + val : val;" in TEMPLATE
 
 
 def test_product_chart_switches_and_sorts_by_selected_metric():
+    """产品图表应按所选指标切换并排序。"""
     assert "const productChartMetric = ref('qty');" in TEMPLATE
     assert "setProductChartMetric('qty')" in TEMPLATE
     assert "setProductChartMetric('output_value')" in TEMPLATE
@@ -49,6 +54,7 @@ def test_product_chart_switches_and_sorts_by_selected_metric():
 
 
 def test_product_chart_uses_compact_height_on_tablet_viewports():
+    """平板视口应使用紧凑图表高度。"""
     assert 'class="product-chart-panel ' in TEMPLATE
     assert '@media (min-width: 768px) and (max-width: 1366px)' in TEMPLATE
     assert 'height: clamp(180px, 24vh, 220px);' in TEMPLATE
@@ -56,6 +62,7 @@ def test_product_chart_uses_compact_height_on_tablet_viewports():
 
 
 def test_product_dimension_drag_is_frame_throttled_and_composited():
+    """产品维度拖动应按帧节流并启用合成。"""
     assert 'will-change: transform;' in TEMPLATE
     assert 'let tagDragFrame = null;' in TEMPLATE
     assert 'requestAnimationFrame(flushTagPointerMove)' in TEMPLATE
@@ -66,6 +73,7 @@ def test_product_dimension_drag_is_frame_throttled_and_composited():
 
 
 def test_flow_table_uses_composite_key_step_rows():
+    """Flow 表格应使用复合键工序行。"""
     assert '>本厂款号</th>' in TEMPLATE
     assert '>工序号</th>' in TEMPLATE
     assert 'row._step.description' in TEMPLATE
@@ -79,6 +87,7 @@ def test_flow_table_uses_composite_key_step_rows():
 
 
 def test_flow_table_has_visible_themed_horizontal_scroll_and_drag():
+    """Flow 表格应支持可见的主题滚动与拖动。"""
     assert 'detail-table-scroll' in TEMPLATE
     assert 'ref="detailTableScrollRef"' in TEMPLATE
     assert '<div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"' in TEMPLATE
@@ -88,6 +97,7 @@ def test_flow_table_has_visible_themed_horizontal_scroll_and_drag():
 
 
 def test_flow_table_separates_target_rate_and_employee_efficiency():
+    """Flow 表格应区分目标达成率和员工效率。"""
     assert '>目标达成率</th>' in TEMPLATE
     assert '>员工效率</th>' in TEMPLATE
     assert 'row.emp.employee_efficiency' in TEMPLATE
@@ -96,6 +106,7 @@ def test_flow_table_separates_target_rate_and_employee_efficiency():
 
 
 def test_detail_default_date_uses_business_timezone():
+    """详情默认日期应使用业务时区。"""
     assert 'function businessDateString()' in TEMPLATE
     assert "timeZone: 'Asia/Bangkok'" in TEMPLATE
     assert "new URLSearchParams(window.location.search).get('date')" in TEMPLATE
@@ -104,6 +115,7 @@ def test_detail_default_date_uses_business_timezone():
 
 
 def test_historical_detail_keeps_date_and_disables_live_actions():
+    """历史详情应保留日期并禁用实时操作。"""
     assert '已加载历史数据' in TEMPLATE
     assert 'const isHistoricalDate = computed' in TEMPLATE
     assert "!isEditing && !isHistoricalDate" in TEMPLATE
@@ -115,6 +127,7 @@ def test_historical_detail_keeps_date_and_disables_live_actions():
 
 
 def test_history_dashboard_auto_builds_snapshots_without_source_controls():
+    """历史看板应自动构建快照且不暴露来源切换。"""
     assert '>本地</button>' not in DASHBOARD_TEMPLATE
     assert '>远程</button>' not in DASHBOARD_TEMPLATE
     assert '同步数据' not in DASHBOARD_TEMPLATE
@@ -133,6 +146,7 @@ def test_history_dashboard_auto_builds_snapshots_without_source_controls():
 
 
 def test_historical_production_detail_builds_snapshot_and_hides_update_time():
+    """历史生产详情应构建快照并隐藏更新时间。"""
     assert 'api/history/snapshots/${snapshotDate}/ensure/' in TEMPLATE
     assert 'historySnapshotMessage' in TEMPLATE
     assert 'const historySnapshotPromises = new Map();' in TEMPLATE

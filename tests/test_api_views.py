@@ -3,7 +3,6 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import date
-from django.test import RequestFactory
 from rest_framework.test import APIRequestFactory
 
 
@@ -12,11 +11,10 @@ class TestDashboardView:
 
     def test_dashboard_returns_stats_context(self):
         """测试 dashboard 视图返回 stats 上下文"""
-        from iwork.views import dashboard
         from django.test import Client
-        
+
         client = Client()
-        
+
         mock_stats = {
             'workorder_count': 100,
             'total_qty': 500,
@@ -29,46 +27,45 @@ class TestDashboardView:
             'worker_ranking': [],
             'workorders': [],
         }
-        
+
         with patch('iwork.views.get_realtime_stats', return_value=mock_stats):
             response = client.get('/')
-        
+
         assert response.status_code == 200
         assert 'stats' in response.context
         assert response.context['stats']['workorder_count'] == 100
 
     def test_dashboard_date_is_date_object(self):
         """测试 stats.date 是 date 对象，而非字符串"""
-        from iwork.views import dashboard
         from django.test import Client
-        
+
         client = Client()
-        
+
         with patch('iwork.views.get_realtime_stats') as mock_func:
             mock_func.return_value = {'date': date.today(), 'workorder_count': 0}
             response = client.get('/')
-        
+
         stats = response.context['stats']
         assert isinstance(stats['date'], date)
 
     def test_dashboard_template_date_filter_returns_empty_for_string(self):
         """测试模板中 date 过滤器对字符串返回空字符串（问题确认）"""
         from django.template import Template, Context
-        
+
         template = Template('{{ stats.date|date:"m-d" }}')
         context = Context({'stats': {'date': '2026-04-22'}})
         result = template.render(context)
-        
+
         assert result == ''
 
     def test_dashboard_template_date_filter_works_with_date_object(self):
         """测试 date 过滤器对 date 对象有效"""
         from django.template import Template, Context
-        
+
         template = Template('{{ stats.date|date:"m-d" }}')
         context = Context({'stats': {'date': date(2026, 4, 22)}})
         result = template.render(context)
-        
+
         assert result == '04-22'
 
 
@@ -78,20 +75,20 @@ class TestRealtimeStats:
     def test_realtime_stats_success(self):
         """测试成功获取实时统计数据"""
         from iwork.api_views import realtime_stats
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/realtime/')
-        
+
         mock_stats = {
             'workorder_count': 100,
             'total_qty': 500,
             'avg_time_cost': 30.5,
             'date': date.today()
         }
-        
+
         with patch('iwork.api_views.get_realtime_stats', return_value=mock_stats):
             response = realtime_stats(request)
-            
+
         assert response.status_code == 200
         assert response.data['workorder_count'] == 100
         assert response.data['total_qty'] == 500
@@ -99,13 +96,13 @@ class TestRealtimeStats:
     def test_realtime_stats_error(self):
         """测试获取实时统计失败"""
         from iwork.api_views import realtime_stats
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/realtime/')
-        
+
         with patch('iwork.api_views.get_realtime_stats', side_effect=Exception('DB Error')):
             response = realtime_stats(request)
-            
+
         assert response.status_code == 500
         assert 'error' in response.data
 
@@ -113,54 +110,91 @@ class TestRealtimeStats:
 class TestHourlyStats:
     """hourly_stats 视图测试"""
 
+    @patch('iwork.api_views.get_business_date', return_value=date(2026, 7, 24))
+    @patch('iwork.api_views.cache')
+    @patch('iwork.api_views.get_hourly_stats', return_value=[])
+    def test_default_date_uses_bangkok_business_date(
+        self,
+        mock_hourly,
+        mock_cache,
+        _mock_business_date,
+    ):
+        """未传日期时应按曼谷业务日期查询小时统计。"""
+        from iwork.api_views import hourly_stats
+
+        mock_cache.get.return_value = None
+        request = APIRequestFactory().get('/api/dashboard/hourly/')
+
+        response = hourly_stats(request)
+
+        assert response.status_code == 200
+        mock_hourly.assert_called_once_with(date(2026, 7, 24), stepno_filter=None)
+
     def test_hourly_stats_success(self):
         """测试成功获取小时统计数据"""
         from iwork.api_views import hourly_stats
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/hourly/')
-        
+
         mock_stats = [
             {'hour': 8, 'qty': 100},
             {'hour': 9, 'qty': 150},
         ]
-        
+
         with patch('iwork.api_views.cache.get', return_value=mock_stats):
             response = hourly_stats(request)
-            
+
         assert response.status_code == 200
         assert len(response.data) == 2
 
     def test_hourly_stats_with_date_param(self):
         """测试带日期参数获取小时统计"""
         from iwork.api_views import hourly_stats
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/hourly/?date=2026-04-20')
-        
+
         mock_stats = [{'hour': 10, 'qty': 200}]
-        
+
         with patch('iwork.api_views.cache.get', return_value=mock_stats):
             response = hourly_stats(request)
-            
+
         assert response.status_code == 200
 
 
 class TestFlowStats:
     """flow_stats 视图测试"""
 
+    @patch('iwork.api_views.get_business_date', return_value=date(2026, 7, 24))
+    @patch('iwork.api_views.get_flow_detail', return_value={})
+    def test_default_date_uses_bangkok_business_date(
+        self,
+        mock_flow_detail,
+        _mock_business_date,
+    ):
+        """Flow 查询应使用曼谷业务日期。"""
+        from iwork.api_views import flow_stats
+
+        request = APIRequestFactory().get('/api/dashboard/flow/VCO-L5/')
+
+        response = flow_stats(request, 'VCO-L5')
+
+        assert response.status_code == 200
+        mock_flow_detail.assert_called_once_with(date(2026, 7, 24), 'VCO-L5')
+
     def test_flow_stats_success(self):
         """测试成功获取 Flow 统计"""
         from iwork.api_views import flow_stats
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/flow/FlowA/')
-        
+
         mock_result = {'flow': 'FlowA', 'total_qty': 500, 'worker_count': 10}
-        
+
         with patch('iwork.api_views.get_flow_detail', return_value=mock_result):
             response = flow_stats(request, 'FlowA')
-            
+
         assert response.status_code == 200
         assert response.data['flow'] == 'FlowA'
         assert response.data['total_qty'] == 500
@@ -173,10 +207,10 @@ class TestWorkorderList:
     def test_workorder_list_success(self):
         """测试成功获取工单列表"""
         from iwork.api_views import workorder_list
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/workorders/')
-        
+
         mock_result = {
             'items': [{'wrk_order': 'WO001', 'total_qty': 100, 'step_count': 5}],
             'total': 1, 'page': 1, 'page_size': 20, 'total_pages': 1,
@@ -191,10 +225,10 @@ class TestWorkorderList:
     def test_workorder_list_error(self):
         """测试获取工单列表失败"""
         from iwork.api_views import workorder_list
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/workorders/')
-        
+
         with patch('iwork.api_views.get_workorders_paginated', side_effect=Exception('DB Error')):
             response = workorder_list(request)
 
@@ -208,10 +242,10 @@ class TestWorkorderDetail:
     def test_workorder_detail_success(self):
         """测试成功获取工单详情"""
         from iwork.api_views import workorder_detail
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/workorders/WO001/')
-        
+
         mock_result = {
             'wrk_order': 'WO001',
             'total_qty': 300,
@@ -220,10 +254,10 @@ class TestWorkorderDetail:
                 {'StepNo': 2, 'qty': 200, 'count': 20},
             ],
         }
-        
+
         with patch('iwork.api_views.get_workorder_detail', return_value=mock_result):
             response = workorder_detail(request, 'WO001')
-            
+
         assert response.status_code == 200
         assert response.data['wrk_order'] == 'WO001'
         assert response.data['total_qty'] == 300
@@ -232,15 +266,15 @@ class TestWorkorderDetail:
     def test_workorder_detail_not_found(self):
         """测试工单不存在"""
         from iwork.api_views import workorder_detail
-        
+
         factory = APIRequestFactory()
         request = factory.get('/api/workorders/WO999/')
-        
+
         mock_result = {'wrk_order': 'WO999', 'total_qty': 0, 'steps': []}
-        
+
         with patch('iwork.api_views.get_workorder_detail', return_value=mock_result):
             response = workorder_detail(request, 'WO999')
-            
+
         assert response.status_code == 200
         assert response.data['total_qty'] == 0
         assert response.data['steps'] == []
@@ -284,7 +318,7 @@ class TestLocalDateStatsAPI:
         """测试无效日期返回400。"""
         from django.test import Client
         from django.urls import reverse
-        
+
         client = Client()
         response = client.get(
             reverse('history:local-date-stats', kwargs={'target_date': 'not-a-date'})
@@ -334,13 +368,13 @@ class TestAvailableDatesAPI:
         """测试可用日期返回 mode=local"""
         from django.test import Client
         from django.urls import reverse
-        
+
         client = Client()
         mock_dates = [date(2026, 4, 23), date(2026, 4, 24)]
-        
+
         with patch('iwork.api_views_local.get_available_dates', return_value=mock_dates):
             response = client.get(reverse('history:available-dates'))
-        
+
         assert response.status_code == 200
         data = json.loads(response.content)
         assert data['source'] == 'local_snapshot'
@@ -352,12 +386,12 @@ class TestAvailableDatesAPI:
         """测试无可用日期时返回空列表"""
         from django.test import Client
         from django.urls import reverse
-        
+
         client = Client()
-        
+
         with patch('iwork.api_views_local.get_available_dates', return_value=[]):
             response = client.get(reverse('history:available-dates'))
-        
+
         assert response.status_code == 200
         data = json.loads(response.content)
         assert data['dates'] == []
@@ -368,6 +402,7 @@ class TestEnsureHistorySnapshotAPI:
 
     @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
     def test_rejects_current_or_future_date(self, _mock_business_date):
+        """当前或未来业务日期不允许生成历史快照。"""
         from django.test import Client
         from django.urls import reverse
 
@@ -379,6 +414,7 @@ class TestEnsureHistorySnapshotAPI:
         assert response.json()['error'] == '只能构建已经结束的历史日期'
 
     def test_rejects_invalid_date(self):
+        """非法日期参数应被拒绝。"""
         from django.test import Client
 
         response = Client().post('/api/history/snapshots/not-a-date/ensure/')
@@ -706,7 +742,9 @@ class TestFlowDetailEndpoint:
         assert response.data['work_minutes'] == 210
         assert len(response.data['employees']) == 1
         assert response.data['employees'][0]['employee_efficiency'] == 200.0
-        mock_cache.get.assert_any_call('stats:detail:flow:v2:VCO-L5')
+        from iwork.statistics import detail_cache_key
+
+        mock_cache.get.assert_any_call(detail_cache_key('flow:VCO-L5'))
 
     @patch('iwork.api_views._get_wo_targets_with_fallback', return_value={})
     @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
@@ -714,7 +752,9 @@ class TestFlowDetailEndpoint:
     def test_cached_snapshot_gets_request_time_efficiency(
         self, mock_cache, _mock_minutes, _mock_wo_targets,
     ):
+        """缓存快照应按请求时刻重新计算效率。"""
         from iwork.api_views import flow_detail
+        from iwork.statistics import detail_cache_key
 
         cached_employees = [{
             'reg_per_sys_id': 1001,
@@ -724,9 +764,9 @@ class TestFlowDetailEndpoint:
         }]
 
         def cache_get(key):
-            if key == 'stats:detail:flow:v2:VCO-L5':
+            if key == detail_cache_key('flow:VCO-L5'):
                 return cached_employees
-            if key == 'stats:detail:flow_hourly':
+            if key == detail_cache_key('flow_hourly'):
                 return {'VCO-L5': [{'hour': 10, 'qty': 300}]}
             if key.startswith('targets:'):
                 return json.dumps({'1001': 250})
@@ -771,7 +811,9 @@ class TestProductOverviewEndpoint:
 
     @patch('iwork.api_views.cache')
     def test_uses_versioned_cache_key(self, mock_cache):
+        """产品概览应使用带版本和业务日期的缓存键。"""
         from iwork.api_views import product_overview
+        from iwork.statistics import detail_cache_key
 
         cached = {
             'products': [{
@@ -792,7 +834,7 @@ class TestProductOverviewEndpoint:
 
         assert response.status_code == 200
         assert response.data == cached
-        mock_cache.get.assert_called_once_with('stats:detail:product_overview:v4')
+        mock_cache.get.assert_called_once_with(detail_cache_key('product_overview'))
 
 
 # ============================================================================
@@ -827,12 +869,13 @@ class TestDashboardStream:
     async def test_sse_first_chunk_has_valid_json(self, mock_stats, mock_cache):
         """SSE 生成器第一个 chunk 包含有效的 JSON 数据"""
         from iwork.api_views import dashboard_stream
+        from iwork.statistics import detail_cache_key, realtime_process_list_cache_key
 
         mock_stats.return_value = {'total_qty': 500, 'date': '2026-06-04'}
         mock_cache.get.side_effect = lambda key: {
-            'stats:realtime:_process_list': [70, 69],
-            'stats:detail:flow_overview': [{'flow': 'VCO-L5', 'qty': 200}],
-        }.get(key, None)
+            realtime_process_list_cache_key(): [70, 69],
+            detail_cache_key('flow_overview'): [{'flow': 'VCO-L5', 'qty': 200}],
+        }.get(key)
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/')

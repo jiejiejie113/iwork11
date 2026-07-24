@@ -2,13 +2,14 @@ from datetime import date, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 
-from iwork.history_store import snapshot_history_date
+from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 
 
 class Command(BaseCommand):
     help = '将远程生产数据聚合为本地只读历史快照'
 
     def add_arguments(self, parser):
+        """注册单日和日期范围的快照命令参数。"""
         parser.add_argument('--date', dest='target_date', help='单个日期，格式 YYYY-MM-DD')
         parser.add_argument('--start', help='回填开始日期，格式 YYYY-MM-DD')
         parser.add_argument('--end', help='回填结束日期，格式 YYYY-MM-DD')
@@ -19,12 +20,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        """按解析后的日期顺序生成历史快照。"""
         dates = self._parse_dates(options)
         failures = []
         for target_date in dates:
             self.stdout.write(f'正在生成 {target_date} 历史快照...')
             try:
                 state = snapshot_history_date(target_date)
+            except SnapshotBuildInProgressError:
+                self.stdout.write(self.style.WARNING(f'{target_date} 正由其他任务构建，本次跳过'))
+                continue
             except Exception as exc:
                 failures.append((target_date, exc))
                 self.stderr.write(self.style.ERROR(f'{target_date} 失败: {exc}'))
@@ -41,6 +46,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _parse_dates(options) -> list[date]:
+        """将命令参数解析为有序日期列表。"""
         target_date = options.get('target_date')
         start = options.get('start')
         end = options.get('end')

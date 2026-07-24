@@ -305,6 +305,7 @@ class TestGetBatchFlowEmployeesLocal:
     def test_remote_metadata_failure_keeps_quantity_data(
         self, mock_records, _mock_metadata,
     ):
+        """远程元数据失败时应保留产量数据。"""
         from iwork.local_queries import get_batch_flow_employees
 
         mock_qs = mock_records.return_value
@@ -370,6 +371,7 @@ class TestGetBatchProductOverviewLocal:
     def test_remote_metadata_failure_degrades_to_empty_values(
         self, mock_records, mock_order, _mock_metadata,
     ):
+        """远程元数据失败时应降级为空字段。"""
         from iwork.local_queries import get_batch_product_overview
 
         queryset = mock_records.return_value
