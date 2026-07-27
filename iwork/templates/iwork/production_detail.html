@@ -46,7 +46,7 @@
             display:flex; align-items:center; width:100%; height:100%;
             transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, opacity .2s ease;
         }
-        .card-wrapper .card.grab { cursor:grab; }
+        .card-wrapper .card.grab { cursor:grab; touch-action:none; }
         .card-wrapper .card.grab:active { cursor:grabbing; }
         /* 占位符 */
         .card-wrapper .card.placeholder { background:transparent; border:2px dashed #475569; opacity:.5; }
@@ -1867,6 +1867,7 @@ createApp({
             Object.assign(dragStyle, { left: `${dragOriginLeft}px`, top: `${dragOriginTop}px`, width: `${dragCardW}px`, height: `${dragCardH}px` });
             window.addEventListener('pointermove', onPointerMove);
             window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
             el.setPointerCapture(e.pointerId);
         }
 
@@ -1902,6 +1903,7 @@ createApp({
             dragCurrentIdx = -1;
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
             if (cardOrder.value.length > 0) saveCardOrder(cardOrder.value);
         }
 
@@ -2324,6 +2326,7 @@ createApp({
             stopWorkorderScroll();
             stopDetailTableDrag();
             if (activeTagDrag.value) onTagPointerCancel();
+            if (activeDrag.value) onPointerUp();
             if (autoRefreshTimer) clearInterval(autoRefreshTimer);
         });
 

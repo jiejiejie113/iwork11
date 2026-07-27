@@ -72,6 +72,14 @@ def test_product_dimension_drag_is_frame_throttled_and_composited():
     assert 'if (activeTagDrag.value) onTagPointerCancel();' in TEMPLATE
 
 
+def test_worker_card_drag_owns_touch_gesture_and_handles_cancel():
+    """平板触摸拖动卡片时应阻止原生滚动接管并正确处理取消事件。"""
+    assert '.card-wrapper .card.grab { cursor:grab; touch-action:none; }' in TEMPLATE
+    assert "window.addEventListener('pointercancel', onPointerUp);" in TEMPLATE
+    assert "window.removeEventListener('pointercancel', onPointerUp);" in TEMPLATE
+    assert 'if (activeDrag.value) onPointerUp();' in TEMPLATE
+
+
 def test_flow_table_uses_composite_key_step_rows():
     """Flow 表格应使用复合键工序行。"""
     assert '>本厂款号</th>' in TEMPLATE
