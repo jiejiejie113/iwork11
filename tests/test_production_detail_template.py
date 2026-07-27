@@ -63,6 +63,7 @@ def test_product_chart_uses_compact_height_on_tablet_viewports():
 
 def test_product_dimension_drag_is_frame_throttled_and_composited():
     """产品维度拖动应按帧节流并启用合成。"""
+    assert 'cursor: grab; touch-action: none;' in TEMPLATE
     assert 'will-change: transform;' in TEMPLATE
     assert 'let tagDragFrame = null;' in TEMPLATE
     assert 'requestAnimationFrame(flushTagPointerMove)' in TEMPLATE
