@@ -56,7 +56,7 @@
         .flip-move { transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
         /* 拖拽：维度标签 */
         .dim-tag-wrap { position: relative; display: inline-flex; align-items: center; }
-        .dim-tag-wrap .dim-tag { transition: transform .15s ease, box-shadow .15s ease; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+        .dim-tag-wrap .dim-tag, [data-area="activation"] .dim-tag { transition: transform .15s ease, box-shadow .15s ease; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
         .dim-tag-wrap .dim-tag:active { cursor: grabbing; }
         .dim-tag-wrap .dim-tag.placeholder { display: inline-block; background: transparent; border: 2px dashed #475569; border-radius: 4px; opacity: .4; min-width: 3em; }
         .dim-tag.dragging {
