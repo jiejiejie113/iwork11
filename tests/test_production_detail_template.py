@@ -61,6 +61,15 @@ def test_product_chart_uses_compact_height_on_tablet_viewports():
     assert 'style="height:300px;"' not in TEMPLATE
 
 
+def test_overview_employee_search_control_is_removed():
+    """生产详情概览不应再显示无效的员工ID搜索框。"""
+    assert 'v-model="searchQuery"' not in TEMPLATE
+    assert "const searchQuery = ref('');" not in TEMPLATE
+    assert 'filteredFlowCards' not in TEMPLATE
+    assert 'filteredStepnoCards' not in TEMPLATE
+    assert 'v-model="tableSearch"' in TEMPLATE
+
+
 def test_product_dimension_drag_is_frame_throttled_and_composited():
     """产品维度拖动应按帧节流并启用合成。"""
     assert '.dim-tag-wrap .dim-tag, [data-area="activation"] .dim-tag {' in TEMPLATE

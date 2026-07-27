@@ -137,9 +137,6 @@
     <!-- 顶部工具栏 -->
     <header class="flex justify-between items-center mb-2 flex-wrap gap-4">
         {% include 'iwork/_header.html' %}
-        <input v-if="currentView === 'overview'" v-model="searchQuery" placeholder="搜索员工ID..."
-            class="flex-1 min-w-[120px] max-w-[200px] bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
-
         <div v-if="currentView === 'overview'" class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
             <button @click="groupMode = 'flow'; loadOverview()"
                 :class="groupMode === 'flow' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
@@ -211,7 +208,7 @@
 
         <!-- Flow 卡片 -->
         <div v-if="groupMode === 'flow'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="card in filteredFlowCards" :key="card.flow"
+            <div v-for="card in flowCards" :key="card.flow"
                 @click="goDetail('flow', card.flow)"
                 class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
                 <div class="flex justify-between items-start">
@@ -244,14 +241,14 @@
                     </span>
                 </div>
             </div>
-            <div v-if="filteredFlowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+            <div v-if="flowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
                 暂无生产线数据
             </div>
         </div>
 
         <!-- 工序卡片 -->
         <div v-if="groupMode === 'stepno'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="card in filteredStepnoCards" :key="card.stepno"
+            <div v-for="card in stepnoCards" :key="card.stepno"
                 @click="goDetail('stepno', card.stepno)"
                 class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
                 <div class="flex justify-between items-start">
@@ -267,7 +264,7 @@
                     </span>
                 </div>
             </div>
-            <div v-if="filteredStepnoCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+            <div v-if="stepnoCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
                 暂无工序数据
             </div>
         </div>
@@ -708,7 +705,6 @@ createApp({
         const dragIndex = ref(-1);           // 当前拖拽中的索引
         const activeDrag = ref(false);       // 是否正在拖拽
         const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
-        const searchQuery = ref('');
         const tableSearch = ref('');
         const wrkOrderFilter = ref('');  // '' = 全部工单
         const selectedStep = ref(null);  // null = 全部工序
@@ -1448,24 +1444,6 @@ createApp({
                 target_total,
                 efficiency: target_total > 0 ? (targeted_qty / target_total * 100) : null,
             };
-        });
-
-        const filteredFlowCards = computed(() => {
-            let cards = flowCards.value;
-            if (searchQuery.value) {
-                const q = searchQuery.value.toLowerCase();
-                cards = cards.filter(c => String(c.flow).toLowerCase().includes(q));
-            }
-            return cards;
-        });
-
-        const filteredStepnoCards = computed(() => {
-            let cards = stepnoCards.value;
-            if (searchQuery.value) {
-                const q = searchQuery.value.toLowerCase();
-                cards = cards.filter(c => String(c.stepno).includes(q));
-            }
-            return cards;
         });
 
         // 工单汇总数据
@@ -2335,13 +2313,12 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            searchQuery, tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
+            tableSearch, wrkOrderFilter, workorderOptions, selectedStep, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             selectedDate, businessToday, isHistoricalDate, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
             flowCards, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
-            filteredFlowCards, filteredStepnoCards,
             stepSummary, stepHeatRange, getHeatColor,
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
             filterByWorkOrder, getWorkorderItems, getWoTarget, getCombinedTarget,
