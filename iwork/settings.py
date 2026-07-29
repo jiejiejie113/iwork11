@@ -203,6 +203,11 @@ HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = env.int(
     default=60,
 )
 
+# 生产订单 SQLite 快照导入配置。
+PRODUCTION_ORDERS_SQLITE_PATH = BASE_DIR / 'sqlite' / 'production_orders.db'
+PRODUCTION_ORDERS_IMPORT_BATCH_SIZE = 1000
+PRODUCTION_ORDERS_PROGRESS_INTERVAL = 5000
+
 # 实时与详情缓存按曼谷业务日期隔离，避免跨午夜的旧任务覆盖新数据。
 REALTIME_PROCESS_LIST_CACHE_PREFIX = 'stats:realtime:_process_list'
 DETAIL_CACHE_PREFIX = 'stats:detail:v5'

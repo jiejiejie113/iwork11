@@ -14,6 +14,7 @@ services:
       IWORK_DB_PASSWORD: ${IWORK_DB_PASSWORD:?Set IWORK_DB_PASSWORD in dkt-secrets.env}
     volumes:
       - ./logs:/app/logs
+      - ./sqlite:/app/sqlite:ro
       - ./static:/app/static
     networks:
       - dkt-net

@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-07-16
+> 最后更新：2026-07-29
 
 ---
 
@@ -47,6 +47,9 @@ Uvicorn ASGI (4 workers)
 | `VISIBLE_FLOWS` | 实际可见分组 = 白名单 - 隐藏 | `settings.VISIBLE_FLOWS` |
 | `QUERY_TIMEOUT` | 数据库查询超时（秒） | `settings.QUERY_TIMEOUT` |
 | `MONTHLY_CACHE_TTL` | 月度缓存 TTL（秒） | `settings.MONTHLY_CACHE_TTL` |
+| `PRODUCTION_ORDERS_SQLITE_PATH` | 生产订单 SQLite 快照路径 | `import_production_orders` 管理命令 |
+| `PRODUCTION_ORDERS_IMPORT_BATCH_SIZE` | 生产订单批量写入大小 | `import_production_orders` 管理命令 |
+| `PRODUCTION_ORDERS_PROGRESS_INTERVAL` | 生产订单导入进度间隔 | `import_production_orders` 管理命令 |
 
 **引用规则**：各模块在顶部建立引用，使用 `VISIBLE_FLOWS` 而非 `ALLOWED_FLOWS`：
 
@@ -267,7 +270,45 @@ const workorderItems = computed(() => {
 
 ---
 
-## 9. 修改检查清单
+## 9. 生产订单每日同步
+
+### 9.1 数据流与一致性
+
+```text
+D:\DM\iwork\sqlite\production_orders.db（只读挂载）
+    → Django 管理命令 import_production_orders
+    → iwork_local.production_orders（MySQL 精确镜像）
+```
+
+- `docker-compose.yml` 将宿主机 `./sqlite` 只读挂载到容器 `/app/sqlite`；
+- 导入前必须通过 SQLite 完整性、`orders` 表、五个必需字段、空值、字段长度和复合重复校验；
+- MySQL 删除旧快照与批量写入新快照位于同一个 `iwork_local` 事务；任何异常均回滚到上一版；
+- SQLite 空表不得覆盖已有 MySQL 快照；
+- 成功发布后必须核对 SQLite 与 MySQL 行数一致。
+
+### 9.2 计划任务
+
+- 任务名：`\DKT\iwork-Production-Orders-Sync`；
+- 执行账户：`SYSTEM`，最高权限；
+- 时间：服务器北京时间每天 `00:00`；
+- 并发策略：`IgnoreNew`，脚本另使用全局互斥锁；
+- 超时：20 分钟；失败后每隔 5 分钟重试，最多 2 次；
+- 安装入口：`scripts\install-production-orders-sync-task.ps1`；
+- 执行入口：`scripts\sync-production-orders.ps1`，使用 `-Force` 可忽略哈希强制发布。
+
+脚本以 SHA-256 记录上次成功快照。源文件哈希未变化时返回成功并跳过 Docker；只有导入成功后才原子更新成功状态，失败不得覆盖成功哈希。
+
+### 9.3 看门狗维护窗口
+
+同步脚本在导入期间创建带 30 分钟 TTL 的维护标记：
+
+```text
+D:\DM\DTD_nginx\logs\watchdog\maintenance\iwork-production-orders.json
+```
+
+有效维护期只跳过 iwork HTTP 探测。Docker Engine、`DKT_iwork` 容器、其他容器及其他应用 HTTP 仍正常监控。Python 告警监控保留 iwork 维护前状态，不发送虚假故障或恢复邮件。过期、损坏或字段不匹配的标记一律不放行。
+
+## 10. 修改检查清单
 
 每次修改后，按以下清单检查：
 
@@ -281,11 +322,11 @@ const workorderItems = computed(() => {
 
 ---
 
-## 10. 产量看板模块
+## 11. 产量看板模块
 
 > 新增于 2026-06-16
 
-### 10.1 架构
+### 11.1 架构
 
 | 文件 | 变更 |
 |------|------|
@@ -298,7 +339,7 @@ const workorderItems = computed(() => {
 | `iwork/templates/iwork/_header.html` | 添加"产量看板"标签 |
 | `iwork/settings.py` | 新增 `KANBAN_DEFAULT_STEPNO='70'`、`KANBAN_DEFAULT_PAGE_SIZE=50` |
 
-### 10.2 API 端点
+### 11.2 API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -307,14 +348,14 @@ const workorderItems = computed(() => {
 | GET | `/api/kanban/ranking/` | 排行榜分页列表（50条/页） |
 | GET | `/api/kanban/filter-options/` | 筛选项（stepnos, wrk_orders, flows, employees） |
 
-### 10.3 默认配置
+### 11.3 默认配置
 
 ```python
 KANBAN_DEFAULT_STEPNO = '70'    # 默认工序
 KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 ```
 
-### 10.4 筛选器
+### 11.4 筛选器
 
 - **工序**：单选，默认 `'70'`
 - **款号**：单选，默认全部（空字符串）
@@ -323,7 +364,7 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 - **清空按钮**：恢复默认值（stepno='70'，其余全部）
 - **日期**：日期选择器，默认当天
 
-### 10.5 前端技术栈
+### 11.5 前端技术栈
 
 - Vue 3 CDN（分隔符 `{[` `]}`）
 - Tailwind CSS CDN（darkMode: 'class'）
