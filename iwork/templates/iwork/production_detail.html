@@ -778,6 +778,43 @@ createApp({
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
         const levelLabels = { product: '产品名称', wrk_order: '本厂款号', stepno: '工序号', flow: '生产线' };
+        const PRODUCT_VIEW_STORAGE_KEY = 'iwork:production-detail:product-view:v1';
+
+        function normalizeSelectedLevels(levels) {
+            if (!Array.isArray(levels)) return ['product'];
+            const seen = new Set();
+            return levels.filter(level => {
+                if (!dimensionPool.includes(level) || seen.has(level)) return false;
+                seen.add(level);
+                return true;
+            });
+        }
+
+        function loadProductViewState() {
+            try {
+                const raw = localStorage.getItem(PRODUCT_VIEW_STORAGE_KEY);
+                if (!raw) return;
+                const state = JSON.parse(raw);
+                if (!state || typeof state !== 'object') return;
+                selectedLevels.value = normalizeSelectedLevels(state.selectedLevels);
+                if (Array.isArray(state.activePath)) {
+                    activePath.value = state.activePath.filter(key => typeof key === 'string');
+                }
+                productChartMetric.value = ['qty', 'output_value'].includes(state.productChartMetric)
+                    ? state.productChartMetric
+                    : 'qty';
+            } catch (e) { /* 浏览器存储不可用时使用默认状态 */ }
+        }
+
+        function saveProductViewState() {
+            try {
+                localStorage.setItem(PRODUCT_VIEW_STORAGE_KEY, JSON.stringify({
+                    selectedLevels: [...selectedLevels.value],
+                    activePath: [...activePath.value],
+                    productChartMetric: productChartMetric.value,
+                }));
+            } catch (e) { /* 浏览器存储不可用时仅保留当前页面状态 */ }
+        }
 
         const availableLevels = computed(() => {
             return dimensionPool.filter(d => !selectedLevels.value.includes(d));
@@ -890,6 +927,26 @@ createApp({
                 nodes.sort((a, b) => b.qty - a.qty);
             }
             return nodes;
+        }
+
+        function normalizeProductActivePath() {
+            const tree = buildGroupedTree(
+                flattenToLeaves(productList.value),
+                selectedLevels.value,
+            );
+            const validPath = [];
+            let nodes = tree;
+            let parentKey = '';
+            for (const key of activePath.value) {
+                const node = nodes.find(item => (
+                    `${parentKey}/${item.name}` === key && item.hasChildren
+                ));
+                if (!node) break;
+                validPath.push(key);
+                parentKey = key;
+                nodes = node.children || [];
+            }
+            activePath.value = validPath;
         }
 
         // 动态树形表格行（按 selectedLevels 顺序重分组，activePath 控制唯一展开）
@@ -1049,6 +1106,7 @@ createApp({
         function setProductChartMetric(metric) {
             if (productChartMetric.value === metric) return;
             productChartMetric.value = metric;
+            saveProductViewState();
             nextTick(() => renderProductChart());
         }
 
@@ -1062,6 +1120,7 @@ createApp({
                 activePath.value.splice(row.depth);
                 activePath.value.push(row.key);
             }
+            saveProductViewState();
             nextTick(() => { if (productRows.value.length) renderProductChart(); });
         }
 
@@ -1240,6 +1299,7 @@ createApp({
 
             selectedLevels.value = levels;
             activePath.value = [];
+            saveProductViewState();
             nextTick(() => renderProductChart());
 
             tagDragLevel.value = '';
@@ -1279,6 +1339,12 @@ createApp({
             nextTick(() => {
                 const canvas = document.getElementById('product-chart');
                 if (!canvas) return;
+
+                const existingChart = charts['product-chart'];
+                if (existingChart && existingChart.canvas !== canvas) {
+                    existingChart.destroy();
+                    charts['product-chart'] = null;
+                }
 
                 const values = productChartValues.value;
                 if (!values.length) {
@@ -2017,11 +2083,12 @@ createApp({
 
         async function loadProductOverview() {
             showLoading();
-            activePath.value = [];
             try {
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await readResponse(resp);
                 productList.value = data.products || [];
+                normalizeProductActivePath();
+                saveProductViewState();
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
             } catch (e) { loadError.value = e.message; console.error('加载产品概览失败:', e); }
             finally {
@@ -2099,6 +2166,10 @@ createApp({
                     const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                     const data = await resp.json();
                     productList.value = data.products || [];
+                    normalizeProductActivePath();
+                    saveProductViewState();
+                    await nextTick();
+                    renderProductChart();
                     lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
                     return;
                 }
@@ -2283,6 +2354,7 @@ createApp({
         let autoRefreshTimer = null;
 
         onMounted(() => {
+            loadProductViewState();
             if (initialView === 'overview') {
                 loadOverview();
             } else if (initialView === 'detail') {

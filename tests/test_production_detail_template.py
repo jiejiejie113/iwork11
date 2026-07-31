@@ -53,6 +53,46 @@ def test_product_chart_switches_and_sorts_by_selected_metric():
     assert 'items.sort((a, b) => b.value - a.value)' in TEMPLATE
 
 
+def test_product_view_state_is_saved_and_restored_in_browser():
+    """产品维度、树路径和图表指标应保存到浏览器并在加载时恢复。"""
+    assert "const PRODUCT_VIEW_STORAGE_KEY = 'iwork:production-detail:product-view:v1';" in TEMPLATE
+    assert 'function loadProductViewState()' in TEMPLATE
+    assert 'function saveProductViewState()' in TEMPLATE
+    assert 'selectedLevels: [...selectedLevels.value]' in TEMPLATE
+    assert 'activePath: [...activePath.value]' in TEMPLATE
+    assert 'productChartMetric: productChartMetric.value' in TEMPLATE
+    assert 'loadProductViewState();' in TEMPLATE
+
+
+def test_product_view_state_rejects_invalid_cache_and_stale_tree_path():
+    """非法缓存应回退默认值，失效树路径应在数据加载后截断。"""
+    assert 'function normalizeSelectedLevels(levels)' in TEMPLATE
+    assert 'dimensionPool.includes(level)' in TEMPLATE
+    assert "['qty', 'output_value'].includes(state.productChartMetric)" in TEMPLATE
+    assert "state.activePath.filter(key => typeof key === 'string')" in TEMPLATE
+    assert 'function normalizeProductActivePath()' in TEMPLATE
+    assert 'normalizeProductActivePath();' in TEMPLATE
+
+
+def test_product_chart_rebinds_when_vue_replaces_its_canvas():
+    """Vue 重建产品画布后应销毁旧图表并绑定当前画布。"""
+    assert "const existingChart = charts['product-chart'];" in TEMPLATE
+    assert 'if (existingChart && existingChart.canvas !== canvas)' in TEMPLATE
+    assert 'existingChart.destroy();' in TEMPLATE
+    assert "charts['product-chart'] = null;" in TEMPLATE
+
+
+def test_product_silent_refresh_revalidates_state_and_redraws_chart():
+    """产品数据静默刷新后应校验树路径并重绘当前图表。"""
+    refresh_block = TEMPLATE.split(
+        'async function refreshOverviewSilently()',
+        maxsplit=1,
+    )[1].split('function goDetail', maxsplit=1)[0]
+    assert 'normalizeProductActivePath();' in refresh_block
+    assert 'saveProductViewState();' in refresh_block
+    assert 'renderProductChart();' in refresh_block
+
+
 def test_product_chart_uses_compact_height_on_tablet_viewports():
     """平板视口应使用紧凑图表高度。"""
     assert 'class="product-chart-panel ' in TEMPLATE
