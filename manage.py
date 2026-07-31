@@ -6,6 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
+    process_role = "web" if "runserver" in sys.argv else "management"
+    os.environ.setdefault("IWORK_PROCESS_ROLE", process_role)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "iwork.settings")
     try:
         from django.core.management import execute_from_command_line

@@ -71,6 +71,11 @@ WSGI_APPLICATION = "iwork.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# 当前进程角色：web 禁止远程库，celery/management 允许受控只读访问。
+IWORK_PROCESS_ROLE = env('IWORK_PROCESS_ROLE', default='web').lower()
+if IWORK_PROCESS_ROLE not in {'web', 'celery', 'management'}:
+    raise ValueError('IWORK_PROCESS_ROLE 必须是 web、celery 或 management')
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -89,7 +94,7 @@ DATABASES = {
         },
     },
     'iwork': {
-        'ENGINE': 'django.db.backends.mysql',
+        'ENGINE': 'iwork.db_backends.guarded_mysql',
         'NAME': env('IWORK_DB_NAME'),
         'USER': env('IWORK_DB_USER'),
         'PASSWORD': env('IWORK_DB_PASSWORD'),
@@ -213,6 +218,15 @@ REALTIME_PROCESS_LIST_CACHE_PREFIX = 'stats:realtime:_process_list'
 DETAIL_CACHE_PREFIX = 'stats:detail:v5'
 PRODUCT_OVERVIEW_CACHE_NAME = 'product_overview'
 FLOW_DETAIL_CACHE_NAME = 'flow'
+
+# 版本化实时读模型配置。新键与既有缓存并存，发布失败时保留旧 current。
+READ_MODEL_CACHE_PREFIX = 'iwork:read:v1'
+READ_MODEL_SCHEMA_VERSION = 1
+READ_MODEL_RETENTION_SECONDS = env.int('READ_MODEL_RETENTION_SECONDS', default=172800)
+READ_MODEL_STALE_AFTER_SECONDS = env.int('READ_MODEL_STALE_AFTER_SECONDS', default=120)
+READ_MODEL_MAX_STALE_SECONDS = env.int('READ_MODEL_MAX_STALE_SECONDS', default=600)
+READ_MODEL_PUBLISH_LOCK_SECONDS = env.int('READ_MODEL_PUBLISH_LOCK_SECONDS', default=60)
+READ_MODEL_REFRESH_LOCK_SECONDS = env.int('READ_MODEL_REFRESH_LOCK_SECONDS', default=120)
 
 # Flow 白名单生效工序 — 仅此工序使用 ALLOWED_FLOWS 过滤，其他工序查询全量 Flow
 ALLOWED_FLOWS_STEPNO = 70

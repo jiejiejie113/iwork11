@@ -13,35 +13,11 @@ from datetime import date, datetime
 from loguru import logger
 
 from iwork.statistics import (
-    FLOW_DETAIL_CACHE_NAME,
-    PRODUCT_OVERVIEW_CACHE_NAME,
     _seconds_to_midnight,
     calculate_employee_efficiency,
-    detail_cache_key,
     get_business_date,
     get_effective_work_minutes,
-    get_realtime_stats,
-    realtime_process_list_cache_key,
-)
-from iwork.queries import (
-    get_hourly_stats,
-    get_flow_detail,
-    get_workorder_detail,
-    get_monthly_total_trend,
-    get_process_by_flow,
-    get_process_stats,
-    get_heatmap_data,
-    get_station_ranking,
-    get_workorders_paginated,
-    get_all_stepnos as remote_get_all_stepnos,
-    get_batch_flow_overview as remote_get_batch_flow_overview,
-    get_batch_flow_hourly as remote_get_batch_flow_hourly,
-    get_batch_flow_employees as remote_get_batch_flow_employees,
-    get_batch_stepno_employees as remote_get_batch_stepno_employees,
-    get_batch_product_overview as remote_get_batch_product_overview,
-    get_kanban_stats as remote_get_kanban_stats,
-    get_kanban_ranking as remote_get_kanban_ranking,
-    get_kanban_filter_options as remote_get_kanban_filter_options,
+    get_local_date_stats,
 )
 from iwork.historical_queries import (
     get_all_stepnos as local_get_all_stepnos,
@@ -52,9 +28,22 @@ from iwork.historical_queries import (
     get_batch_stepno_employees as local_get_batch_stepno_employees,
     get_workorders_paginated as local_get_workorders_paginated,
 )
-from iwork.local_queries import get_workorder_detail as local_get_workorder_detail
+from iwork.local_queries import (
+    get_kanban_filter_options as local_get_kanban_filter_options,
+    get_kanban_ranking as local_get_kanban_ranking,
+    get_kanban_stats as local_get_kanban_stats,
+    get_workorder_detail as local_get_workorder_detail,
+)
 from iwork.local_models import HistoricalSyncState, TargetProduction
+from iwork.read_model.errors import ReadModelNotReadyError
+from iwork.read_model.queries import ReadModelQueries
+from iwork.read_model.store import SnapshotReadResult
 from iwork.request_params import parse_stepno_filter
+
+
+# ======
+# 统一实时读模型
+READ_MODEL = ReadModelQueries()
 
 
 def _parse_stepno(request) -> list[int] | None:
@@ -90,13 +79,46 @@ def _snapshot_not_found_response():
     )
 
 
+def _snapshot_response(
+    result: SnapshotReadResult,
+    response_status: int = status.HTTP_200_OK,
+) -> Response:
+    """构造带快照版本、生成时间和陈旧标记的响应。
+
+    Args:
+        result: 统一读模型查询结果。
+        response_status: HTTP 状态码。
+
+    Returns:
+        注入快照响应头的 DRF 响应。
+    """
+    response = Response(result.data, status=response_status)
+    response["X-Iwork-Snapshot-Version"] = result.metadata["snapshot_version"]
+    response["X-Iwork-Generated-At"] = result.metadata["generated_at"]
+    response["X-Iwork-Stale"] = "true" if result.stale else "false"
+    return response
+
+
+def _read_model_unavailable_response(exc: ReadModelNotReadyError) -> Response:
+    """将实时读模型不可用转换为统一 503 响应。"""
+    logger.warning("实时读模型暂不可用: {}", exc)
+    return Response(
+        {
+            "error": "实时数据暂不可用，请稍后重试",
+            "code": "realtime_snapshot_unavailable",
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 @api_view(['GET'])
 def realtime_stats(request):
     """获取实时统计数据（支持 ?stepno=70,69 过滤工序）"""
     t0 = time.time()
     try:
         stepno_filter = _parse_stepno(request)
-        stats = get_realtime_stats(stepno_filter=stepno_filter)
+        result = READ_MODEL.realtime(get_business_date(), stepno_filter)
+        stats = result.data
         elapsed = (time.time() - t0) * 1000
         logger.info('GET /api/dashboard/realtime stepno={} qty={} ({:.0f}ms)',
                     stepno_filter or 'all', stats.get('total_qty', 0), elapsed)
@@ -107,7 +129,9 @@ def realtime_stats(request):
                      len(stats.get('process_flow_stats', [])),
                      len(stats.get('hourly_stats', [])),
                      elapsed)
-        return Response(stats, status=status.HTTP_200_OK)
+        return _snapshot_response(result)
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error('GET /api/dashboard/realtime 失败 ({:.0f}ms): {}', (time.time() - t0) * 1000, e)
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -124,14 +148,25 @@ def process_list(request):
         if mode == 'local' and _snapshot_state(date_obj) is None:
             return _snapshot_not_found_response()
 
-        stepnos = local_get_all_stepnos(date_obj) if mode == 'local' else remote_get_all_stepnos(date_obj)
+        if mode == 'local':
+            stepnos = local_get_all_stepnos(date_obj)
+            return Response({
+                'date': date_obj.isoformat(),
+                'mode': mode,
+                'stepnos': stepnos,
+            }, status=status.HTTP_200_OK)
 
-        return Response({
+        result = READ_MODEL.processes(date_obj)
+        stepnos = result.data
+
+        return _snapshot_response(SnapshotReadResult(data={
             'date': date_obj.isoformat(),
             'mode': mode,
             'stepnos': stepnos,
-        }, status=status.HTTP_200_OK)
+        }, metadata=result.metadata, stale=result.stale))
 
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工序列表失败: {e}')
         return Response({'error': '获取工序列表失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -140,21 +175,29 @@ def process_list(request):
 @api_view(['GET'])
 def hourly_stats(request):
     """获取按小时统计数据"""
-    target_date = request.query_params.get('date', get_business_date().isoformat())
-    stepno_filter = _parse_stepno(request)
-    cache_key = f'dashboard:hourly:{target_date}:{stepno_filter}'
-
-    stats = cache.get(cache_key)
-    if stats is None:
-        try:
-            target = date.fromisoformat(target_date)
-            stats = get_hourly_stats(target, stepno_filter=stepno_filter)
-            cache.set(cache_key, stats, 86400)
-        except Exception as e:
-            logger.error(f'获取小时统计失败: {e}')
-            return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    return Response(stats, status=status.HTTP_200_OK)
+    try:
+        target = date.fromisoformat(
+            request.query_params.get('date', get_business_date().isoformat())
+        )
+        stepno_filter = _parse_stepno(request)
+        if target < get_business_date():
+            if _snapshot_state(target) is None:
+                return _snapshot_not_found_response()
+            return Response(
+                get_local_date_stats(target, stepno_filter=stepno_filter)['hourly_stats'],
+                status=status.HTTP_200_OK,
+            )
+        result = READ_MODEL.realtime(target, stepno_filter)
+        return _snapshot_response(SnapshotReadResult(
+            data=result.data.get('hourly_stats', []),
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
+    except Exception as exc:
+        logger.error('获取小时统计失败: {}', exc)
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -162,8 +205,20 @@ def flow_stats(request, flow_name):
     """获取指定 Flow 组统计数据"""
     try:
         today = get_business_date()
-        stats = get_flow_detail(today, flow_name)
-        return Response(stats, status=status.HTTP_200_OK)
+        result = READ_MODEL.details(today)
+        employees = result.data.get('flow_employees', {}).get(flow_name, [])
+        stats = {
+            'flow': flow_name,
+            'total_qty': sum(item.get('total_qty', 0) for item in employees),
+            'worker_count': len(employees),
+        }
+        return _snapshot_response(SnapshotReadResult(
+            data=stats,
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取 Flow 统计失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -190,10 +245,16 @@ def workorder_list(request):
                 page_size=page_size,
                 stepno_filter=stepno_filter,
             )
-        else:
-            result = get_workorders_paginated(target_date, page=page, page_size=page_size,
-                                              stepno_filter=stepno_filter)
-        return Response(result, status=status.HTTP_200_OK)
+            return Response(result, status=status.HTTP_200_OK)
+        result = READ_MODEL.workorders(
+            target_date,
+            page=page,
+            page_size=page_size,
+            stepnos=stepno_filter,
+        )
+        return _snapshot_response(result)
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工单列表失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -209,12 +270,12 @@ def workorder_detail(request, wrk_order):
         mode = _detail_mode(request, target)
         if mode == 'local' and _snapshot_state(target) is None:
             return _snapshot_not_found_response()
-        detail = (
-            local_get_workorder_detail(wrk_order, target)
-            if mode == 'local'
-            else get_workorder_detail(wrk_order, target)
-        )
-        return Response(detail, status=status.HTTP_200_OK)
+        if mode == 'local':
+            detail = local_get_workorder_detail(wrk_order, target)
+            return Response(detail, status=status.HTTP_200_OK)
+        return _snapshot_response(READ_MODEL.workorder_detail(target, wrk_order))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工单详情失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -229,11 +290,22 @@ def monthly_trend(request):
     try:
         target_date = request.query_params.get('date', get_business_date().isoformat())
         target = date.fromisoformat(target_date)
-        month_start = date(target.year, target.month, 1)
         stepno_filter = _parse_stepno(request)
-
-        stats = get_monthly_total_trend(month_start, target, stepno_filter=stepno_filter)
-        return Response(stats, status=status.HTTP_200_OK)
+        if target < get_business_date():
+            if _snapshot_state(target) is None:
+                return _snapshot_not_found_response()
+            return Response(
+                get_local_date_stats(target, stepno_filter=stepno_filter)['monthly_total_trend'],
+                status=status.HTTP_200_OK,
+            )
+        result = READ_MODEL.realtime(target, stepno_filter)
+        return _snapshot_response(SnapshotReadResult(
+            data=result.data.get('monthly_total_trend', []),
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取月趋势失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -248,18 +320,41 @@ def process_compare(request):
         target = date.fromisoformat(target_date)
 
         stepnos_raw = request.query_params.get('stepnos', '')
-        if not stepnos_raw:
-            # 默认取当天 Top 8 工序
-            top = get_process_stats(target, limit=8)
-            stepno_list = [p['step'] for p in top]
-        else:
-            stepno_list = [int(s.strip()) for s in stepnos_raw.split(',') if s.strip().isdigit()]
+        stepno_list = [int(s.strip()) for s in stepnos_raw.split(',') if s.strip().isdigit()]
+        if target < get_business_date():
+            if _snapshot_state(target) is None:
+                return _snapshot_not_found_response()
+            local_stats = get_local_date_stats(
+                target,
+                stepno_filter=stepno_list or None,
+            )
+            stats = local_stats.get('process_flow_stats', [])
+            if not stepno_list:
+                top_steps = {
+                    item.get('step')
+                    for item in local_stats.get('top_processes', [])[:8]
+                }
+                stats = [item for item in stats if item.get('step') in top_steps]
+            return Response(stats, status=status.HTTP_200_OK)
 
-        stats = get_process_by_flow(target, stepno_list)
+        result = READ_MODEL.realtime(target, stepno_list or None)
+        stats = result.data.get('process_flow_stats', [])
+        if not stepno_list:
+            top_steps = {
+                item.get('step')
+                for item in result.data.get('top_processes', [])[:8]
+            }
+            stats = [item for item in stats if item.get('step') in top_steps]
         elapsed = (time.time() - t0) * 1000
         logger.info('GET /api/dashboard/process-compare date={} stepnos={} → {}行 ({:.0f}ms)',
                     target_date, stepno_list, len(stats), elapsed)
-        return Response(stats, status=status.HTTP_200_OK)
+        return _snapshot_response(SnapshotReadResult(
+            data=stats,
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error('获取工序对比失败 ({:.0f}ms): {}', (time.time() - t0) * 1000, e)
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -273,8 +368,25 @@ def heatmap(request):
         target = date.fromisoformat(target_date)
         stepno_filter = _parse_stepno(request)
 
-        stats = get_heatmap_data(target, stepno_filter=stepno_filter)
-        return Response(stats, status=status.HTTP_200_OK)
+        if target < get_business_date():
+            if _snapshot_state(target) is None:
+                return _snapshot_not_found_response()
+            return Response(
+                get_local_date_stats(
+                    target,
+                    stepno_filter=stepno_filter,
+                ).get('heatmap_matrix', {}),
+                status=status.HTTP_200_OK,
+            )
+
+        result = READ_MODEL.realtime(target, stepno_filter)
+        return _snapshot_response(SnapshotReadResult(
+            data=result.data.get('heatmap_matrix', {}),
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取热力图数据失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -289,8 +401,25 @@ def station_ranking(request):
         limit = int(request.query_params.get('limit', 15))
         stepno_filter = _parse_stepno(request)
 
-        stats = get_station_ranking(target, limit=limit, stepno_filter=stepno_filter)
-        return Response(stats, status=status.HTTP_200_OK)
+        if target < get_business_date():
+            if _snapshot_state(target) is None:
+                return _snapshot_not_found_response()
+            return Response(
+                get_local_date_stats(
+                    target,
+                    stepno_filter=stepno_filter,
+                ).get('station_ranking', [])[:limit],
+                status=status.HTTP_200_OK,
+            )
+
+        result = READ_MODEL.realtime(target, stepno_filter)
+        return _snapshot_response(SnapshotReadResult(
+            data=result.data.get('station_ranking', [])[:limit],
+            metadata=result.metadata,
+            stale=result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工站排行失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -380,14 +509,15 @@ def _with_employee_efficiency(employees, target_date):
     return work_minutes, enriched
 
 
-def _get_flow_detail_data(flow_name, target_date, mode='remote'):
+def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=None):
     """
     获取指定 Flow 的完整详情数据
 
     Args:
         flow_name (str): Flow 名称
         target_date (date): 目标日期
-        mode (str): 'remote' 远程数据库 / 'local' 本地数据库
+        mode (str): 'remote' 实时快照 / 'local' 本地历史数据库。
+        detail_payload (dict | None): 已固定版本的完整详情快照。
 
     Returns:
         dict: 包含 flow、date、total_qty、worker_count、hourly_trend、employees
@@ -396,10 +526,11 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
         employees_data = local_get_batch_flow_employees(target_date)
         hourly_data = local_get_batch_flow_hourly(target_date)
     else:
-        employees_data = remote_get_batch_flow_employees(target_date)
-        hourly_data = remote_get_batch_flow_hourly(target_date)
+        detail_payload = detail_payload or READ_MODEL.details(target_date).data
+        employees_data = detail_payload.get('flow_employees', {})
+        hourly_data = detail_payload.get('flow_hourly', {})
 
-    employees = employees_data.get(flow_name, [])
+    employees = [dict(item) for item in employees_data.get(flow_name, [])]
     total_qty = sum(e['total_qty'] for e in employees)
 
     # 读取已保存的目标产量并注入到员工数据中
@@ -429,18 +560,19 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote'):
             'snapshot_version': state.snapshot_version if state else None,
         })
     else:
-        result['source'] = 'remote'
+        result['source'] = 'redis_snapshot'
     return result
 
 
-def _get_stepno_detail_data(stepno, target_date, mode='remote'):
+def _get_stepno_detail_data(stepno, target_date, mode='remote', detail_payload=None):
     """
     获取指定 StepNo 的完整详情数据
 
     Args:
         stepno (int): 工序号
         target_date (date): 目标日期
-        mode (str): 'remote' 远程数据库 / 'local' 本地数据库
+        mode (str): 'remote' 实时快照 / 'local' 本地历史数据库。
+        detail_payload (dict | None): 已固定版本的完整详情快照。
 
     Returns:
         dict: 包含 stepno、date、total_qty、worker_count、employees
@@ -448,9 +580,10 @@ def _get_stepno_detail_data(stepno, target_date, mode='remote'):
     if mode == 'local':
         stepno_data = local_get_batch_stepno_employees(target_date)
     else:
-        stepno_data = remote_get_batch_stepno_employees(target_date)
+        detail_payload = detail_payload or READ_MODEL.details(target_date).data
+        stepno_data = detail_payload.get('stepno_employees', {})
 
-    employees = stepno_data.get(stepno, [])
+    employees = [dict(item) for item in stepno_data.get(stepno, [])]
     total_qty = sum(e['qty'] for e in employees)
 
     # 读取已保存的目标产量并注入到员工数据中
@@ -465,7 +598,7 @@ def _get_stepno_detail_data(stepno, target_date, mode='remote'):
         'worker_count': len(employees),
         'employees': employees,
     }
-    result['source'] = 'local_snapshot' if mode == 'local' else 'remote'
+    result['source'] = 'local_snapshot' if mode == 'local' else 'redis_snapshot'
     if mode == 'local':
         result['snapshot_date'] = target_date.isoformat()
     return result
@@ -491,26 +624,26 @@ def stepno_overview(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if target_date == business_today and mode == 'remote':
-            cached = cache.get(detail_cache_key('stepno_overview', target_date))
-            if cached is not None:
-                result = {}
-                for stepno, emps in cached.items():
-                    total_qty = sum(e['qty'] for e in emps)
-                    result[stepno] = {'total_qty': total_qty, 'worker_count': len(emps)}
-                return Response(result, status=status.HTTP_200_OK)
-
-        stepno_data = (
-            local_get_batch_stepno_employees(target_date)
-            if mode == 'local'
-            else remote_get_batch_stepno_employees(target_date)
-        )
+        if mode == 'local':
+            stepno_data = local_get_batch_stepno_employees(target_date)
+            snapshot_result = None
+        else:
+            snapshot_result = READ_MODEL.details(target_date)
+            stepno_data = snapshot_result.data.get('stepno_employees', {})
         result = {}
         for stepno, emps in stepno_data.items():
             total_qty = sum(e['qty'] for e in emps)
             result[stepno] = {'total_qty': total_qty, 'worker_count': len(emps)}
-        return Response(result, status=status.HTTP_200_OK)
+        if snapshot_result is None:
+            return Response(result, status=status.HTTP_200_OK)
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
 
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工序概览失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -536,22 +669,12 @@ def flow_overview(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # 今日优先读 Redis
-        if target_date == business_today and mode == 'remote':
-            cached = cache.get(detail_cache_key('flow_overview', target_date))
-            if cached is not None:
-                return Response(cached, status=status.HTTP_200_OK)
-
         if mode == 'local':
             result = local_get_batch_flow_overview(target_date)
-        else:
-            result = remote_get_batch_flow_overview(target_date)
-
-        # 今日结果写入 Redis（当天有效）
-        if target_date == business_today and mode == 'remote':
-            cache.set(detail_cache_key('flow_overview', target_date), result, 3600)
-
-        return Response(result, status=status.HTTP_200_OK)
+            return Response(result, status=status.HTTP_200_OK)
+        return _snapshot_response(READ_MODEL.detail(target_date, 'flow_overview'))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取 Flow 概览失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -577,38 +700,25 @@ def flow_detail(request, flow_name):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # 今日优先读缓存，所有字段统一来自 Redis 快照，避免混用新旧数据
-        if target_date == business_today and mode == 'remote':
-            cached_employees = cache.get(
-                detail_cache_key(f'{FLOW_DETAIL_CACHE_NAME}:{flow_name}', target_date),
+        if mode == 'local':
+            return Response(
+                _get_flow_detail_data(flow_name, target_date, mode),
+                status=status.HTTP_200_OK,
             )
-            if cached_employees is not None:
-                cached_employees = [dict(employee) for employee in cached_employees]
-                total_qty = sum(e['total_qty'] for e in cached_employees)
-                hourly_cache = cache.get(detail_cache_key('flow_hourly', target_date)) or {}
-                hourly_trend = hourly_cache.get(flow_name, [])
-                targets_dict = _get_targets_with_fallback(target_date)
-                wo_targets_dict = _get_wo_targets_with_fallback(target_date)
-                for emp in cached_employees:
-                    eid = str(emp['reg_per_sys_id'])
-                    emp['target'] = int(targets_dict.get(eid, 0))
-                    emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
-                work_minutes, cached_employees = _with_employee_efficiency(
-                    cached_employees,
-                    target_date,
-                )
-                return Response({
-                    'flow': flow_name,
-                    'date': target_date.isoformat(),
-                    'total_qty': total_qty,
-                    'worker_count': len(cached_employees),
-                    'work_minutes': work_minutes,
-                    'hourly_trend': hourly_trend,
-                    'employees': cached_employees,
-                }, status=status.HTTP_200_OK)
-
-        result = _get_flow_detail_data(flow_name, target_date, mode)
-        return Response(result, status=status.HTTP_200_OK)
+        snapshot_result = READ_MODEL.details(target_date)
+        result = _get_flow_detail_data(
+            flow_name,
+            target_date,
+            mode,
+            detail_payload=snapshot_result.data,
+        )
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取 Flow 详情失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -633,8 +743,25 @@ def stepno_detail(request, stepno):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        result = _get_stepno_detail_data(stepno, target_date, mode)
-        return Response(result, status=status.HTTP_200_OK)
+        if mode == 'local':
+            return Response(
+                _get_stepno_detail_data(stepno, target_date, mode),
+                status=status.HTTP_200_OK,
+            )
+        snapshot_result = READ_MODEL.details(target_date)
+        result = _get_stepno_detail_data(
+            stepno,
+            target_date,
+            mode,
+            detail_payload=snapshot_result.data,
+        )
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工序详情失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -660,11 +787,6 @@ def product_overview(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if target_date == business_today and mode == 'remote':
-            cached = cache.get(detail_cache_key(PRODUCT_OVERVIEW_CACHE_NAME, target_date))
-            if cached is not None:
-                return Response(cached, status=status.HTTP_200_OK)
-
         if mode == 'local':
             result = local_get_batch_product_overview(target_date)
             state = _snapshot_state(target_date)
@@ -673,18 +795,17 @@ def product_overview(request):
                 'snapshot_date': target_date.isoformat(),
                 'snapshot_version': state.snapshot_version if state else None,
             })
-        else:
-            result = remote_get_batch_product_overview(target_date)
-            result['source'] = 'remote'
-
-        if target_date == business_today and mode == 'remote':
-            cache.set(
-                detail_cache_key(PRODUCT_OVERVIEW_CACHE_NAME, target_date),
-                result,
-                3600,
-            )
-
-        return Response(result, status=status.HTTP_200_OK)
+            return Response(result, status=status.HTTP_200_OK)
+        snapshot_result = READ_MODEL.detail(target_date, 'product_overview')
+        result = dict(snapshot_result.data)
+        result['source'] = 'redis_snapshot'
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取产品概览失败: {e}')
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -710,23 +831,29 @@ async def dashboard_stream(request):
 
     @sync_to_async
     def _get_data():
-        stats = get_realtime_stats(stepno_filter=stepno_filter)
-        process_list = cache.get(realtime_process_list_cache_key()) or []
-        detail_overview = cache.get(detail_cache_key('flow_overview')) or []
-        return stats, process_list, detail_overview
+        return READ_MODEL.stream_payload(get_business_date(), stepno_filter)
 
     async def event_stream():
         while True:
             try:
-                stats, process_list, detail_overview = await _get_data()
+                result = await _get_data()
                 data = {
                     'type': 'dashboard_update',
                     'timestamp': datetime.now().isoformat(),
-                    'data': stats,
-                    'process_list': process_list,
-                    'detail_overview': detail_overview,
+                    'snapshot_version': result.metadata['snapshot_version'],
+                    'generated_at': result.metadata['generated_at'],
+                    'stale': result.stale,
+                    **result.data,
                 }
                 yield f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+            except ReadModelNotReadyError as exc:
+                logger.warning('SSE 实时快照暂不可用: {}', exc)
+                data = {
+                    'type': 'snapshot_unavailable',
+                    'timestamp': datetime.now().isoformat(),
+                    'code': 'realtime_snapshot_unavailable',
+                }
+                yield f"event: snapshot_unavailable\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
             except Exception as e:
                 logger.error('SSE 数据获取失败: {}', e)
             # 心跳保活：60秒内每15秒发一次SSE注释，防止Nginx/浏览器断开
@@ -852,12 +979,23 @@ def kanban_stats(request):
     show_all_flows = params.get('show_all_flows', 'false').lower() == 'true'
 
     try:
-        stats = remote_get_kanban_stats(
+        if target_date < get_business_date():
+            if _snapshot_state(target_date) is None:
+                return _snapshot_not_found_response()
+            stats = local_get_kanban_stats(
+                target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+                flows=flows, reg_per_sys_ids=reg_per_sys_ids,
+                show_all_flows=show_all_flows,
+            )
+            return Response(stats, status=status.HTTP_200_OK)
+        result = READ_MODEL.kanban_stats(
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
             show_all_flows=show_all_flows,
         )
-        return Response(stats, status=status.HTTP_200_OK)
+        return _snapshot_response(result)
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error('GET /api/kanban/stats/ 失败: {}', e)
         return Response(
@@ -900,13 +1038,25 @@ def kanban_ranking(request):
         )
 
     try:
-        result = remote_get_kanban_ranking(
+        if target_date < get_business_date():
+            if _snapshot_state(target_date) is None:
+                return _snapshot_not_found_response()
+            result = local_get_kanban_ranking(
+                target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+                flows=flows, reg_per_sys_ids=reg_per_sys_ids,
+                page=page, page_size=page_size,
+                show_all_flows=show_all_flows,
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        result = READ_MODEL.kanban_ranking(
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
             page=page, page_size=page_size,
             show_all_flows=show_all_flows,
         )
-        return Response(result, status=status.HTTP_200_OK)
+        return _snapshot_response(result)
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error('GET /api/kanban/ranking/ 失败: {}', e)
         return Response(
@@ -938,12 +1088,23 @@ def kanban_filter_options(request):
     show_all_flows = params.get('show_all_flows', 'false').lower() == 'true'
 
     try:
-        options = remote_get_kanban_filter_options(
+        if target_date < get_business_date():
+            if _snapshot_state(target_date) is None:
+                return _snapshot_not_found_response()
+            options = local_get_kanban_filter_options(
+                target_date, stepnos=stepnos, wrk_orders=wrk_orders,
+                flows=flows, reg_per_sys_ids=reg_per_sys_ids,
+                show_all_flows=show_all_flows,
+            )
+            return Response(options, status=status.HTTP_200_OK)
+        result = READ_MODEL.kanban_filter_options(
             target_date, stepnos=stepnos, wrk_orders=wrk_orders,
             flows=flows, reg_per_sys_ids=reg_per_sys_ids,
             show_all_flows=show_all_flows,
         )
-        return Response(options, status=status.HTTP_200_OK)
+        return _snapshot_response(result)
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error('GET /api/kanban/filter-options/ 失败: {}', e)
         return Response(

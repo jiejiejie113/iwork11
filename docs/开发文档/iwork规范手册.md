@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-07-29
+> 最后更新：2026-07-31
 
 ---
 
@@ -9,22 +9,27 @@
 
 ```
 Uvicorn ASGI (4 workers)
-    ├── 实时数据：Celery Beat (60s) → statistics.py → Redis → SSE 推送 + API 读缓存
+    ├── 实时数据：Celery Beat (60s) → read_model.builder → 版本化 Redis 快照
+    ├── Web/SSE：read_model.queries → 当前完整快照（禁止远程回源）
     ├── 历史数据：API → local_queries.py → 本地历史事实表
-    ├── 历史快照：Celery/管理命令/按需确保 API → history_store.py → 本地事务快照
-    └── 生产详情：今日读 Redis；历史读 historical_queries.py
+    ├── 历史快照：ensure API → Celery → history_store.py → 本地事务快照
+    └── 远程生产库：仅 Celery/管理角色允许连接
 ```
 
 | 文件 | 职责 |
 |------|------|
-| `queries.py` | 远程数据库查询（iwork 只读） |
+| `queries.py` | 仅供 Celery/管理角色使用的远程数据库查询（iwork 只读） |
 | `local_queries.py` | 从本地历史事实表构建历史总览 |
 | `historical_queries.py` | 从历史事实和元数据快照构建生产详情 |
 | `history_store.py` | 远程只读聚合、校验和本地事务发布 |
-| `statistics.py` | 缓存编排层：批量构建 + Redis 读写 + 回退逻辑 |
-| `api_views.py` | 实时看板 API + 生产详情 API（含异步 SSE） |
-| `api_views_local.py` | 本地历史快照读取 + 缺失快照按需构建 API |
-| `tasks.py` | Celery 定时任务 |
+| `read_model/builder.py` | 受控远程采集并组装完整实时快照 |
+| `read_model/store.py` | 版本键、原子 current 切换、上一版本和陈旧策略 |
+| `read_model/queries.py` | Web/SSE 统一筛选、分页与跨接口读模型 |
+| `statistics.py` | 批量统计构建器和历史兼容入口；实时入口不允许回源 |
+| `api_views.py` | 实时看板、生产详情、Kanban 与异步 SSE；不得导入 `iwork.queries` |
+| `api_views_local.py` | 本地历史读取；缺失快照只提交 Celery 任务并返回 202 |
+| `tasks.py` | Celery 受控采集、原子发布和历史快照任务 |
+| `db_backends/guarded_mysql` | Web 进程远程 MySQL 连接/游标硬拦截 |
 
 ### 运行与测试环境
 
@@ -33,6 +38,9 @@ Uvicorn ASGI (4 workers)
 - `DKT_iwork` 的 8000 端口只在 `docker_dkt-net` 内暴露，外部请求必须经过 Nginx 和 oauth2-proxy；
 - pytest 固定加载 `iwork.test_settings`，使用内存 SQLite、LocMem 缓存和内存 Celery，不依赖开发数据库或 Redis；
 - `Pywrkstp` 使用 `(WrkOrder, StepNo)` 复合主键，禁止查询隐式 `id`。
+- 进程必须声明 `IWORK_PROCESS_ROLE`：Uvicorn=`web`、Celery=`celery`、管理命令=`management`；
+- `web` 角色访问数据库别名 `iwork` 会抛出 `RemoteDatabaseAccessDenied`。
+- Celery 线程池中的每个查询必须在线程内部关闭自身数据库连接，不能只关闭任务主线程连接。
 
 ---
 
@@ -50,6 +58,12 @@ Uvicorn ASGI (4 workers)
 | `PRODUCTION_ORDERS_SQLITE_PATH` | 生产订单 SQLite 快照路径 | `import_production_orders` 管理命令 |
 | `PRODUCTION_ORDERS_IMPORT_BATCH_SIZE` | 生产订单批量写入大小 | `import_production_orders` 管理命令 |
 | `PRODUCTION_ORDERS_PROGRESS_INTERVAL` | 生产订单导入进度间隔 | `import_production_orders` 管理命令 |
+| `READ_MODEL_CACHE_PREFIX` | 版本化读模型键前缀 | `read_model.store` |
+| `READ_MODEL_RETENTION_SECONDS` | 当前/上一版本键保留时间 | `read_model.store` |
+| `READ_MODEL_STALE_AFTER_SECONDS` | 标记陈旧的软阈值，默认 120 秒 | `read_model.store` |
+| `READ_MODEL_MAX_STALE_SECONDS` | 返回 503 的硬阈值，默认 600 秒 | `read_model.store` |
+| `READ_MODEL_PUBLISH_LOCK_SECONDS` | 单日期发布锁时间 | `read_model.store` |
+| `READ_MODEL_REFRESH_LOCK_SECONDS` | Celery 采集防重叠锁时间 | `tasks.py` |
 
 **引用规则**：各模块在顶部建立引用，使用 `VISIBLE_FLOWS` 而非 `ALLOWED_FLOWS`：
 
@@ -126,8 +140,8 @@ flows = list(settings.VISIBLE_FLOWS)
 缺少标准工时时汇总值为 `null`。历史详情必须读取 `HistoricalStepSnapshot`，不得在
 普通请求中回查远程元数据，避免元数据变化改写历史产值。
 
-Flow 详情缓存使用 `stats:detail:flow:v2:<flow_name>`。缓存不保存实时效率；接口按
-请求时刻注入 `work_minutes` 和 `employee_efficiency`。
+Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时效率；接口按请求时刻注入
+`work_minutes` 和 `employee_efficiency`，并通过响应头返回快照版本和陈旧状态。
 
 `statistics.py` 中 `get_batch_stats` 合并工单时，`flows` 字段会跨工序合并去重。
 
@@ -210,7 +224,10 @@ function stepColor(idx, stepno) {
 - 使用 `StreamingHttpResponse` + 异步生成器
 - `sync_to_async` 包装同步 Redis 读取，不阻塞事件循环
 - 心跳：每 15 秒发送 SSE 注释（`: heartbeat\n\n`）
-- 数据推送：每 60 秒从 Redis 读缓存推送
+- 数据推送：每 60 秒固定一次 `current` 指针，同时读取实时、工序和详情视图
+- 每条数据事件包含 `snapshot_version`、`generated_at` 和 `stale`
+- 快照不可用时发送 `snapshot_unavailable` 事件，仍继续发送 15 秒心跳
+- 前端直接使用 `msg.data.workorders`，禁止 SSE 事件后再次请求工单接口
 
 **性能**：每个连接仅占一个 asyncio 协程（~KB 级），支持 300+ 并发。
 
@@ -218,7 +235,7 @@ function stepColor(idx, stepno) {
 
 ## 8. 工单列表数据流规范
 
-**原则**：不显示中间数据。缓存为空时显示"暂无数据"，数据到达后显示正确数据。
+**原则**：不显示中间版本。消费者只通过 `current` 读取已经完整发布的快照。
 
 **`workorderItems` 计算属性**：
 ```javascript
@@ -227,12 +244,14 @@ const workorderItems = computed(() => {
 });
 ```
 
-**禁止** fallback 到 `data.workorders`（该字段来自 SSR 预填充，可能与分页 API 数据不一致）。
+首次加载和手工翻页使用工单分页 API；SSE 更新必须使用事件中的
+`msg.data.workorders`，因为它与同一事件的 KPI、图表和快照版本一致。
 
 **数据更新流程**：
-1. fetch 新数据 → 写入 `workorderCache` → 更新分页状态
-2. 然后才清除旧缓存条目
-3. 不允许先清缓存再异步获取（会产生空档期）
+1. Celery 完成全部视图后切换 `current`；
+2. SSE 将事件内工单写入 `workorderCache[1]` 并更新分页状态；
+3. 然后清除其他页旧缓存；
+4. 不允许在 SSE 回调中再发工单请求。
 
 ---
 
@@ -268,7 +287,7 @@ const workorderItems = computed(() => {
 
 历史日期通过 URL 的 `date` 参数传递。Flow、工序和产品视图之间的导航必须保留日期；
 历史日期禁止目标编辑和 60 秒自动刷新。快照不存在时，前端应调用
-`POST /api/history/snapshots/<date>/ensure/`，显示构建状态并在完成后重试原 GET；构建
+`POST /api/history/snapshots/<date>/ensure/`。接口只提交后台任务并返回 202；前端显示构建状态并在完成后重试原 GET；构建
 失败时显示明确错误，不能把错误 JSON 或空列表当作有效历史数据。历史目标只使用后端
 按日期返回的 `target` / `wo_targets`，不得使用浏览器旧值覆盖。
 
@@ -340,9 +359,10 @@ D:\DM\DTD_nginx\logs\watchdog\maintenance\iwork-production-orders.json
 
 | 文件 | 变更 |
 |------|------|
-| `iwork/queries.py` | 新增 `get_kanban_stats`、`get_kanban_ranking`、`get_kanban_filter_options`、`_apply_kanban_filters`、`_merge_worker_rows` |
+| `iwork/queries.py` | Celery 构建员工×工序×工单×Flow 最低粒度事实 |
 | `iwork/local_queries.py` | 镜像新增 5 个函数 |
-| `iwork/api_views.py` | 新增 `kanban_stats`、`kanban_ranking`、`kanban_filter_options`、`_parse_kanban_date` |
+| `iwork/read_model/queries.py` | 今日统计、排行和筛选项共享同一份快照事实 |
+| `iwork/api_views.py` | 今日读 Redis 快照；历史日期继续读 `iwork_local` |
 | `iwork/urls.py` | 新增 4 条路由（页面 + 3 API） |
 | `iwork/views.py` | 新增 `kanban_page` |
 | `iwork/templates/iwork/kanban.html` | 产量看板页面（Vue 3 + Tailwind CDN） |

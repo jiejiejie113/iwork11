@@ -20,26 +20,26 @@ echo "Redis is ready"
 
 # Run database migrations
 echo "Running database migrations..."
-python manage.py migrate --database=default --noinput
-python manage.py migrate --database=iwork_local --noinput
+IWORK_PROCESS_ROLE=management python manage.py migrate --database=default --noinput
+IWORK_PROCESS_ROLE=management python manage.py migrate --database=iwork_local --noinput
 
 # Collect static files
 echo "Collecting static files..."
-python manage.py collectstatic --noinput 2>/dev/null || true
+IWORK_PROCESS_ROLE=management python manage.py collectstatic --noinput 2>/dev/null || true
 
 # Start Celery Worker (background)
 echo "Starting Celery Worker..."
-celery -A iwork worker -l info -P solo &
+IWORK_PROCESS_ROLE=celery celery -A iwork worker -l info -P solo &
 CELERY_WORKER_PID=$!
 
 # Start Celery Beat (background)
 echo "Starting Celery Beat..."
-celery -A iwork beat -l info &
+IWORK_PROCESS_ROLE=celery celery -A iwork beat -l info &
 CELERY_BEAT_PID=$!
 
 # Start Django (foreground, ASGI mode)
 echo "Starting Django (Uvicorn ASGI)..."
-exec uvicorn iwork.asgi:application \
+IWORK_PROCESS_ROLE=web exec uvicorn iwork.asgi:application \
     --host 0.0.0.0 \
     --port 8000 \
     --workers 4 \

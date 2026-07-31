@@ -349,94 +349,43 @@ class TestInvalidateLocalCache:
 
 
 class TestGetRealtimeStats:
-    """get_realtime_stats（修复后移除死代码）"""
+    """get_realtime_stats 兼容入口测试。"""
 
-    @patch(
-        'iwork.statistics.get_business_date',
-        side_effect=[
-            date(2026, 7, 23),
-            date(2026, 7, 24),
-            date(2026, 7, 24),
-            date(2026, 7, 24),
-        ],
-    )
-    @patch('iwork.statistics.cache')
-    @patch('iwork.statistics._get_date_stats')
-    def test_query_crossing_midnight_discards_old_result(
-        self,
-        mock_get_stats,
-        mock_cache,
-        _mock_business_date,
+
+def test_batch_query_closes_worker_thread_connections_on_failure():
+    """批量查询即使失败，也必须在线程内部关闭该线程创建的数据库连接。"""
+    from iwork import statistics
+
+    def fail_query():
+        raise ConnectionError('模拟远程查询失败')
+
+    with patch('iwork.statistics.connections') as mock_connections, pytest.raises(
+        ConnectionError,
+        match='模拟远程查询失败',
     ):
-        """实时查询跨过曼谷午夜时应重查新日期且只缓存新结果。"""
-        from iwork.statistics import get_realtime_stats, remote_q
+        statistics._run_batch_query(fail_query)
 
-        mock_cache.get.return_value = None
-        old_stats = {'date': date(2026, 7, 23), 'total_qty': 100}
-        new_stats = {'date': date(2026, 7, 24), 'total_qty': 200}
-        mock_get_stats.side_effect = [old_stats, new_stats]
-
-        result = get_realtime_stats()
-
-        assert result == new_stats
-        assert mock_get_stats.call_args_list == [
-            ((date(2026, 7, 23), None, remote_q),),
-            ((date(2026, 7, 24), None, remote_q),),
-        ]
-        mock_cache.set.assert_called_once()
-        assert mock_cache.set.call_args.args[1] == new_stats
+    mock_connections.close_all.assert_called_once()
 
     @patch('iwork.statistics.get_business_date', return_value=date(2026, 7, 24))
-    @patch('iwork.statistics.cache')
-    @patch('iwork.statistics._get_date_stats')
-    def test_cache_miss_uses_bangkok_business_date(
-        self,
-        mock_get_stats,
-        mock_cache,
-        _mock_business_date,
-    ):
-        """实时缓存未命中时应查询曼谷业务日期。"""
-        from iwork.statistics import get_realtime_stats, remote_q
-
-        mock_cache.get.return_value = None
-        mock_get_stats.return_value = {'date': date(2026, 7, 24), 'total_qty': 0}
-
-        get_realtime_stats()
-
-        mock_get_stats.assert_called_once_with(date(2026, 7, 24), None, remote_q)
-
-    @patch('iwork.statistics.cache')
-    @patch('iwork.statistics._get_date_stats')
-    def test_cache_miss_falls_back_to_live_query(self, mock_get_stats, mock_cache):
-        """缓存未命中 → 实时查询 → 写入缓存"""
+    def test_delegates_to_versioned_read_model(self, _mock_business_date):
+        """兼容入口只委托读模型，不保留远程回源。"""
+        from iwork.read_model.store import SnapshotReadResult
         from iwork.statistics import get_realtime_stats
 
-        mock_cache.get.return_value = None
-        mock_get_stats.return_value = {'total_qty': 500, 'workorder_count': 12}
+        result = SnapshotReadResult(
+            data={'total_qty': 300},
+            metadata={},
+            stale=False,
+        )
+        with patch(
+            'iwork.read_model.queries.ReadModelQueries.realtime',
+            return_value=result,
+        ) as read:
+            data = get_realtime_stats([70])
 
-        result = get_realtime_stats(stepno_filter=[70])
-
-        mock_get_stats.assert_called_once()
-        mock_cache.set.assert_called_once()
-        assert result['total_qty'] == 500
-
-    @patch('iwork.statistics.get_business_date', return_value=date(2026, 7, 23))
-    @patch('iwork.statistics.cache')
-    def test_cache_hit_returns_directly(self, mock_cache, _mock_business_date):
-        """缓存命中 → 直接返回，不查询 DB"""
-        from iwork.statistics import get_realtime_stats
-
-        mock_cache.get.return_value = {
-            'date': date(2026, 7, 23),
-            'total_qty': 300,
-            'workorder_count': 8,
-        }
-
-        with patch('iwork.statistics._get_date_stats') as mock_get:
-            result = get_realtime_stats(stepno_filter=None)
-
-        mock_get.assert_not_called()
-        assert result['total_qty'] == 300
+        assert data['total_qty'] == 300
+        read.assert_called_once_with(date(2026, 7, 24), [70])
 
 
 class TestGetBatchDetailStats:

@@ -779,12 +779,17 @@ createApp({
                     const msg = JSON.parse(event.data);
                     if (msg.data) {
                         Object.assign(data, msg.data);
-                        // 先获取新数据，再更新缓存，避免中间空档导致闪烁
-                        const resp = await fetch(`${basePath}api/dashboard/workorders/?page=1&page_size=20&${buildStepnoParam()}`);
-                        const result = await resp.json();
-                        workorderCache[1] = result.items;
-                        workorderPagination.total = result.total;
-                        workorderPagination.total_pages = result.total_pages;
+                        // SSE 已携带同版本工单，禁止再发请求造成查询放大。
+                        const snapshotWorkorders = msg.data.workorders || [];
+                        const snapshotWorkorderCount = Number(
+                            msg.data.workorder_count ?? snapshotWorkorders.length
+                        );
+                        workorderCache[1] = snapshotWorkorders;
+                        workorderPagination.total = snapshotWorkorderCount;
+                        workorderPagination.total_pages = Math.max(
+                            1,
+                            Math.ceil(snapshotWorkorderCount / 20),
+                        );
                         workorderPagination.page = 1;
                         workorderPage.value = 1;
                         // 清除其他页缓存
@@ -797,7 +802,7 @@ createApp({
                         // 处理详情概览更新
                     }
                     wsConnected.value = true;
-                    wsStatus.value = '已连接';
+                    wsStatus.value = msg.stale ? '已连接（数据更新延迟）' : '已连接';
                     lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
                     renderAllCharts();
                 } catch (e) {

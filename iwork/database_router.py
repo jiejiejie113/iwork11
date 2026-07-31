@@ -1,3 +1,8 @@
+from django.conf import settings
+
+from iwork.db_guard import RemoteDatabaseAccessDenied
+
+
 class DatabaseRouter:
     """
     数据库路由器：
@@ -25,6 +30,10 @@ class DatabaseRouter:
         if model._meta.app_label in self.iwork_app_labels:
             if self._is_local(model):
                 return 'iwork_local'
+            if settings.IWORK_PROCESS_ROLE == 'web':
+                raise RemoteDatabaseAccessDenied(
+                    'Web 进程禁止访问远程生产数据库 iwork'
+                )
             return 'iwork'
         return 'default'
 

@@ -7,7 +7,6 @@
   3. stepno_filter 透传正确
   4. stepno_list 为空时不崩溃
 """
-import pytest
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -205,15 +204,15 @@ class TestPublicAPI:
     """公开 API 入口测试"""
 
     def test_get_today_stats_delegates(self):
-        """get_today_stats 委托给 get_date_stats(today)"""
+        """get_today_stats 委托给版本化实时读模型入口。"""
         from iwork.statistics import get_today_stats
         from unittest.mock import patch
 
         mock_result = {'workorder_count': 1, 'total_qty': 10}
-        with patch('iwork.statistics.get_date_stats', return_value=mock_result) as mock_fn:
+        with patch('iwork.statistics.get_realtime_stats', return_value=mock_result) as mock_fn:
             result = get_today_stats([70])
 
-        mock_fn.assert_called_once()
+        mock_fn.assert_called_once_with([70])
         assert result is mock_result
 
     def test_get_date_stats_uses_remote_module(self):
@@ -551,13 +550,20 @@ class TestCacheLayer:
         assert cache.get('stats:realtime:70')['total_qty'] == 100
 
     def test_get_realtime_stats_cache_hit(self):
-        """get_realtime_stats 优先读缓存"""
-        from iwork.statistics import get_business_date, get_realtime_stats
-        from django.core.cache import cache
+        """get_realtime_stats 委托版本化读模型。"""
+        from iwork.read_model.store import SnapshotReadResult
+        from iwork.statistics import get_realtime_stats
 
-        cache.set('stats:realtime:70', {'total_qty': 999, 'date': get_business_date()}, 60)
-
-        result = get_realtime_stats([70])
+        read_result = SnapshotReadResult(
+            data={'total_qty': 999},
+            metadata={},
+            stale=False,
+        )
+        with patch(
+            'iwork.read_model.queries.ReadModelQueries.realtime',
+            return_value=read_result,
+        ):
+            result = get_realtime_stats([70])
         assert result['total_qty'] == 999
 
     def test_get_date_stats_queries_remote_without_history_cache(self):
@@ -639,62 +645,6 @@ class TestTasksNewFlow:
 
         assert result == []
         build_snapshot.assert_called_once_with(date(2026, 7, 23))
-
-    def test_sync_dashboard_stats_discards_results_after_bangkok_midnight(self):
-        """构建期间跨过曼谷午夜时，不得发布上一业务日缓存。"""
-        from unittest.mock import patch
-        from iwork.tasks import sync_dashboard_stats
-
-        with patch(
-            'iwork.tasks.get_business_date',
-            side_effect=[date(2026, 7, 23), date(2026, 7, 24)],
-        ), patch('iwork.tasks.get_batch_stats', return_value={'all': {}}), patch(
-            'iwork.tasks.get_batch_detail_stats',
-            return_value={},
-        ), patch('iwork.tasks.cache_batch_to_redis') as cache_batch, patch(
-            'iwork.tasks.cache_detail_batch_to_redis',
-        ) as cache_detail:
-            result = sync_dashboard_stats()
-
-        assert result == 0
-        cache_batch.assert_not_called()
-        cache_detail.assert_not_called()
-
-    def test_sync_dashboard_stats_calls_batch(self):
-        """Celery 任务构建并缓存看板及生产详情批次。"""
-        from unittest.mock import patch
-        from iwork.tasks import sync_dashboard_stats
-
-        with patch('iwork.tasks.get_batch_stats') as mock_batch, \
-             patch('iwork.tasks.cache_batch_to_redis') as mock_cache, \
-             patch('iwork.tasks.get_batch_detail_stats', return_value={}) as mock_detail, \
-             patch('iwork.tasks.cache_detail_batch_to_redis') as mock_detail_cache:
-            mock_batch.return_value = {
-                70: {'total_qty': 100, 'date': date.today()},
-                'all': {'total_qty': 500, 'date': date.today()},
-            }
-
-            result = sync_dashboard_stats()
-
-            mock_batch.assert_called_once()
-            mock_cache.assert_called_once()
-            mock_detail.assert_called_once()
-            business_date = mock_batch.call_args.kwargs['target_date']
-            mock_cache.assert_called_once_with(
-                mock_batch.return_value,
-                target_date=business_date,
-            )
-            mock_detail_cache.assert_called_once_with({}, target_date=business_date)
-            assert result == 2
-
-    def test_sync_dashboard_stats_error_retries(self):
-        """batch 构建失败时触发重试"""
-        from unittest.mock import patch
-        from iwork.tasks import sync_dashboard_stats
-
-        with patch('iwork.tasks.get_batch_stats', side_effect=RuntimeError('DB down')), pytest.raises(RuntimeError):
-            sync_dashboard_stats()
-
 
 # ============================================================
 # 独立运行：真实数据库查询验证（绕过 pytest 的 test DB 限制）

@@ -204,6 +204,16 @@ def test_history_dashboard_auto_builds_snapshots_without_source_controls():
     assert "new Date().toISOString().split('T')[0]" not in DASHBOARD_TEMPLATE
 
 
+def test_sse_uses_embedded_workorders_without_duplicate_request():
+    """SSE 更新直接消费同版本工单，不再次请求工单接口。"""
+    sse_handler = DASHBOARD_TEMPLATE.split('eventSource.onmessage = async (event) => {', 1)[1]
+    sse_handler = sse_handler.split('eventSource.onerror = () => {', 1)[0]
+
+    assert 'msg.data.workorders || []' in sse_handler
+    assert 'api/dashboard/workorders/' not in sse_handler
+    assert "msg.stale ? '已连接（数据更新延迟）'" in sse_handler
+
+
 def test_historical_production_detail_builds_snapshot_and_hides_update_time():
     """历史生产详情应构建快照并隐藏更新时间。"""
     assert 'api/history/snapshots/${snapshotDate}/ensure/' in TEMPLATE

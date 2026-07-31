@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.cache import cache
+from django.db import connections
 from loguru import logger
 
 from iwork import queries as remote_q
@@ -25,6 +26,26 @@ WORKDAY_LUNCH_END_MINUTE = settings.WORKDAY_LUNCH_END_MINUTE
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）
 SKIP_MONTHLY_QUERIES = False
+
+
+def _run_batch_query(query, *args, **kwargs):
+    """执行单个批量查询并关闭当前工作线程创建的数据库连接。
+
+    Args:
+        query: 需要在线程池中执行的查询函数。
+        *args: 传给查询函数的位置参数。
+        **kwargs: 传给查询函数的关键字参数。
+
+    Returns:
+        查询函数的返回值。
+
+    Raises:
+        Exception: 原样传播查询函数抛出的异常。
+    """
+    try:
+        return query(*args, **kwargs)
+    finally:
+        connections.close_all()
 
 def _result_or_cancel(future, name: str, timeout: int = QUERY_TIMEOUT):
     """
@@ -280,11 +301,15 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
     logger.info('第1阶段：5线程并行查询开始')
     t1 = time.time()
     with ThreadPoolExecutor(max_workers=6) as pool:
-        f_basic = pool.submit(q.get_batch_basic_stats, today)
-        f_hourly = pool.submit(q.get_batch_hourly_stats, today)
-        f_pf = pool.submit(q.get_batch_process_by_flow, today)
-        f_station = pool.submit(q.get_batch_station_ranking, today)
-        f_wo = pool.submit(q.get_batch_workorders_list, today, 20)
+        f_basic = pool.submit(_run_batch_query, q.get_batch_basic_stats, today)
+        f_hourly = pool.submit(_run_batch_query, q.get_batch_hourly_stats, today)
+        f_pf = pool.submit(_run_batch_query, q.get_batch_process_by_flow, today)
+        f_station = pool.submit(
+            _run_batch_query,
+            q.get_batch_station_ranking,
+            today,
+        )
+        f_wo = pool.submit(_run_batch_query, q.get_batch_workorders_list, today, 20)
 
         batch_basic = _result_or_cancel(f_basic, 'batch_basic')
         batch_hourly = _result_or_cancel(f_hourly, 'batch_hourly')
@@ -435,11 +460,11 @@ def get_batch_detail_stats(q=None, target_date: date | None = None) -> dict:
     logger.info('生产详情：5线程并行查询开始')
     t1 = time.time()
     with ThreadPoolExecutor(max_workers=5) as pool:
-        f_overview = pool.submit(q.get_batch_flow_overview, today)
-        f_hourly = pool.submit(q.get_batch_flow_hourly, today)
-        f_employees = pool.submit(q.get_batch_flow_employees, today)
-        f_stepno = pool.submit(q.get_batch_stepno_employees, today)
-        f_product = pool.submit(q.get_batch_product_overview, today)
+        f_overview = pool.submit(_run_batch_query, q.get_batch_flow_overview, today)
+        f_hourly = pool.submit(_run_batch_query, q.get_batch_flow_hourly, today)
+        f_employees = pool.submit(_run_batch_query, q.get_batch_flow_employees, today)
+        f_stepno = pool.submit(_run_batch_query, q.get_batch_stepno_employees, today)
+        f_product = pool.submit(_run_batch_query, q.get_batch_product_overview, today)
 
         result = {
             'flow_overview': _result_or_cancel(f_overview, 'flow_overview'),
@@ -492,29 +517,13 @@ def cache_detail_batch_to_redis(
 # ============================================================================
 
 def get_realtime_stats(stepno_filter: list[int] | None = None) -> dict:
-    """从 Redis 缓存读取实时数据（纯读，不计算）"""
-    t0 = time.perf_counter()
-    key = f'stats:realtime:{_stepno_key(stepno_filter)}'
-    cached = cache.get(key)
-    business_date = get_business_date()
-    if isinstance(cached, dict) and cached.get('date') != business_date:
-        logger.warning('Redis 缓存日期不匹配: key={} cached_date={} business_date={}', key, cached.get('date'), business_date)
-        cached = None
-    redis_ms = (time.perf_counter() - t0) * 1000
-    if cached is None:
-        logger.warning('Redis 缓存未命中: {} (Redis读取耗时 {:.0f}ms)，回退数据库查询', key, redis_ms)
-        t_fallback = time.perf_counter()
-        stats = _get_date_stats(business_date, stepno_filter, remote_q)
-        fallback_ms = (time.perf_counter() - t_fallback) * 1000
-        if get_business_date() != business_date:
-            logger.warning('实时查询期间已跨过曼谷午夜，放弃写入日期 {} 的旧缓存并重新查询', business_date)
-            return get_realtime_stats(stepno_filter)
-        cache.set(key, stats, _seconds_to_midnight())
-        logger.debug('[工序产量对比] get_realtime_stats 回退完成 key={} fallback={:.0f}ms total={:.0f}ms',
-                     key, fallback_ms, (time.perf_counter() - t0) * 1000)
-        return stats
-    logger.debug('[工序产量对比] get_realtime_stats Redis命中 key={} redis={:.0f}ms', key, redis_ms)
-    return cached
+    """从版本化实时读模型读取数据，缓存缺失时禁止远程回源。"""
+    from iwork.read_model.queries import ReadModelQueries
+
+    return ReadModelQueries().realtime(
+        get_business_date(),
+        stepno_filter,
+    ).data
 
 
 def get_date_stats(target_date: date, stepno_filter: list[int] | None = None) -> dict:
@@ -529,7 +538,7 @@ def get_local_date_stats(target_date: date, stepno_filter: list[int] | None = No
 
 def get_today_stats(stepno_filter: list[int] | None = None) -> dict:
     """今日数据的全量统计（保留旧接口兼容性）"""
-    return get_date_stats(get_business_date(), stepno_filter)
+    return get_realtime_stats(stepno_filter)
 
 
 def invalidate_local_cache(target_date: date) -> None:

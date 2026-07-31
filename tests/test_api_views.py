@@ -68,215 +68,109 @@ class TestDashboardView:
 
         assert result == '04-22'
 
+    def test_dashboard_renders_zero_state_when_snapshot_not_ready(self):
+        """首个 Celery 快照完成前页面仍能加载且不回源。"""
+        from django.test import Client
+        from iwork.read_model.errors import ReadModelNotReadyError
 
-class TestRealtimeStats:
-    """realtime_stats 视图测试"""
+        with patch(
+            'iwork.views.get_realtime_stats',
+            side_effect=ReadModelNotReadyError('未准备好'),
+        ):
+            response = Client().get('/')
 
-    def test_realtime_stats_success(self):
-        """测试成功获取实时统计数据"""
+        assert response.status_code == 200
+        assert response.context['stats']['total_qty'] == 0
+
+
+def _snapshot_result(data, stale=False):
+    """构造 API 测试使用的统一快照结果。"""
+    from iwork.read_model.store import SnapshotReadResult
+
+    return SnapshotReadResult(
+        data=data,
+        metadata={
+            'snapshot_version': 'v-test',
+            'generated_at': '2026-07-31T12:00:00+07:00',
+        },
+        stale=stale,
+    )
+
+
+class TestRealtimeReadModelEndpoints:
+    """实时、小时、Flow 和工单端点统一读取快照。"""
+
+    def test_realtime_returns_snapshot_headers(self):
+        """实时接口返回原有主体及快照元数据响应头。"""
         from iwork.api_views import realtime_stats
 
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/realtime/')
-
-        mock_stats = {
-            'workorder_count': 100,
-            'total_qty': 500,
-            'avg_time_cost': 30.5,
-            'date': date.today()
-        }
-
-        with patch('iwork.api_views.get_realtime_stats', return_value=mock_stats):
+        request = APIRequestFactory().get('/api/dashboard/realtime/?stepno=70')
+        with patch(
+            'iwork.api_views.READ_MODEL.realtime',
+            return_value=_snapshot_result({'total_qty': 500}),
+        ) as read:
             response = realtime_stats(request)
 
         assert response.status_code == 200
-        assert response.data['workorder_count'] == 100
         assert response.data['total_qty'] == 500
+        assert response['X-Iwork-Snapshot-Version'] == 'v-test'
+        read.assert_called_once()
 
-    def test_realtime_stats_error(self):
-        """测试获取实时统计失败"""
+    def test_missing_snapshot_returns_503_without_fallback(self):
+        """快照缺失时明确返回 503，不回源远程数据库。"""
         from iwork.api_views import realtime_stats
+        from iwork.read_model.errors import ReadModelNotReadyError
 
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/realtime/')
-
-        with patch('iwork.api_views.get_realtime_stats', side_effect=Exception('DB Error')):
+        request = APIRequestFactory().get('/api/dashboard/realtime/')
+        with patch(
+            'iwork.api_views.READ_MODEL.realtime',
+            side_effect=ReadModelNotReadyError('未准备好'),
+        ):
             response = realtime_stats(request)
 
-        assert response.status_code == 500
-        assert 'error' in response.data
+        assert response.status_code == 503
+        assert response.data['code'] == 'realtime_snapshot_unavailable'
 
-
-class TestHourlyStats:
-    """hourly_stats 视图测试"""
-
-    @patch('iwork.api_views.get_business_date', return_value=date(2026, 7, 24))
-    @patch('iwork.api_views.cache')
-    @patch('iwork.api_views.get_hourly_stats', return_value=[])
-    def test_default_date_uses_bangkok_business_date(
-        self,
-        mock_hourly,
-        mock_cache,
-        _mock_business_date,
-    ):
-        """未传日期时应按曼谷业务日期查询小时统计。"""
+    def test_hourly_reads_realtime_snapshot(self):
+        """今日小时趋势来自同一实时快照。"""
         from iwork.api_views import hourly_stats
 
-        mock_cache.get.return_value = None
-        request = APIRequestFactory().get('/api/dashboard/hourly/')
-
-        response = hourly_stats(request)
-
-        assert response.status_code == 200
-        mock_hourly.assert_called_once_with(date(2026, 7, 24), stepno_filter=None)
-
-    def test_hourly_stats_success(self):
-        """测试成功获取小时统计数据"""
-        from iwork.api_views import hourly_stats
-
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/hourly/')
-
-        mock_stats = [
-            {'hour': 8, 'qty': 100},
-            {'hour': 9, 'qty': 150},
-        ]
-
-        with patch('iwork.api_views.cache.get', return_value=mock_stats):
+        request = APIRequestFactory().get('/api/dashboard/hourly/?stepno=70')
+        with patch(
+            'iwork.api_views.READ_MODEL.realtime',
+            return_value=_snapshot_result({'hourly_stats': [{'hour': 8, 'qty': 10}]}),
+        ):
             response = hourly_stats(request)
-
         assert response.status_code == 200
-        assert len(response.data) == 2
+        assert response.data == [{'hour': 8, 'qty': 10}]
 
-    def test_hourly_stats_with_date_param(self):
-        """测试带日期参数获取小时统计"""
-        from iwork.api_views import hourly_stats
-
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/hourly/?date=2026-04-20')
-
-        mock_stats = [{'hour': 10, 'qty': 200}]
-
-        with patch('iwork.api_views.cache.get', return_value=mock_stats):
-            response = hourly_stats(request)
-
-        assert response.status_code == 200
-
-
-class TestFlowStats:
-    """flow_stats 视图测试"""
-
-    @patch('iwork.api_views.get_business_date', return_value=date(2026, 7, 24))
-    @patch('iwork.api_views.get_flow_detail', return_value={})
-    def test_default_date_uses_bangkok_business_date(
-        self,
-        mock_flow_detail,
-        _mock_business_date,
-    ):
-        """Flow 查询应使用曼谷业务日期。"""
-        from iwork.api_views import flow_stats
-
-        request = APIRequestFactory().get('/api/dashboard/flow/VCO-L5/')
-
-        response = flow_stats(request, 'VCO-L5')
-
-        assert response.status_code == 200
-        mock_flow_detail.assert_called_once_with(date(2026, 7, 24), 'VCO-L5')
-
-    def test_flow_stats_success(self):
-        """测试成功获取 Flow 统计"""
-        from iwork.api_views import flow_stats
-
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/flow/FlowA/')
-
-        mock_result = {'flow': 'FlowA', 'total_qty': 500, 'worker_count': 10}
-
-        with patch('iwork.api_views.get_flow_detail', return_value=mock_result):
-            response = flow_stats(request, 'FlowA')
-
-        assert response.status_code == 200
-        assert response.data['flow'] == 'FlowA'
-        assert response.data['total_qty'] == 500
-        assert response.data['worker_count'] == 10
-
-
-class TestWorkorderList:
-    """workorder_list 视图测试"""
-
-    def test_workorder_list_success(self):
-        """测试成功获取工单列表"""
+    def test_workorders_use_read_model_pagination(self):
+        """今日工单分页只调用读模型。"""
         from iwork.api_views import workorder_list
 
-        factory = APIRequestFactory()
-        request = factory.get('/api/workorders/')
-
-        mock_result = {
-            'items': [{'wrk_order': 'WO001', 'total_qty': 100, 'step_count': 5}],
-            'total': 1, 'page': 1, 'page_size': 20, 'total_pages': 1,
-        }
-
-        with patch('iwork.api_views.get_workorders_paginated', return_value=mock_result):
+        payload = {'items': [{'wrk_order': 'WO1'}], 'total': 1, 'total_pages': 1}
+        request = APIRequestFactory().get('/api/dashboard/workorders/?page=1&page_size=20')
+        with patch(
+            'iwork.api_views.READ_MODEL.workorders',
+            return_value=_snapshot_result(payload),
+        ) as read:
             response = workorder_list(request)
-
         assert response.status_code == 200
-        assert len(response.data['items']) == 1
+        assert response.data['items'][0]['wrk_order'] == 'WO1'
+        read.assert_called_once()
 
-    def test_workorder_list_error(self):
-        """测试获取工单列表失败"""
-        from iwork.api_views import workorder_list
-
-        factory = APIRequestFactory()
-        request = factory.get('/api/workorders/')
-
-        with patch('iwork.api_views.get_workorders_paginated', side_effect=Exception('DB Error')):
-            response = workorder_list(request)
-
-        assert response.status_code == 500
-        assert 'error' in response.data
-
-
-class TestWorkorderDetail:
-    """workorder_detail 视图测试"""
-
-    def test_workorder_detail_success(self):
-        """测试成功获取工单详情"""
+    def test_workorder_detail_uses_read_model(self):
+        """今日工单详情读取版本化详情映射。"""
         from iwork.api_views import workorder_detail
 
-        factory = APIRequestFactory()
-        request = factory.get('/api/workorders/WO001/')
-
-        mock_result = {
-            'wrk_order': 'WO001',
-            'total_qty': 300,
-            'steps': [
-                {'StepNo': 1, 'qty': 100, 'count': 10},
-                {'StepNo': 2, 'qty': 200, 'count': 20},
-            ],
-        }
-
-        with patch('iwork.api_views.get_workorder_detail', return_value=mock_result):
-            response = workorder_detail(request, 'WO001')
-
+        request = APIRequestFactory().get('/api/dashboard/workorders/WO1/')
+        with patch(
+            'iwork.api_views.READ_MODEL.workorder_detail',
+            return_value=_snapshot_result({'wrk_order': 'WO1', 'total_qty': 10, 'steps': []}),
+        ):
+            response = workorder_detail(request, 'WO1')
         assert response.status_code == 200
-        assert response.data['wrk_order'] == 'WO001'
-        assert response.data['total_qty'] == 300
-        assert len(response.data['steps']) == 2
-
-    def test_workorder_detail_not_found(self):
-        """测试工单不存在"""
-        from iwork.api_views import workorder_detail
-
-        factory = APIRequestFactory()
-        request = factory.get('/api/workorders/WO999/')
-
-        mock_result = {'wrk_order': 'WO999', 'total_qty': 0, 'steps': []}
-
-        with patch('iwork.api_views.get_workorder_detail', return_value=mock_result):
-            response = workorder_detail(request, 'WO999')
-
-        assert response.status_code == 200
-        assert response.data['total_qty'] == 0
+        assert response.data['total_qty'] == 10
         assert response.data['steps'] == []
 
 
@@ -422,6 +316,44 @@ class TestEnsureHistorySnapshotAPI:
         assert response.status_code == 400
         assert response.json()['error'] == '日期格式错误，需为 YYYY-MM-DD'
 
+    @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 31))
+    @patch('iwork.api_views_local._snapshot_state', return_value=None)
+    @patch('iwork.api_views_local.build_history_snapshot.delay')
+    def test_missing_snapshot_is_queued_and_returns_202(
+        self,
+        mock_delay,
+        _mock_state,
+        _mock_business_date,
+    ):
+        """HTTP 请求只提交后台任务，不同步访问远程数据库。"""
+        from django.test import Client
+
+        mock_delay.return_value.id = 'task-1'
+        response = Client().post('/api/history/snapshots/2026-07-30/ensure/')
+
+        assert response.status_code == 202
+        assert response.json()['code'] == 'history_snapshot_building'
+        mock_delay.assert_called_once_with('2026-07-30')
+
+    @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 31))
+    @patch('iwork.api_views_local._snapshot_state', return_value=None)
+    @patch('iwork.api_views_local.build_history_snapshot.delay')
+    def test_duplicate_request_does_not_enqueue_second_task(
+        self,
+        mock_delay,
+        _mock_state,
+        _mock_business_date,
+    ):
+        """同一天并发确保请求只产生一个后台任务。"""
+        from django.core.cache import cache
+        from django.test import Client
+
+        cache.set('history:snapshot:request:2026-07-30', 'queued', 60)
+        response = Client().post('/api/history/snapshots/2026-07-30/ensure/')
+
+        assert response.status_code == 202
+        mock_delay.assert_not_called()
+
 
 class TestParseStepno:
     """_parse_stepno 参数解析"""
@@ -469,175 +401,103 @@ class TestParseStepno:
         assert _parse_stepno(request) == [70, 69]
 
 
-class TestMonthlyTrend:
-    """monthly_trend 端点"""
+class TestRealtimeDerivedEndpoints:
+    """月趋势、对比、热力图、排行和工序列表均来自快照。"""
 
-    def test_returns_trend_data(self):
-        """返回当月趋势数据"""
-        from iwork.api_views import monthly_trend
-        from rest_framework.test import APIRequestFactory
+    @pytest.mark.parametrize(
+        ('view_name', 'field', 'payload'),
+        [
+            ('monthly_trend', 'monthly_total_trend', [{'date': '2026-07-31', 'qty': 10}]),
+            ('process_compare', 'process_flow_stats', [{'step': 70, 'flow': 'A', 'qty': 10}]),
+            ('heatmap', 'heatmap_matrix', {'hours': [8], 'flows': ['A'], 'data': [[10]]}),
+            ('station_ranking', 'station_ranking', [{'station': 'S1', 'qty': 10}]),
+        ],
+    )
+    def test_endpoint_reads_realtime_snapshot(self, view_name, field, payload):
+        """派生统计不再独立查询远程数据库。"""
+        import iwork.api_views as api_views
 
-        mock_data = [{'date': '2026-05-01', 'qty': 100}, {'date': '2026-05-12', 'qty': 200}]
-        request = APIRequestFactory().get('/?date=2026-05-12')
-
-        with patch('iwork.api_views.get_monthly_total_trend', return_value=mock_data):
-            response = monthly_trend(request)
-
-        assert response.status_code == 200
-        assert len(response.data) == 2
-
-    def test_error_returns_500(self):
-        """异常返回 500"""
-        from iwork.api_views import monthly_trend
-        from rest_framework.test import APIRequestFactory
-
-        request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.get_monthly_total_trend', side_effect=Exception('DB Error')):
-            response = monthly_trend(request)
-
-        assert response.status_code == 500
-
-
-class TestProcessCompare:
-    """process_compare 端点"""
-
-    def test_returns_compare_data(self):
-        """返回工序×Flow 对比"""
-        from iwork.api_views import process_compare
-        from rest_framework.test import APIRequestFactory
-
-        mock_data = [{'step': 70, 'flow': 'A1', 'qty': 500}]
         request = APIRequestFactory().get('/?stepnos=70,69')
-
-        with patch('iwork.api_views.get_process_by_flow', return_value=mock_data):
-            response = process_compare(request)
-
+        with patch(
+            'iwork.api_views.READ_MODEL.realtime',
+            return_value=_snapshot_result({field: payload}),
+        ):
+            response = getattr(api_views, view_name)(request)
         assert response.status_code == 200
-        assert response.data[0]['step'] == 70
+        assert response.data == payload
 
-    def test_no_stepnos_defaults_to_top8(self):
-        """不传 stepnos → 默认取 Top 8 工序"""
-        from iwork.api_views import process_compare
-        from rest_framework.test import APIRequestFactory
-
-        mock_top = [{'step': 70, 'qty': 500}, {'step': 69, 'qty': 300}]
-        mock_compare = [{'step': 70, 'flow': 'A1', 'qty': 500}]
-        request = APIRequestFactory().get('/')
-
-        with patch('iwork.api_views.get_process_stats', return_value=mock_top), \
-             patch('iwork.api_views.get_process_by_flow', return_value=mock_compare):
-            response = process_compare(request)
-
-        assert response.status_code == 200
-
-    def test_error_returns_500(self):
-        """异常返回 500"""
-        from iwork.api_views import process_compare
-        from rest_framework.test import APIRequestFactory
-
-        request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.get_process_stats', side_effect=Exception('DB Error')):
-            response = process_compare(request)
-        assert response.status_code == 500
-
-
-class TestHeatmap:
-    """heatmap 端点"""
-
-    def test_returns_heatmap_structure(self):
-        """返回 hours/flows/data 结构"""
-        from iwork.api_views import heatmap
-        from rest_framework.test import APIRequestFactory
-
-        mock_data = {'hours': [8, 9], 'flows': ['A1'], 'data': [[100], [200]]}
-        request = APIRequestFactory().get('/')
-
-        with patch('iwork.api_views.get_heatmap_data', return_value=mock_data):
-            response = heatmap(request)
-
-        assert response.status_code == 200
-        assert 'hours' in response.data
-        assert 'data' in response.data
-
-    def test_error_returns_500(self):
-        """异常返回 500"""
-        from iwork.api_views import heatmap
-        from rest_framework.test import APIRequestFactory
-
-        request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.get_heatmap_data', side_effect=Exception()):
-            response = heatmap(request)
-        assert response.status_code == 500
-
-
-class TestStationRanking:
-    """station_ranking 端点"""
-
-    def test_returns_ranking_data(self):
-        """返回工站排行"""
-        from iwork.api_views import station_ranking
-        from rest_framework.test import APIRequestFactory
-
-        mock_data = [{'station': 'S01', 'qty': 500}]
-        request = APIRequestFactory().get('/?limit=5')
-
-        with patch('iwork.api_views.get_station_ranking', return_value=mock_data):
-            response = station_ranking(request)
-
-        assert response.status_code == 200
-        assert response.data[0]['station'] == 'S01'
-
-    def test_default_limit_is_15(self):
-        """不传 limit → 默认 15"""
-        from iwork.api_views import station_ranking
-        from rest_framework.test import APIRequestFactory
-
-        request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.get_station_ranking', return_value=[]) as mock_fn:
-            station_ranking(request)
-            call_kwargs = mock_fn.call_args
-            assert call_kwargs[1].get('limit') == 15
-
-
-class TestProcessListEndpoint:
-    """统一工序列表端点（api_views.process_list）"""
-
-    def test_returns_stepnos_default_remote(self):
-        """默认模式 remote → 查远程库"""
+    def test_process_list_reads_snapshot(self):
+        """今日工序列表从读模型获取。"""
         from iwork.api_views import process_list
-        from rest_framework.test import APIRequestFactory
 
         request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.remote_get_all_stepnos', return_value=[70, 69, 68]):
+        with patch(
+            'iwork.api_views.READ_MODEL.processes',
+            return_value=_snapshot_result([70, 69]),
+        ):
             response = process_list(request)
-
         assert response.status_code == 200
-        assert response.data['stepnos'] == [70, 69, 68]
-        assert response.data['mode'] == 'remote'
+        assert response.data['stepnos'] == [70, 69]
 
     @patch('iwork.api_views._snapshot_state', return_value=object())
-    def test_historical_date_ignores_mode_and_returns_local_data(self, _mock_snapshot):
-        """历史日期即使携带旧 mode 参数也只查本地快照。"""
+    def test_historical_process_list_stays_local(self, _mock_snapshot):
+        """历史日期继续读取本地快照。"""
         from iwork.api_views import process_list
-        from rest_framework.test import APIRequestFactory
 
-        request = APIRequestFactory().get('/?mode=remote&date=2026-05-12')
+        request = APIRequestFactory().get('/?date=2026-05-12')
         with patch('iwork.api_views.local_get_all_stepnos', return_value=[70, 65]):
             response = process_list(request)
-
         assert response.status_code == 200
         assert response.data['mode'] == 'local'
-        assert response.data['date'] == '2026-05-12'
 
-    def test_error_returns_500(self):
-        """异常返回 500"""
-        from iwork.api_views import process_list
-        from rest_framework.test import APIRequestFactory
+    @pytest.mark.parametrize(
+        ('view_name', 'field', 'expected'),
+        [
+            (
+                'process_compare',
+                'process_flow_stats',
+                [{'step': 70, 'flow': 'A', 'qty': 10}],
+            ),
+            (
+                'heatmap',
+                'heatmap_matrix',
+                {'hours': [8], 'flows': ['A'], 'data': [[10]]},
+            ),
+            (
+                'station_ranking',
+                'station_ranking',
+                [{'station': 'S1', 'qty': 10}],
+            ),
+        ],
+    )
+    @patch('iwork.api_views._snapshot_state', return_value=object())
+    def test_historical_derived_endpoints_stay_local(
+        self,
+        _mock_snapshot,
+        view_name,
+        field,
+        expected,
+    ):
+        """历史派生统计必须读取本地快照，不能查今日 Redis 读模型。"""
+        import iwork.api_views as api_views
 
-        request = APIRequestFactory().get('/')
-        with patch('iwork.api_views.remote_get_all_stepnos', side_effect=Exception()):
-            response = process_list(request)
-        assert response.status_code == 500
+        local_stats = {
+            field: expected,
+            'top_processes': [{'step': 70, 'qty': 10}],
+        }
+        request = APIRequestFactory().get('/?date=2026-05-12')
+        with patch(
+            'iwork.api_views.get_local_date_stats',
+            return_value=local_stats,
+        ) as get_local, patch(
+            'iwork.api_views.READ_MODEL.realtime',
+        ) as read_realtime:
+            response = getattr(api_views, view_name)(request)
+
+        assert response.status_code == 200
+        assert response.data == expected
+        get_local.assert_called_once()
+        read_realtime.assert_not_called()
 
 
 class TestHistoryDashboard:
@@ -672,89 +532,66 @@ class TestHistoryDashboard:
 class TestFlowOverviewEndpoint:
     """GET /api/dashboard/detail/flows/"""
 
-    @patch('iwork.api_views.cache')
-    def test_returns_cached_flow_overview(self, mock_cache):
-        """Redis 缓存命中时直接返回缓存数据"""
+    def test_returns_snapshot_flow_overview(self):
+        """Flow 概览读取版本化详情视图。"""
         from iwork.api_views import flow_overview
-        from rest_framework.test import APIRequestFactory
 
-        mock_cache.get.return_value = {
-            'VCO-L5': {'total_qty': 800, 'worker_count': 15},
-        }
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/detail/flows/')
-        response = flow_overview(request)
+        payload = {'VCO-L5': {'total_qty': 800, 'worker_count': 15}}
+        with patch(
+            'iwork.api_views.READ_MODEL.detail',
+            return_value=_snapshot_result(payload),
+        ) as read:
+            response = flow_overview(APIRequestFactory().get('/'))
         assert response.status_code == 200
         assert 'VCO-L5' in response.data
-
-    @patch('iwork.api_views.remote_get_batch_flow_overview')
-    @patch('iwork.api_views.cache')
-    def test_cache_miss_falls_back_to_db(self, mock_cache, mock_query):
-        """缓存未命中时回退到数据库查询"""
-        from iwork.api_views import flow_overview
-        from rest_framework.test import APIRequestFactory
-
-        mock_cache.get.return_value = None
-        mock_query.return_value = {'VCO-L5': {'total_qty': 800, 'worker_count': 15}}
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/detail/flows/')
-        response = flow_overview(request)
-        assert response.status_code == 200
-        mock_query.assert_called_once()
+        read.assert_called_once()
 
 
 class TestFlowDetailEndpoint:
     """GET /api/dashboard/detail/flow/<name>/"""
 
+    @patch('iwork.api_views._get_wo_targets_with_fallback', return_value={})
+    @patch('iwork.api_views._get_targets_with_fallback', return_value={})
     @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
-    @patch('iwork.api_views.cache')
-    @patch('iwork.api_views.remote_get_batch_flow_employees')
-    @patch('iwork.api_views.remote_get_batch_flow_hourly')
     def test_returns_flow_employees(
-        self, mock_hourly, mock_employees, mock_cache, _mock_minutes,
+        self, _mock_minutes, _mock_targets, _mock_wo_targets,
     ):
-        """返回指定 Flow 的员工明细和小时趋势"""
+        """员工明细和小时趋势来自同一个固定版本。"""
         from iwork.api_views import flow_detail
-        from rest_framework.test import APIRequestFactory
 
-        mock_employees.return_value = {
-            'VCO-L5': [{
+        bundle = {
+            'flow_employees': {'VCO-L5': [{
                 'reg_per_sys_id': 1001,
                 'total_qty': 500,
                 'output_value': 420.0,
-                'steps': [{
-                    'stepno': 70,
-                    'workorder': 'BU0724',
-                    'description': '后整',
-                    'step_time': 1.4,
-                    'qty': 300,
-                    'output_value': 420.0,
-                }],
-            }],
+                'steps': [],
+            }]},
+            'flow_hourly': {'VCO-L5': [{'hour': 8, 'qty': 100}]},
         }
-        mock_hourly.return_value = {'VCO-L5': [{'hour': 8, 'qty': 100}]}
-        mock_cache.get.return_value = None  # 缓存未命中
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/detail/flow/VCO-L5/')
-        response = flow_detail(request, flow_name='VCO-L5')
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ) as read:
+            response = flow_detail(
+                APIRequestFactory().get('/api/dashboard/detail/flow/VCO-L5/'),
+                flow_name='VCO-L5',
+            )
         assert response.status_code == 200
         assert response.data['flow'] == 'VCO-L5'
         assert response.data['work_minutes'] == 210
         assert len(response.data['employees']) == 1
         assert response.data['employees'][0]['employee_efficiency'] == 200.0
-        from iwork.statistics import detail_cache_key
-
-        mock_cache.get.assert_any_call(detail_cache_key('flow:VCO-L5'))
+        assert response.data['source'] == 'redis_snapshot'
+        read.assert_called_once()
 
     @patch('iwork.api_views._get_wo_targets_with_fallback', return_value={})
+    @patch('iwork.api_views._get_targets_with_fallback', return_value={'1001': 250})
     @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
-    @patch('iwork.api_views.cache')
     def test_cached_snapshot_gets_request_time_efficiency(
-        self, mock_cache, _mock_minutes, _mock_wo_targets,
+        self, _mock_minutes, _mock_targets, _mock_wo_targets,
     ):
         """缓存快照应按请求时刻重新计算效率。"""
         from iwork.api_views import flow_detail
-        from iwork.statistics import detail_cache_key
 
         cached_employees = [{
             'reg_per_sys_id': 1001,
@@ -762,20 +599,18 @@ class TestFlowDetailEndpoint:
             'output_value': 420.0,
             'steps': [],
         }]
-
-        def cache_get(key):
-            if key == detail_cache_key('flow:VCO-L5'):
-                return cached_employees
-            if key == detail_cache_key('flow_hourly'):
-                return {'VCO-L5': [{'hour': 10, 'qty': 300}]}
-            if key.startswith('targets:'):
-                return json.dumps({'1001': 250})
-            return None
-
-        mock_cache.get.side_effect = cache_get
-        request = APIRequestFactory().get('/api/dashboard/detail/flow/VCO-L5/')
-
-        response = flow_detail(request, flow_name='VCO-L5')
+        bundle = {
+            'flow_employees': {'VCO-L5': cached_employees},
+            'flow_hourly': {'VCO-L5': [{'hour': 10, 'qty': 300}]},
+        }
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ):
+            response = flow_detail(
+                APIRequestFactory().get('/api/dashboard/detail/flow/VCO-L5/'),
+                flow_name='VCO-L5',
+            )
 
         assert response.status_code == 200
         assert response.data['work_minutes'] == 210
@@ -783,37 +618,40 @@ class TestFlowDetailEndpoint:
         assert response.data['employees'][0]['target'] == 250
         assert 'employee_efficiency' not in cached_employees[0]
         assert 'target' not in cached_employees[0]
-        from iwork.statistics import get_business_date
-        mock_cache.get.assert_any_call(f'targets:{get_business_date().isoformat()}')
 
 
 class TestStepnoDetailEndpoint:
     """GET /api/dashboard/detail/stepno/<stepno>/"""
 
-    @patch('iwork.api_views.remote_get_batch_stepno_employees')
-    def test_returns_stepno_employees(self, mock_employees):
-        """返回指定工序的员工明细"""
+    @patch('iwork.api_views._get_targets_with_fallback', return_value={})
+    def test_returns_stepno_employees(self, _mock_targets):
+        """返回快照中的指定工序员工明细。"""
         from iwork.api_views import stepno_detail
-        from rest_framework.test import APIRequestFactory
 
-        mock_employees.return_value = {
-            70: [{'reg_per_sys_id': 1001, 'qty': 300, 'flows': ['VCO-L5']}],
+        bundle = {
+            'stepno_employees': {
+                70: [{'reg_per_sys_id': 1001, 'qty': 300, 'flows': ['VCO-L5']}],
+            },
         }
-        factory = APIRequestFactory()
-        request = factory.get('/api/dashboard/detail/stepno/70/')
-        response = stepno_detail(request, stepno=70)
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ):
+            response = stepno_detail(
+                APIRequestFactory().get('/api/dashboard/detail/stepno/70/'),
+                stepno=70,
+            )
         assert response.status_code == 200
         assert response.data['stepno'] == 70
+        assert response.data['total_qty'] == 300
 
 
 class TestProductOverviewEndpoint:
     """GET /api/dashboard/detail/product-overview/"""
 
-    @patch('iwork.api_views.cache')
-    def test_uses_versioned_cache_key(self, mock_cache):
-        """产品概览应使用带版本和业务日期的缓存键。"""
+    def test_uses_versioned_snapshot(self):
+        """产品概览读取版本化详情视图。"""
         from iwork.api_views import product_overview
-        from iwork.statistics import detail_cache_key
 
         cached = {
             'products': [{
@@ -827,14 +665,18 @@ class TestProductOverviewEndpoint:
                 }],
             }],
         }
-        mock_cache.get.return_value = cached
-        request = APIRequestFactory().get('/api/dashboard/detail/product-overview/')
-
-        response = product_overview(request)
+        with patch(
+            'iwork.api_views.READ_MODEL.detail',
+            return_value=_snapshot_result(cached),
+        ) as read:
+            response = product_overview(
+                APIRequestFactory().get('/api/dashboard/detail/product-overview/')
+            )
 
         assert response.status_code == 200
-        assert response.data == cached
-        mock_cache.get.assert_called_once_with(detail_cache_key('product_overview'))
+        assert response.data['products'] == cached['products']
+        assert response.data['source'] == 'redis_snapshot'
+        read.assert_called_once()
 
 
 # ============================================================================
@@ -844,16 +686,11 @@ class TestProductOverviewEndpoint:
 class TestDashboardStream:
     """dashboard_stream SSE 视图测试"""
 
-    @patch('iwork.api_views.cache')
-    @patch('iwork.api_views.get_realtime_stats')
     @pytest.mark.asyncio
-    async def test_returns_event_stream_response(self, mock_stats, mock_cache):
+    async def test_returns_event_stream_response(self):
         """SSE 视图返回 StreamingHttpResponse"""
         from iwork.api_views import dashboard_stream
         from django.http import StreamingHttpResponse
-
-        mock_stats.return_value = {'total_qty': 100}
-        mock_cache.get.return_value = []
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/')
@@ -863,54 +700,51 @@ class TestDashboardStream:
         assert response['Content-Type'] == 'text/event-stream'
         assert response['Cache-Control'] == 'no-cache'
 
-    @patch('iwork.api_views.cache')
-    @patch('iwork.api_views.get_realtime_stats')
     @pytest.mark.asyncio
-    async def test_sse_first_chunk_has_valid_json(self, mock_stats, mock_cache):
-        """SSE 生成器第一个 chunk 包含有效的 JSON 数据"""
+    async def test_sse_first_chunk_has_valid_json(self):
+        """SSE 第一条消息包含快照版本与同版本数据。"""
         from iwork.api_views import dashboard_stream
-        from iwork.statistics import detail_cache_key, realtime_process_list_cache_key
-
-        mock_stats.return_value = {'total_qty': 500, 'date': '2026-06-04'}
-        mock_cache.get.side_effect = lambda key: {
-            realtime_process_list_cache_key(): [70, 69],
-            detail_cache_key('flow_overview'): [{'flow': 'VCO-L5', 'qty': 200}],
-        }.get(key)
 
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/')
-        response = await dashboard_stream(request)
-
-        # 取第一个 chunk（生成器 yield 后停在 sleep，不会阻塞）
-        first_chunk = (await anext(response.streaming_content)).decode('utf-8')
+        payload = {
+            'data': {'total_qty': 500, 'date': '2026-07-31'},
+            'process_list': [70, 69],
+            'detail_overview': [{'flow': 'VCO-L5', 'qty': 200}],
+        }
+        with patch(
+            'iwork.api_views.READ_MODEL.stream_payload',
+            return_value=_snapshot_result(payload),
+        ):
+            response = await dashboard_stream(request)
+            first_chunk = (await anext(response.streaming_content)).decode('utf-8')
         assert first_chunk.startswith('data: ')
         assert first_chunk.endswith('\n\n')
 
         json_str = first_chunk[6:-2]
         data = json.loads(json_str)
         assert data['type'] == 'dashboard_update'
+        assert data['snapshot_version'] == 'v-test'
         assert 'timestamp' in data
         assert data['data']['total_qty'] == 500
         assert data['process_list'] == [70, 69]
         assert data['detail_overview'] == [{'flow': 'VCO-L5', 'qty': 200}]
 
-    @patch('iwork.api_views.cache')
-    @patch('iwork.api_views.get_realtime_stats')
     @pytest.mark.asyncio
-    async def test_sse_respects_stepno_filter(self, mock_stats, mock_cache):
+    async def test_sse_respects_stepno_filter(self):
         """SSE 视图支持 stepno 参数过滤"""
         from iwork.api_views import dashboard_stream
 
-        mock_stats.return_value = {'total_qty': 300}
-        mock_cache.get.return_value = []
-
         factory = APIRequestFactory()
         request = factory.get('/api/dashboard/stream/?stepno=69')
-        response = await dashboard_stream(request)
-
-        # 触发生成器执行到第一个 yield
-        await anext(response.streaming_content)
-        mock_stats.assert_called_once_with(stepno_filter=[69])
+        payload = {'data': {'total_qty': 300}, 'process_list': [69], 'detail_overview': {}}
+        with patch(
+            'iwork.api_views.READ_MODEL.stream_payload',
+            return_value=_snapshot_result(payload),
+        ) as read:
+            response = await dashboard_stream(request)
+            await anext(response.streaming_content)
+        read.assert_called_once_with(date.today(), [69])
 
 
 class TestSetTargets:

@@ -1,104 +1,84 @@
-import pytest
-from unittest.mock import patch
+"""Celery 任务异常策略测试。"""
+
 from datetime import date
+from unittest.mock import patch
+
+import pytest
+from django.core.cache import cache
 
 
-class TestSyncDashboardStats:
-    """sync_dashboard_stats Celery 任务测试（batch 引擎版）"""
-
-    def _setup_mocks(self):
-        """统一 mock 设置"""
-        mock_batch = {
-            70: {'total_qty': 500, 'date': date(2026, 5, 9),
-                 'hourly_stats': [{'hour': 8, 'qty': 100}],
-                 'station_stats': [{'station': 'S1', 'qty': 150}],
-                 'workorders': [{'wrk_order': 'W001', 'total_qty': 500, 'step_count': 5}]},
-            'all': {'total_qty': 500, 'date': date(2026, 5, 9)},
-        }
-        return mock_batch
-
-    @patch('iwork.tasks.cache_detail_batch_to_redis')
-    @patch('iwork.tasks.get_batch_detail_stats')
-    @patch('iwork.tasks.cache_batch_to_redis')
-    @patch('iwork.tasks.get_batch_stats')
-    def test_task_success(self, mock_batch_fn, mock_cache, mock_detail_batch, mock_detail_cache):
-        """任务成功执行：批量构建 → 缓存"""
-        from iwork.tasks import sync_dashboard_stats
-
-        mock_batch = self._setup_mocks()
-        mock_batch_fn.return_value = mock_batch
-        mock_detail_batch.return_value = {}
-
-        result = sync_dashboard_stats()
-
-        mock_batch_fn.assert_called_once()
-        business_date = mock_batch_fn.call_args.kwargs['target_date']
-        mock_cache.assert_called_once_with(mock_batch, target_date=business_date)
-        mock_detail_batch.assert_called_once()
-        mock_detail_cache.assert_called_once_with(
-            mock_detail_batch.return_value,
-            target_date=business_date,
-        )
-        assert result == 2  # 70 + 'all'
-
-    @patch('iwork.tasks.cache_detail_batch_to_redis')
-    @patch('iwork.tasks.get_batch_detail_stats')
-    @patch('iwork.tasks.cache_batch_to_redis')
-    @patch('iwork.tasks.get_batch_stats')
-    def test_task_returns_batch_count(self, mock_batch_fn, mock_cache, mock_detail_batch, mock_detail_cache):
-        """任务返回工序数量"""
-        from iwork.tasks import sync_dashboard_stats
-
-        mock_batch = {
-            70: {'total_qty': 500, 'date': date(2026, 5, 9)},
-            69: {'total_qty': 300, 'date': date(2026, 5, 9)},
-            68: {'total_qty': 200, 'date': date(2026, 5, 9)},
-            'all': {'total_qty': 1000, 'date': date(2026, 5, 9)},
-        }
-        mock_batch_fn.return_value = mock_batch
-        mock_detail_batch.return_value = {}
-
-        result = sync_dashboard_stats()
-        assert result == 4  # 3 工序 + 'all'
-
-    @patch('iwork.tasks.cache_detail_batch_to_redis')
-    @patch('iwork.tasks.get_batch_detail_stats')
-    @patch('iwork.tasks.cache_batch_to_redis')
-    @patch('iwork.tasks.get_batch_stats')
-    def test_task_retries_on_exception(self, mock_batch_fn, mock_cache, mock_detail_batch, mock_detail_cache):
-        """batch 构建失败时触发重试"""
-        from iwork.tasks import sync_dashboard_stats
-
-        mock_batch_fn.side_effect = RuntimeError('DB down')
-
-        with pytest.raises(RuntimeError, match='DB down'):
-            sync_dashboard_stats()
+@pytest.fixture(autouse=True)
+def clear_cache():
+    """隔离每项任务测试使用的缓存锁。"""
+    cache.clear()
+    yield
+    cache.clear()
 
 
+def test_sync_dashboard_stats_propagates_non_retryable_build_error():
+    """数据或逻辑错误不得被吞掉或发布半成品。"""
+    from iwork.tasks import sync_dashboard_stats
 
-
-
-
-
-    @patch('iwork.tasks.cache_detail_batch_to_redis')
-    @patch('iwork.tasks.get_batch_detail_stats')
-    @patch('iwork.tasks.cache_batch_to_redis')
-    @patch('iwork.tasks.get_batch_stats')
-    def test_task_calls_detail_batch_functions(self, mock_batch, mock_cache, mock_detail_batch, mock_detail_cache):
-        """sync_dashboard_stats 调用详情批量函数"""
-        from iwork.tasks import sync_dashboard_stats
-
-        mock_batch.return_value = {70: {'total_qty': 500, 'date': date(2026, 5, 9)},
-                                   'all': {'total_qty': 500, 'date': date(2026, 5, 9)}}
-        mock_detail_batch.return_value = {
-            'flow_overview': {}, 'flow_hourly': {}, 'flow_employees': {}
-        }
-
+    with patch("iwork.tasks.get_business_date", return_value=date(2026, 7, 31)), patch(
+        "iwork.tasks.build_snapshot",
+        side_effect=ValueError("快照字段不完整"),
+    ), pytest.raises(ValueError, match="快照字段不完整"):
         sync_dashboard_stats()
 
-        mock_detail_batch.assert_called_once()
-        business_date = mock_batch.call_args.kwargs['target_date']
-        mock_detail_cache.assert_called_once_with(
-            mock_detail_batch.return_value,
-            target_date=business_date,
-        )
+
+def test_sync_dashboard_stats_closes_remote_connection_on_failure():
+    """构建失败后仍必须释放远程数据库连接。"""
+    from iwork.tasks import sync_dashboard_stats
+
+    with patch("iwork.tasks.get_business_date", return_value=date(2026, 7, 31)), patch(
+        "iwork.tasks.build_snapshot",
+        side_effect=ValueError("失败"),
+    ), patch("iwork.tasks.connections") as connections, pytest.raises(ValueError):
+        sync_dashboard_stats()
+
+    connections.__getitem__.return_value.close.assert_called_once()
+
+
+def test_history_snapshot_final_retry_clears_request_marker():
+    """历史构建耗尽重试后必须释放入队标记，允许用户重新发起任务。"""
+    from django.db import OperationalError
+    from iwork.tasks import build_history_snapshot
+
+    request_key = 'history:snapshot:request:2026-07-15'
+    cache.set(request_key, 'queued', 60)
+    build_history_snapshot.push_request(retries=build_history_snapshot.max_retries)
+    try:
+        with patch(
+            'iwork.tasks.snapshot_history_date',
+            side_effect=OperationalError('模拟最终失败'),
+        ), pytest.raises(OperationalError, match='模拟最终失败'):
+            build_history_snapshot.run('2026-07-15')
+    finally:
+        build_history_snapshot.pop_request()
+
+    assert cache.get(request_key) is None
+
+
+def test_history_snapshot_intermediate_retry_keeps_request_marker():
+    """尚有重试机会时应保留入队标记，避免等待期间重复提交。"""
+    from celery.exceptions import Retry
+    from django.db import OperationalError
+    from iwork.tasks import build_history_snapshot
+
+    request_key = 'history:snapshot:request:2026-07-15'
+    cache.set(request_key, 'queued', 60)
+    build_history_snapshot.push_request(retries=0)
+    try:
+        with patch(
+            'iwork.tasks.snapshot_history_date',
+            side_effect=OperationalError('模拟瞬时失败'),
+        ), patch.object(
+            build_history_snapshot,
+            'retry',
+            side_effect=Retry(),
+        ), pytest.raises(Retry):
+            build_history_snapshot.run('2026-07-15')
+    finally:
+        build_history_snapshot.pop_request()
+
+    assert cache.get(request_key) == 'queued'

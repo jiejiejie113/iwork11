@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -352,12 +351,10 @@ def test_missing_history_snapshot_can_be_built_then_read(client):
             '/api/history/snapshots/2026-07-15/ensure/'
         )
 
-    assert build_response.status_code == 201
+    assert build_response.status_code == 202
     build_payload = build_response.json()
-    assert build_payload['created'] is True
-    assert build_payload['snapshot']['date'] == '2026-07-15'
-    assert build_payload['snapshot']['version'] == 1
-    assert build_payload['snapshot']['source_row_count'] == 3
+    assert build_payload['created'] is False
+    assert build_payload['code'] == 'history_snapshot_building'
 
     detail_response = client.get(
         '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-15'
@@ -373,11 +370,10 @@ def test_ensure_snapshot_reports_build_in_progress(
     _mock_snapshot_state,
     client,
 ):
-    """服务层报告锁冲突时，API 应返回可轮询的 202。"""
+    """同日期已经入队时，API 应返回可轮询的 202。"""
 
-    with patch(
-        'iwork.api_views_local.snapshot_history_date',
-        side_effect=SnapshotBuildInProgressError('正在构建'),
+    with patch('iwork.api_views_local.cache.add', return_value=False), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
     ) as build_snapshot:
         response = client.post('/api/history/snapshots/2026-07-15/ensure/')
 
@@ -388,7 +384,7 @@ def test_ensure_snapshot_reports_build_in_progress(
         'message': '本地历史快照正在构建',
         'retry_after': 2,
     }
-    build_snapshot.assert_called_once_with(date(2026, 7, 15))
+    build_snapshot.assert_not_called()
 
 
 @patch('iwork.api_views_local._snapshot_state', return_value=None)
@@ -398,23 +394,35 @@ def test_ensure_snapshot_delegates_build_to_history_store(
     _mock_snapshot_state,
     client,
 ):
-    """API 应将快照生成和锁管理统一委托给历史存储模块。"""
-    state = SimpleNamespace(
-        snapshot_date=date(2026, 7, 15),
-        snapshot_version=1,
-        source_row_count=10,
-        source_total_qty=20,
-        fact_row_count=3,
-        metadata_row_count=2,
-        missing_metadata_count=0,
-        completed_at=None,
-    )
+    """API 应将远程构建委托给 Celery 后台任务。"""
 
-    with patch('iwork.api_views_local.snapshot_history_date', return_value=state) as build_snapshot:
+    with patch('iwork.api_views_local.cache.add', return_value=True), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
+    ) as build_snapshot:
+        build_snapshot.return_value.id = 'task-history-1'
         response = client.post('/api/history/snapshots/2026-07-15/ensure/')
 
-    assert response.status_code == 201
-    build_snapshot.assert_called_once_with(date(2026, 7, 15))
+    assert response.status_code == 202
+    build_snapshot.assert_called_once_with('2026-07-15')
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_returns_503_when_queue_lock_cache_is_unavailable(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """Redis 无法创建入队标记时应明确返回 503，且不得重复提交任务。"""
+    with patch(
+        'iwork.api_views_local.cache.add',
+        side_effect=ConnectionError('Redis unavailable'),
+    ), patch('iwork.api_views_local.build_history_snapshot.delay') as build_snapshot:
+        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'history_snapshot_queue_unavailable'
+    build_snapshot.assert_not_called()
 
 
 def test_snapshot_history_command_skips_build_in_progress():

@@ -1,19 +1,19 @@
 """
 本地数据相关API视图
 """
-import time
-
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import date
+from django.conf import settings
+from django.core.cache import cache
 from loguru import logger
 
 from iwork.statistics import get_business_date, get_local_date_stats
 from iwork.local_queries import get_available_dates
 from iwork.request_params import parse_stepno_filter
-from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.local_models import HistoricalSyncState
+from iwork.tasks import build_history_snapshot
 
 
 def _parse_stepno(request) -> list[int] | None:
@@ -117,8 +117,7 @@ def _snapshot_payload(state):
 
 @api_view(['POST'])
 def ensure_snapshot(request, target_date):
-    """确保指定历史日期已有可读取的本地快照。"""
-    t0 = time.time()
+    """确保指定历史日期已有可读取快照，否则仅提交后台任务。"""
     date_obj, error_response = _parse_target_date(target_date)
     if error_response:
         return error_response
@@ -137,35 +136,45 @@ def ensure_snapshot(request, target_date):
             'snapshot': _snapshot_payload(existing),
         }, status=status.HTTP_200_OK)
 
+    request_key = f'history:snapshot:request:{target_date}'
     try:
-        result = snapshot_history_date(date_obj)
-        elapsed = time.time() - t0
-        logger.success(
-            'POST /api/history/snapshots/{}/ensure 完成 ({:.1f}s) 源记录{} 事实行{} 缺失元数据{}',
-            target_date,
-            elapsed,
-            result.source_row_count,
-            result.fact_row_count,
-            result.missing_metadata_count,
+        request_added = cache.add(
+            request_key,
+            'queued',
+            timeout=settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
         )
-        return Response({
-            'created': True,
-            'message': '本地历史快照构建完成',
-            'snapshot': _snapshot_payload(result),
-        }, status=status.HTTP_201_CREATED)
+    except Exception as exc:
+        logger.warning('历史快照入队锁暂不可用: date={} error={}', target_date, exc)
+        return Response(
+            {
+                'error': '历史快照任务队列暂不可用，请稍后重试',
+                'code': 'history_snapshot_queue_unavailable',
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
-    except SnapshotBuildInProgressError:
+    if not request_added:
         return Response({
             'created': False,
             'code': 'history_snapshot_building',
             'message': '本地历史快照正在构建',
             'retry_after': 2,
         }, status=status.HTTP_202_ACCEPTED)
+
+    try:
+        task = build_history_snapshot.delay(target_date)
+        logger.info('历史快照 {} 已提交后台任务: {}', target_date, task.id)
+        return Response({
+            'created': False,
+            'code': 'history_snapshot_building',
+            'message': '本地历史快照已提交后台构建',
+            'retry_after': 2,
+        }, status=status.HTTP_202_ACCEPTED)
     except Exception as e:
+        cache.delete(request_key)
         logger.error(
-            'POST /api/history/snapshots/{}/ensure 失败 ({:.0f}ms): {}',
+            'POST /api/history/snapshots/{}/ensure 提交失败: {}',
             target_date,
-            (time.time() - t0) * 1000,
             e,
         )
-        return Response({'error': '历史快照构建失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'error': '历史快照任务提交失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

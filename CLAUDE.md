@@ -51,11 +51,12 @@ queries.py          ← 远程数据库查询（iwork 只读）
 local_queries.py    ← 本地历史总览查询（iwork_local）
 historical_queries.py ← 本地历史生产详情查询
 history_store.py    ← 远程只读聚合、校验和本地事务发布
-statistics.py       ← 缓存编排层：批量构建 + Redis 读写 + 回退逻辑
+statistics.py       ← Celery 批量统计构建与历史兼容入口；实时入口禁止回源
+read_model/         ← 版本化实时快照构建、原子发布、统一查询和陈旧策略
 snapshot_history 命令 / history_store.py ← 按日期生成本地聚合快照
-tasks.py            ← Celery 定时任务：每 60s 批量构建统计 → Redis → SSE 推送
-api_views.py        ← 实时看板 API + 生产详情 API
-api_views_local.py  ← 本地历史快照读取 + 缺失快照按需构建 API
+tasks.py            ← Celery 唯一远程采集入口：每 60s 构建完整快照
+api_views.py        ← 实时看板 API + 生产详情 API，只读 Redis/本地 MySQL
+api_views_local.py  ← 本地历史读取 + 缺失快照异步入队 API
 ```
 
 ## 认证架构
@@ -85,11 +86,12 @@ api_views_local.py  ← 本地历史快照读取 + 缺失快照按需构建 API
 
 ### 关键设计决策
 
-- **今日数据**：通过 Celery 预计算到 Redis（`stats:realtime:{stepno_key}`），TTL 到午夜。API 直接读缓存，缓存未命中时回退到数据库实时查询。
+- **今日数据**：通过 Celery 预计算为 `iwork:read:v1:<date>:<version>:*` 完整快照，API 只通过 `current` 指针读取；缓存未命中、过旧或 Redis 故障时返回 503，禁止远程回源。
 - **历史数据**：只读取本地按日发布的成功快照；缺失时由前端请求确保接口构建，
-  不提供 `mode=remote` 绕过路径。
+  确保接口只提交 Celery 任务并返回 202，不提供 `mode=remote` 绕过路径。
 - **月趋势**：Redis 独立缓存（`batch_monthly:{year}{month}`），TTL 30 天。每日只查今日数据并追加到已有缓存，避免全月重查。
 - **本地库用途**：用于历史数据查询（减少远程库压力）和离线分析。
+- **进程角色**：Uvicorn=`web`、Celery=`celery`、管理命令=`management`；Web 角色由受保护数据库后端禁止连接远程 `iwork`。
 
 ## 业务配置管理
 

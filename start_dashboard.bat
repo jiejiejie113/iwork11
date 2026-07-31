@@ -101,6 +101,7 @@ echo.
 
 :: Start Celery Worker
 echo [3] Starting Celery Worker...
+set IWORK_PROCESS_ROLE=celery
 start "CeleryWorker" /min "%CELERY%" -A iwork worker -l info -P solo
 echo     Celery Worker started
 
@@ -108,6 +109,7 @@ echo.
 
 :: Start Celery Beat
 echo [4] Starting Celery Beat...
+set IWORK_PROCESS_ROLE=celery
 start "CeleryBeat" /min "%CELERY%" -A iwork beat -l info
 echo     Celery Beat started
 
@@ -115,6 +117,7 @@ echo.
 
 :: Start Django Server
 echo [5] Starting Django Server...
+set IWORK_PROCESS_ROLE=web
 start "DjangoServer" /min "%PYTHON%" manage.py runserver 0.0.0.0:8000
 echo     Django Server started
 

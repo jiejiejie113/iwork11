@@ -3,13 +3,27 @@ import json
 from django.shortcuts import render
 from django.core.serializers.json import DjangoJSONEncoder
 from django.views.decorators.http import require_http_methods
+from loguru import logger
+
+from iwork.read_model.errors import ReadModelNotReadyError
 from iwork.statistics import get_realtime_stats
 
 
 @require_http_methods(['GET'])
 def dashboard(request):
     """看板主页面（实时视图）"""
-    stats = get_realtime_stats()
+    try:
+        stats = get_realtime_stats()
+    except ReadModelNotReadyError as exc:
+        logger.warning('实时首页加载时快照尚未准备好: {}', exc)
+        stats = {
+            'total_qty': 0,
+            'workorder_count': 0,
+            'hourly_stats': [],
+            'process_flow_stats': [],
+            'workorders': [],
+            'all_stepnos': [],
+        }
     stats_json = json.dumps(stats, cls=DjangoJSONEncoder)
     context = {
         'stats': stats,

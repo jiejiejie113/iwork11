@@ -366,6 +366,61 @@ def get_remote_stats(target: date) -> dict:
     return get_basic_stats(target)
 
 
+def get_read_model_facts(target_date: date) -> dict:
+    """构建实时读模型使用的最低必要粒度聚合事实。
+
+    Args:
+        target_date: 曼谷业务日期。
+
+    Returns:
+        员工、工序、工单、Flow 粒度事实和工单产品映射。
+    """
+    records = get_records_queryset(target_date)
+    rows = list(
+        records.values("RegPerSysID", "StepNo", "WrkOrder", "Flow")
+        .annotate(qty=Sum("Qty"), record_count=Count("TicketNo"))
+        .order_by("RegPerSysID", "StepNo", "WrkOrder", "Flow")
+    )
+    facts = [
+        {
+            "reg_per_sys_id": row["RegPerSysID"],
+            "stepno": row["StepNo"],
+            "wrk_order": row["WrkOrder"] or "",
+            "flow": row["Flow"] or "",
+            "qty": row["qty"] or 0,
+            "record_count": row["record_count"] or 0,
+        }
+        for row in rows
+    ]
+
+    wrk_orders = sorted({item["wrk_order"] for item in facts if item["wrk_order"]})
+    prefixes = {wrk_order[:6] for wrk_order in wrk_orders if len(wrk_order) >= 6}
+    prefix_products = {}
+    if prefixes:
+        product_rows = (
+            ProductionOrder.objects.using("iwork_local")
+            .filter(style_no__in=prefixes)
+            .values("style_no", "product_name", "order_no")
+            .distinct()
+        )
+        for row in product_rows:
+            prefix_products.setdefault(
+                row["style_no"],
+                {
+                    "product_name": row["product_name"] or "",
+                    "order_no": row["order_no"] or "",
+                },
+            )
+    products = {
+        wrk_order: prefix_products.get(
+            wrk_order[:6],
+            {"product_name": "", "order_no": ""},
+        )
+        for wrk_order in wrk_orders
+    }
+    return {"facts": facts, "products": products}
+
+
 # ============================================================================
 # Batch 查询函数（按 StepNo 分组，一次查询覆盖全部工序）
 
