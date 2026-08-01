@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-07-31
+> 最后更新：2026-08-01
 
 ---
 
@@ -30,6 +30,21 @@ Uvicorn ASGI (4 workers)
 | `api_views_local.py` | 本地历史读取；缺失快照只提交 Celery 任务并返回 202 |
 | `tasks.py` | Celery 受控采集、原子发布和历史快照任务 |
 | `db_backends/guarded_mysql` | Web 进程远程 MySQL 连接/游标硬拦截 |
+
+### 实时快照发布不变量
+
+远程生产数据会在 Celery 多阶段查询期间持续变化。`read_model.schemas` 必须在写入
+Redis 前校验以下同语义汇总，任一不一致都禁止切换 `current`：
+
+- 每个实时视图的 `total_qty` 等于 `process_flow_stats` 的产量合计；
+- 每个实时视图的 `total_qty` 等于 `monthly_total_trend` 中当前业务日期的产量；
+- 具体工序视图的 `total_qty` 等于 `monthly_process_stats` 中当前业务日期的产量；
+- `all` 视图不与 `monthly_process_stats` 直接比较，因为该字段存在既有工序过滤语义。
+
+此类变化使用 `SnapshotConsistencyError` 表示，属于可恢复错误：Celery 按既有重试策略
+重新采集，上一份完整快照继续可读。结构版本、字段类型等逻辑错误仍立即失败，不进入
+一致性重试。测试中的“今日”接口必须固定或模拟 `get_business_date()`，禁止依赖执行测试
+当天的自然日期。
 
 ### 运行与测试环境
 

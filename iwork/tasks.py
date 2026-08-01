@@ -8,6 +8,7 @@ from redis.exceptions import LockNotOwnedError
 
 from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.read_model.builder import build_snapshot
+from iwork.read_model.errors import SnapshotConsistencyError
 from iwork.read_model.store import SnapshotStore
 from iwork.statistics import get_business_date
 
@@ -19,6 +20,7 @@ _RETRYABLE = (
     TimeoutError,
     OSError,
     OperationalError,
+    SnapshotConsistencyError,
 )
 
 # ======

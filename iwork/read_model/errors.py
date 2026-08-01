@@ -13,5 +13,9 @@ class SnapshotValidationError(ReadModelError):
     """待发布快照未通过结构或业务日期校验。"""
 
 
+class SnapshotConsistencyError(SnapshotValidationError):
+    """远程数据采集期间发生变化，导致同版本业务汇总不一致。"""
+
+
 class SnapshotPublishInProgressError(ReadModelError):
     """同一业务日期已有快照发布任务正在执行。"""

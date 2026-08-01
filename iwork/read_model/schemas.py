@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from django.conf import settings
 
-from .errors import SnapshotValidationError
+from .errors import SnapshotConsistencyError, SnapshotValidationError
 
 
 # ======
@@ -25,6 +25,104 @@ REQUIRED_DETAIL_NAMES = frozenset({
     "stepno_employees",
     "product_overview",
 })
+
+
+def _sum_qty_for_business_date(
+    rows: list[dict],
+    business_date: date,
+    field_name: str,
+) -> int:
+    """汇总指定业务日期的产量并校验明细结构。
+
+    Args:
+        rows: 包含 ``date`` 与 ``qty`` 的统计明细。
+        business_date: 需要汇总的曼谷业务日期。
+        field_name: 用于错误提示的字段名称。
+
+    Returns:
+        指定业务日期的产量合计。
+
+    Raises:
+        SnapshotValidationError: 明细不是字典列表或产量不是整数。
+    """
+    if not isinstance(rows, list):
+        raise SnapshotValidationError(f"实时视图字段结构无效: {field_name}")
+
+    total = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise SnapshotValidationError(f"实时视图字段结构无效: {field_name}")
+        row_date = row.get("date")
+        if isinstance(row_date, date):
+            row_date = row_date.isoformat()
+        if row_date != business_date.isoformat():
+            continue
+        qty = row.get("qty")
+        if not isinstance(qty, int):
+            raise SnapshotValidationError(f"实时视图产量无效: {field_name}")
+        total += qty
+    return total
+
+
+def _validate_realtime_totals(realtime: dict, business_date: date) -> None:
+    """校验实时、Flow 与当日月统计的同语义产量一致性。
+
+    Args:
+        realtime: 按 ``all`` 和工序号组织的实时统计视图。
+        business_date: 当前快照对应的曼谷业务日期。
+
+    Raises:
+        SnapshotValidationError: 任一可比较汇总与实时总量不一致。
+    """
+    for view_name, item in realtime.items():
+        if not isinstance(item, dict) or "total_qty" not in item:
+            continue
+        total_qty = item["total_qty"]
+        if not isinstance(total_qty, int):
+            raise SnapshotValidationError(
+                f"实时视图总产量无效: view={view_name}"
+            )
+
+        process_flow_stats = item.get("process_flow_stats")
+        if process_flow_stats is not None:
+            if not isinstance(process_flow_stats, list):
+                raise SnapshotValidationError("实时视图字段结构无效: process_flow_stats")
+            flow_total = 0
+            for row in process_flow_stats:
+                if not isinstance(row, dict) or not isinstance(row.get("qty"), int):
+                    raise SnapshotValidationError("实时视图产量无效: process_flow_stats")
+                flow_total += row["qty"]
+            if flow_total != total_qty:
+                raise SnapshotConsistencyError(
+                    "实时总量与 Flow 汇总不一致: "
+                    f"view={view_name} total={total_qty} flow={flow_total}"
+                )
+
+        monthly_total_trend = item.get("monthly_total_trend")
+        if monthly_total_trend is not None:
+            monthly_total = _sum_qty_for_business_date(
+                monthly_total_trend,
+                business_date,
+                "monthly_total_trend",
+            )
+            if monthly_total != total_qty:
+                raise SnapshotConsistencyError(
+                    "实时总量与当日月趋势不一致: "
+                    f"view={view_name} total={total_qty} monthly={monthly_total}"
+                )
+
+        monthly_process_stats = item.get("monthly_process_stats")
+        if view_name != "all" and monthly_process_stats is not None:
+            process_total = _sum_qty_for_business_date(
+                monthly_process_stats,
+                business_date,
+                "monthly_process_stats",
+            )
+            if process_total != total_qty:
+                raise SnapshotConsistencyError(
+                    "实时总量与当日工序月统计不一致: "
+                    f"view={view_name} total={total_qty} process={process_total}"
+                )
 
 
 def validate_snapshot(snapshot: dict) -> tuple[dict, dict]:
@@ -109,6 +207,7 @@ def validate_snapshot(snapshot: dict) -> tuple[dict, dict]:
             item_date = item_date.isoformat()
         if item_date != business_date.isoformat():
             raise SnapshotValidationError("实时视图业务日期不一致")
+    _validate_realtime_totals(realtime, business_date)
 
     fact_record_count = 0
     for fact in views["kanban"]:

@@ -39,6 +39,33 @@ def test_sync_dashboard_stats_closes_remote_connection_on_failure():
     connections.__getitem__.return_value.close.assert_called_once()
 
 
+def test_sync_dashboard_stats_retries_snapshot_consistency_error():
+    """远程数据在分批查询间变化时应重试且不得发布不一致快照。"""
+    from celery.exceptions import Retry
+    from iwork.read_model.errors import SnapshotConsistencyError
+    from iwork.tasks import sync_dashboard_stats
+
+    sync_dashboard_stats.push_request(retries=0)
+    try:
+        with patch(
+            "iwork.tasks.get_business_date",
+            return_value=date(2026, 7, 31),
+        ), patch(
+            "iwork.tasks.build_snapshot",
+            side_effect=SnapshotConsistencyError("实时汇总变化"),
+        ), patch.object(
+            sync_dashboard_stats,
+            "retry",
+            side_effect=Retry(),
+        ) as retry, pytest.raises(Retry):
+            sync_dashboard_stats.run()
+    finally:
+        sync_dashboard_stats.pop_request()
+
+    retry.assert_called_once()
+    assert isinstance(retry.call_args.kwargs["exc"], SnapshotConsistencyError)
+
+
 def test_history_snapshot_final_retry_clears_request_marker():
     """历史构建耗尽重试后必须释放入队标记，允许用户重新发起任务。"""
     from django.db import OperationalError

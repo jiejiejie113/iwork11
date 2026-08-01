@@ -98,6 +98,88 @@ def test_failed_publish_preserves_previous_snapshot(monkeypatch):
     assert result.metadata["snapshot_version"] == first["metadata"]["snapshot_version"]
 
 
+def test_inconsistent_realtime_totals_preserve_previous_snapshot():
+    """跨视图汇总不一致时拒绝发布并继续提供上一版本。"""
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)
+    store = SnapshotStore(cache_backend=cache, now=lambda: now)
+    first = _snapshot_payload(now - timedelta(seconds=30), total_qty=100)
+    second = _snapshot_payload(now, total_qty=200)
+    second["views"]["realtime"]["all"].update({
+        "process_flow_stats": [{"step": 70, "flow": "A", "qty": 200}],
+        "monthly_total_trend": [
+            {"date": BUSINESS_DATE.isoformat(), "qty": 201},
+        ],
+    })
+    store.publish(first)
+
+    with pytest.raises(SnapshotValidationError, match="实时总量与当日月趋势不一致"):
+        store.publish(second)
+
+    result = store.read("realtime", BUSINESS_DATE)
+    assert result.data["all"]["total_qty"] == 100
+    assert result.metadata["snapshot_version"] == first["metadata"]["snapshot_version"]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "rows", "message"),
+    [
+        (
+            "process_flow_stats",
+            [{"step": 70, "flow": "A", "qty": 199}],
+            "实时总量与 Flow 汇总不一致",
+        ),
+        (
+            "monthly_process_stats",
+            [{"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 199}],
+            "实时总量与当日工序月统计不一致",
+        ),
+    ],
+)
+def test_inconsistent_process_totals_are_rejected(field_name, rows, message):
+    """Flow 或工序月统计与实时总量不一致时不得发布。"""
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)
+    store = SnapshotStore(cache_backend=cache, now=lambda: now)
+    snapshot = _snapshot_payload(now, total_qty=200)
+    snapshot["views"]["realtime"][70] = {
+        "date": BUSINESS_DATE,
+        "total_qty": 200,
+        "process_flow_stats": [{"step": 70, "flow": "A", "qty": 200}],
+        "monthly_total_trend": [
+            {"date": BUSINESS_DATE.isoformat(), "qty": 200},
+        ],
+        "monthly_process_stats": [
+            {"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 200},
+        ],
+    }
+    snapshot["views"]["realtime"][70][field_name] = rows
+
+    with pytest.raises(SnapshotValidationError, match=message):
+        store.publish(snapshot)
+
+    with pytest.raises(ReadModelNotReadyError):
+        store.read("realtime", BUSINESS_DATE)
+
+
+def test_all_view_allows_filtered_monthly_process_semantics():
+    """all 视图不直接比较存在工序过滤语义的月工序统计。"""
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)
+    store = SnapshotStore(cache_backend=cache, now=lambda: now)
+    snapshot = _snapshot_payload(now, total_qty=200)
+    snapshot["views"]["realtime"]["all"].update({
+        "process_flow_stats": [{"step": 70, "flow": "A", "qty": 200}],
+        "monthly_total_trend": [
+            {"date": BUSINESS_DATE.isoformat(), "qty": 200},
+        ],
+        "monthly_process_stats": [
+            {"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 199},
+        ],
+    })
+
+    store.publish(snapshot)
+
+    assert store.read("realtime", BUSINESS_DATE).data["all"]["total_qty"] == 200
+
+
 def test_stale_snapshot_is_served_until_hard_limit():
     """软阈值后标记陈旧，硬阈值后明确拒绝且不回源。"""
     generated_at = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)

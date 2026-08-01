@@ -2,9 +2,21 @@
 产量看板 API 端点测试
 使用 APIRequestFactory 直接调用视图函数，绕过中间件
 """
-import pytest
+from datetime import date
 from unittest.mock import patch
+
+import pytest
 from rest_framework.test import APIRequestFactory
+
+
+BUSINESS_DATE = date(2026, 7, 31)
+
+
+@pytest.fixture(autouse=True)
+def fixed_business_date():
+    """固定今日业务日期，避免测试随自然日期漂移到历史查询路径。"""
+    with patch('iwork.api_views.get_business_date', return_value=BUSINESS_DATE):
+        yield
 
 
 def _snapshot_result(data):
@@ -15,7 +27,7 @@ def _snapshot_result(data):
         data=data,
         metadata={
             'snapshot_version': 'v-kanban',
-            'generated_at': '2026-07-31T12:00:00+07:00',
+            'generated_at': f'{BUSINESS_DATE.isoformat()}T12:00:00+07:00',
         },
         stale=False,
     )
@@ -50,7 +62,7 @@ class TestKanbanStatsAPI:
             'max_worker_name': '12345',
         })
         request = self.factory.get('/api/kanban/stats/', {
-            'date': '2026-07-31', 'stepno': '70',
+            'date': BUSINESS_DATE.isoformat(), 'stepno': '70',
         })
         response = kanban_stats(request)
         assert response.status_code == 200
@@ -89,7 +101,7 @@ class TestKanbanRankingAPI:
             ],
         })
         request = self.factory.get('/api/kanban/ranking/', {
-            'date': '2026-07-31', 'stepno': '70', 'page': 1,
+            'date': BUSINESS_DATE.isoformat(), 'stepno': '70', 'page': 1,
         })
         response = kanban_ranking(request)
         assert response.status_code == 200
@@ -103,7 +115,7 @@ class TestKanbanRankingAPI:
             'workers': [],
         })
         request = self.factory.get('/api/kanban/ranking/', {
-            'date': '2026-07-31', 'stepno': '70',
+            'date': BUSINESS_DATE.isoformat(), 'stepno': '70',
         })
         response = kanban_ranking(request)
         assert response.status_code == 200
@@ -133,7 +145,7 @@ class TestKanbanFilterOptionsAPI:
             'employees': [{'reg_per_sys_id': '12345', 'name': '12345'}],
         })
         request = self.factory.get('/api/kanban/filter-options/', {
-            'date': '2026-07-31',
+            'date': BUSINESS_DATE.isoformat(),
         })
         response = kanban_filter_options(request)
         assert response.status_code == 200

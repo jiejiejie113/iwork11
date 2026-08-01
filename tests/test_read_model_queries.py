@@ -45,7 +45,9 @@ def _publish_snapshot() -> ReadModelQueries:
                 "hourly_stats": [{"hour": 8, "qty": 130}],
                 "process_flow_stats": [{"step": 70, "flow": "A", "qty": 130}],
                 "monthly_total_trend": [{"date": "2026-07-31", "qty": 130}],
-                "monthly_process_stats": [],
+                "monthly_process_stats": [
+                    {"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 130},
+                ],
                 "monthly_hourly_stats": [],
                 "station_ranking": [{"station": "(A)[S1]", "qty": 130}],
                 "station_stats": [{"station": "(A)[S1]", "qty": 130}],
@@ -61,7 +63,9 @@ def _publish_snapshot() -> ReadModelQueries:
                 "hourly_stats": [{"hour": 8, "qty": 20}],
                 "process_flow_stats": [{"step": 69, "flow": "B", "qty": 20}],
                 "monthly_total_trend": [{"date": "2026-07-31", "qty": 20}],
-                "monthly_process_stats": [],
+                "monthly_process_stats": [
+                    {"date": BUSINESS_DATE.isoformat(), "step": 69, "qty": 20},
+                ],
                 "monthly_hourly_stats": [],
                 "station_ranking": [{"station": "(B)[S2]", "qty": 20}],
                 "station_stats": [{"station": "(B)[S2]", "qty": 20}],

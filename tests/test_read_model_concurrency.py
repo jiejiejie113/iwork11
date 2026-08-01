@@ -22,8 +22,12 @@ def _snapshot() -> dict:
         "workorder_count": 1,
         "hourly_stats": [{"hour": 8, "qty": 100}],
         "process_flow_stats": [{"step": 70, "flow": "SO3-L3A", "qty": 100}],
-        "monthly_total_trend": [],
-        "monthly_process_stats": [],
+        "monthly_total_trend": [
+            {"date": BUSINESS_DATE.isoformat(), "qty": 100},
+        ],
+        "monthly_process_stats": [
+            {"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 100},
+        ],
         "monthly_hourly_stats": [],
         "station_ranking": [],
         "station_stats": [],
