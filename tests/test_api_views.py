@@ -656,20 +656,20 @@ class TestFlowDetailEndpoint:
         assert response.status_code == 200
         assert response.data['group_target'] == 1000
         assert response.data['work_hours'] == 10
-        assert response.data['current_group_target'] == 350
+        assert response.data['current_group_target'] == 400
         assert response.data['step_targets'] == {
-            '1': {'target': 1000, 'current_target': 350, 'worker_count': 2},
-            '2': {'target': 1000, 'current_target': 350, 'worker_count': 5},
+            '1': {'target': 1000, 'current_target': 400, 'worker_count': 2},
+            '2': {'target': 1000, 'current_target': 400, 'worker_count': 5},
         }
         first_employee = response.data['employees'][0]
         assert first_employee['step_targets']['1']['full_target'] == 500
-        assert first_employee['step_targets']['1']['target'] == 175
+        assert first_employee['step_targets']['1']['target'] == 200
         assert first_employee['step_targets']['2']['full_target'] == 200
-        assert first_employee['step_targets']['2']['target'] == 70
+        assert first_employee['step_targets']['2']['target'] == 80
         assert first_employee['full_target'] == 700
-        assert first_employee['target'] == 245
+        assert first_employee['target'] == 280
         assert first_employee['target_rate'] == pytest.approx(
-            first_employee['total_qty'] / 245 * 100,
+            first_employee['total_qty'] / 280 * 100,
         )
 
     @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
@@ -745,6 +745,28 @@ class TestFlowDetailEndpoint:
         assert response.data['current_group_target'] == 700
         assert response.data['employees'][0]['target'] == 140
         assert response.data['employees'][0]['target_rate'] == 100
+
+    @pytest.mark.parametrize(
+        ('elapsed_minutes', 'expected_target'),
+        [
+            (340, 600),  # 13:40 的有效工时为5小时40分，向上取整为6小时。
+            (360, 600),  # 已在整点时不继续进位。
+            (601, 1000),  # 超过计划工时后仍封顶为全天目标。
+        ],
+    )
+    def test_current_group_target_rounds_work_period_up_to_full_hour(
+        self,
+        elapsed_minutes,
+        expected_target,
+    ):
+        """当前时段目标应把有效工作分钟向上取整到整小时。"""
+        from iwork.api_views import _calculate_current_group_target
+
+        assert _calculate_current_group_target(
+            group_target=1000,
+            planned_work_minutes=600,
+            elapsed_work_minutes=elapsed_minutes,
+        ) == expected_target
 
     def test_same_employee_step_aggregates_actuals_across_workorders(self):
         """同一员工同一工序的多个本厂款号应共用一个目标和达成率。"""

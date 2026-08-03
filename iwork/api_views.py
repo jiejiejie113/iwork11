@@ -579,7 +579,9 @@ def _calculate_current_group_target(
     """
     if planned_work_minutes is None or elapsed_work_minutes is None:
         return group_target
-    bounded_minutes = min(max(elapsed_work_minutes, 0), planned_work_minutes)
+    elapsed_minutes = max(elapsed_work_minutes, 0)
+    rounded_minutes = ((elapsed_minutes + 59) // 60) * 60
+    bounded_minutes = min(rounded_minutes, planned_work_minutes)
     current_target = (
         Decimal(group_target)
         * Decimal(bounded_minutes)

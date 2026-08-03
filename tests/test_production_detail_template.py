@@ -187,6 +187,47 @@ def test_flow_target_uses_work_hours_and_merges_same_employee_step_cells():
     assert 'current_group_target' in TEMPLATE
 
 
+def test_expanded_flow_table_uses_requested_column_order():
+    """展开表格的表头和数据单元格应使用指定业务顺序。"""
+    expanded_header = TEMPLATE.split('<template v-if="!collapsed">', 1)[1].split(
+        '</template>',
+        1,
+    )[0]
+    expected_headers = [
+        '本厂款号',
+        '工序号',
+        '工序描述',
+        '产量',
+        '总产量',
+        '目标',
+        '目标达成率',
+        '标准工时',
+        '产值',
+        '总产值',
+        '员工效率',
+    ]
+    positions = [expanded_header.index(header) for header in expected_headers]
+    assert positions == sorted(positions)
+
+    expanded_row = TEMPLATE.split('<!-- 展开模式：员工 + 本厂款号 + 工序组合键明细 -->', 1)[1]
+    expanded_row = expanded_row.split('</tr>', 1)[0]
+    expected_cells = [
+        'row._wo_name',
+        'row._step.stepno',
+        'row._step.description',
+        'fmtNum(row._step.qty)',
+        'fmtNum(row._total_qty)',
+        'getStepTarget(row.emp, row._step.stepno)',
+        'getStepTargetRate(row.emp, row._step.stepno)',
+        'fmtStepTime(row._step.step_time)',
+        'fmtOutputValue(row._step.output_value)',
+        'fmtOutputValue(row.emp.output_value)',
+        'row.emp.employee_efficiency',
+    ]
+    positions = [expanded_row.index(cell) for cell in expected_cells]
+    assert positions == sorted(positions)
+
+
 def test_detail_default_date_uses_business_timezone():
     """详情默认日期应使用业务时区。"""
     assert 'function businessDateString()' in TEMPLATE
