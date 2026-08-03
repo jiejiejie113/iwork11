@@ -9,7 +9,7 @@
 
 ```
 Uvicorn ASGI (4 workers)
-    ├── 实时数据：Celery Beat (60s) → read_model.builder → 版本化 Redis 快照
+    ├── 实时数据：Celery Beat (60s) → 单次基础事实查询 → 内存派生 → 版本化 Redis 快照
     ├── Web/SSE：read_model.queries → 当前完整快照（禁止远程回源）
     ├── 历史数据：API → local_queries.py → 本地历史事实表
     ├── 历史快照：ensure API → Celery → history_store.py → 本地事务快照
@@ -23,6 +23,7 @@ Uvicorn ASGI (4 workers)
 | `historical_queries.py` | 从历史事实和元数据快照构建生产详情 |
 | `history_store.py` | 远程只读聚合、校验和本地事务发布 |
 | `read_model/builder.py` | 受控远程采集并组装完整实时快照 |
+| `read_model/fact_source.py` | 从同一批当前业务日事实派生实时、月趋势、详情与 Kanban 视图 |
 | `read_model/store.py` | 版本键、原子 current 切换、上一版本和陈旧策略 |
 | `read_model/queries.py` | Web/SSE 统一筛选、分页与跨接口读模型 |
 | `statistics.py` | 批量统计构建器和历史兼容入口；实时入口不允许回源 |
@@ -33,18 +34,24 @@ Uvicorn ASGI (4 workers)
 
 ### 实时快照发布不变量
 
-远程生产数据会在 Celery 多阶段查询期间持续变化。`read_model.schemas` 必须在写入
-Redis 前校验以下同语义汇总，任一不一致都禁止切换 `current`：
+当前业务日只允许 `get_read_model_fact_rows()` 对远程 `pytckreg3` 执行一次基础事实
+聚合查询。实时、当前日月趋势、生产详情、产品视图和 Kanban 必须由
+`ReadModelFactSource` 在内存中从这批不可变事实派生，禁止为任一今日视图再次查询
+`pytckreg3`。月度历史远程查询最多截止当前业务日的前一天；产品信息读取本地
+`ProductionOrder`，工序描述和标准工时的只读元数据查询不参与产量一致性。
+
+`read_model.schemas` 必须在写入 Redis 前校验以下同语义汇总，任一不一致都禁止切换
+`current`：
 
 - 每个实时视图的 `total_qty` 等于 `process_flow_stats` 的产量合计；
 - 每个实时视图的 `total_qty` 等于 `monthly_total_trend` 中当前业务日期的产量；
 - 具体工序视图的 `total_qty` 等于 `monthly_process_stats` 中当前业务日期的产量；
 - `all` 视图不与 `monthly_process_stats` 直接比较，因为该字段存在既有工序过滤语义。
 
-此类变化使用 `SnapshotConsistencyError` 表示，属于可恢复错误：Celery 按既有重试策略
-重新采集，上一份完整快照继续可读。结构版本、字段类型等逻辑错误仍立即失败，不进入
-一致性重试。测试中的“今日”接口必须固定或模拟 `get_business_date()`，禁止依赖执行测试
-当天的自然日期。
+一致性异常使用 `SnapshotConsistencyError` 表示，属于可恢复错误：Celery 按既有重试
+策略重新采集，上一份完整快照继续可读。结构版本、字段类型等逻辑错误仍立即失败，
+不进入一致性重试。测试中的“今日”接口必须固定或模拟 `get_business_date()`，禁止依赖
+执行测试当天的自然日期。
 
 ### 运行与测试环境
 
@@ -382,7 +389,7 @@ D:\DM\DTD_nginx\logs\watchdog\maintenance\iwork-production-orders.json
 
 - [ ] **配置变更**：`settings.py` → 更新本手册第 2 节
 - [ ] **字段变更**：API 返回字段 → 更新本手册第 4/8 节 + 前端模板
-- [ ] **查询变更**：`queries.py` → 同步修改 `local_queries.py`（镜像）
+- [ ] **查询变更**：`queries.py` 的历史同语义查询 → 同步修改 `local_queries.py`；仅用于当前业务日单次采集的事实入口不新增历史镜像
 - [ ] **图表变更**：字体/颜色/数据源 → 更新本手册第 6 节
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
 - [ ] **隐藏分组**：修改 `HIDDEN_FLOWS` → 更新本手册第 3 节

@@ -366,6 +366,79 @@ def get_remote_stats(target: date) -> dict:
     return get_basic_stats(target)
 
 
+def get_read_model_fact_rows(target_date: date) -> list[dict]:
+    """使用单条远程 SQL 采集当前业务日的细粒度生产事实。
+
+    Args:
+        target_date: 曼谷业务日期。
+
+    Returns:
+        list[dict]: 可在内存中派生全部实时视图的不可变事实行。
+    """
+    records = get_records_queryset(target_date)
+    rows = list(
+        records.extra(select={"event_hour": "HOUR(RegTime)"})
+        .values(
+            "RegPerSysID",
+            "StepNo",
+            "WrkOrder",
+            "Flow",
+            "StationID",
+            "event_hour",
+        )
+        .annotate(qty=Sum("Qty"), record_count=Count("TicketNo"))
+        .order_by()
+    )
+    return [
+        {
+            "reg_per_sys_id": row["RegPerSysID"],
+            "stepno": row["StepNo"],
+            "wrk_order": row["WrkOrder"],
+            "flow": row["Flow"] or "",
+            "station_id": row["StationID"] or "",
+            "event_hour": row["event_hour"],
+            "qty": row["qty"] or 0,
+            "record_count": row["record_count"] or 0,
+        }
+        for row in rows
+    ]
+
+
+def get_read_model_products(wrk_orders: list[str]) -> dict:
+    """从本地生产订单表读取完整工单对应的产品信息。
+
+    Args:
+        wrk_orders: 需要补充产品信息的完整工单号。
+
+    Returns:
+        dict: 按完整工单号组织的产品名称和生产订单号。
+    """
+    prefixes = {wrk_order[:6] for wrk_order in wrk_orders if len(wrk_order) >= 6}
+    prefix_products = {}
+    if prefixes:
+        product_rows = (
+            ProductionOrder.objects.using("iwork_local")
+            .filter(style_no__in=prefixes)
+            .values("style_no", "product_name", "order_no")
+            .distinct()
+        )
+        for row in product_rows:
+            prefix_products.setdefault(
+                row["style_no"],
+                {
+                    "product_name": row["product_name"] or "",
+                    "order_no": row["order_no"] or "",
+                },
+            )
+    return {
+        wrk_order: prefix_products.get(
+            wrk_order[:6],
+            {"product_name": "", "order_no": ""},
+        )
+        for wrk_order in wrk_orders
+    }
+
+
 def get_read_model_facts(target_date: date) -> dict:
     """构建实时读模型使用的最低必要粒度聚合事实。
 
@@ -394,30 +467,7 @@ def get_read_model_facts(target_date: date) -> dict:
     ]
 
     wrk_orders = sorted({item["wrk_order"] for item in facts if item["wrk_order"]})
-    prefixes = {wrk_order[:6] for wrk_order in wrk_orders if len(wrk_order) >= 6}
-    prefix_products = {}
-    if prefixes:
-        product_rows = (
-            ProductionOrder.objects.using("iwork_local")
-            .filter(style_no__in=prefixes)
-            .values("style_no", "product_name", "order_no")
-            .distinct()
-        )
-        for row in product_rows:
-            prefix_products.setdefault(
-                row["style_no"],
-                {
-                    "product_name": row["product_name"] or "",
-                    "order_no": row["order_no"] or "",
-                },
-            )
-    products = {
-        wrk_order: prefix_products.get(
-            wrk_order[:6],
-            {"product_name": "", "order_no": ""},
-        )
-        for wrk_order in wrk_orders
-    }
+    products = get_read_model_products(wrk_orders)
     return {"facts": facts, "products": products}
 
 

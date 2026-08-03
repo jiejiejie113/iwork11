@@ -8,9 +8,9 @@ from uuid import uuid4
 
 from django.conf import settings
 
-from iwork import queries as remote_queries
 from iwork.statistics import get_batch_detail_stats, get_batch_stats
 
+from .fact_source import ReadModelFactSource
 from .schemas import READ_MODEL_SCHEMA_VERSION, validate_snapshot
 
 
@@ -34,7 +34,7 @@ def build_snapshot(
     Returns:
         可交给 ``SnapshotStore.publish`` 的完整快照。
     """
-    source = source or remote_queries
+    source = source or ReadModelFactSource.collect(business_date)
     current_time = (now or (lambda: datetime.now(BUSINESS_TIME_ZONE)))()
     if current_time.tzinfo is None:
         current_time = current_time.replace(tzinfo=BUSINESS_TIME_ZONE)
