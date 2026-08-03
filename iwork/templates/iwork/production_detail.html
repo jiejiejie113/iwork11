@@ -403,19 +403,26 @@
             <span class="font-semibold">{[ detailTitle ]}</span>
             <span class="text-slate-400">
                 👤 {[ detailSummary.worker_count ]}人
-                <span v-if="detailSummary.target_total > 0">
+                <span v-if="detailSummary.group_target !== null || detailSummary.target_total > 0">
                     · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
                     <template v-if="detailSummary.group_target !== null">
-                        · 🎯 整组目标 {[ fmtNum(detailSummary.group_target) ]}
-                        · 工序目标合计 {[ fmtNum(detailSummary.target_total) ]}
+                        · 🎯 总目标 {[ fmtNum(detailSummary.group_target) ]}
+                        <template v-if="detailSummary.current_group_target !== null">
+                            · 当前时段目标 {[ fmtNum(detailSummary.current_group_target) ]}
+                        </template>
+                        <template v-if="detailSummary.work_hours !== null">
+                            · 工作时间 {[ detailSummary.work_hours ]}小时
+                        </template>
                     </template>
                     <template v-else>
                         · 旧员工目标合计 {[ fmtNum(detailSummary.target_total) ]}
                     </template>
                     · 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}
-                    · <span :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                    · <span v-if="detailSummary.efficiency !== null"
+                        :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
                         目标达成率 {[ detailSummary.efficiency.toFixed(1) ]}% {[ detailSummary.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
                     </span>
+                    <span v-else class="text-slate-500">目标达成率 --</span>
                 </span>
             </span>
 
@@ -439,6 +446,9 @@
                 <input v-if="detailType === 'flow' && isEditing" v-model.number="groupTargetDraft"
                     type="number" min="0" step="1" placeholder="整组目标"
                     class="w-32 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm tabular-nums">
+                <input v-if="detailType === 'flow' && isEditing" v-model.number="workHoursDraft"
+                    type="number" min="0.25" max="24" step="0.25" placeholder="工作时间（小时）"
+                    class="w-40 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm tabular-nums">
                 <button v-if="detailType === 'flow' && detailLayout === 'table' && !isEditing && !isHistoricalDate" @click="startEditing"
                     class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
                 <button v-if="detailType === 'flow' && detailLayout === 'table' && isEditing" @click="cancelEditing"
@@ -468,7 +478,6 @@
                         <span class="text-slate-300">工序{[ s.stepno ]}</span>
                         <span class="text-xs flex items-center gap-1.5">
                             <span class="font-mono font-bold" :style="{ color: getHeatColor(s.total) }">{[ fmtNum(s.total) ]}</span>
-                            <span v-if="s.target !== null" class="text-amber-400">目标 {[ fmtNum(s.target) ]}</span>
                             <span class="text-slate-500">{[ s.workorder_count ]}单</span>
                         </span>
                     </button>
@@ -566,10 +575,12 @@
                                         class="py-2 px-3 text-cyan-300 font-bold tabular-nums text-right border-r border-slate-700">
                                         {[ fmtOutputValue(row.emp.output_value) ]}
                                     </td>
-                                    <td class="py-2 px-3 border-r border-slate-700 tabular-nums">
+                                    <td v-if="row._targetFirst" :rowspan="row._targetRowspan"
+                                        class="py-2 px-3 border-r border-slate-700 tabular-nums align-middle">
                                         {[ getStepTarget(row.emp, row._step.stepno) > 0 ? fmtNum(getStepTarget(row.emp, row._step.stepno)) : '--' ]}
                                     </td>
-                                    <td class="py-2 px-3 text-right">
+                                    <td v-if="row._targetFirst" :rowspan="row._targetRowspan"
+                                        class="py-2 px-3 text-right align-middle">
                                         <span v-if="getStepTargetRate(row.emp, row._step.stepno) !== null" :class="getStepTargetRate(row.emp, row._step.stepno) >= 100 ? 'text-emerald-400' : 'text-red-400'">
                                             {[ getStepTargetRate(row.emp, row._step.stepno).toFixed(1) ]}%
                                         </span>
@@ -767,7 +778,10 @@ createApp({
 
         const isEditing = ref(false);
         const groupTarget = ref(null);
+        const currentGroupTarget = ref(null);
+        const workHours = ref(null);
         const groupTargetDraft = ref(0);
+        const workHoursDraft = ref(10);
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
         const detailTableScrollRef = ref(null);
@@ -1443,10 +1457,12 @@ createApp({
         function startEditing() {
             if (detailType.value !== 'flow') return;
             groupTargetDraft.value = groupTarget.value || 0;
+            workHoursDraft.value = workHours.value || 10;
             isEditing.value = true;
         }
         function cancelEditing() {
             groupTargetDraft.value = groupTarget.value || 0;
+            workHoursDraft.value = workHours.value || 10;
             isEditing.value = false;
         }
 
@@ -1481,6 +1497,8 @@ createApp({
                 targeted_qty,
                 target_total,
                 group_target: groupTarget.value,
+                current_group_target: currentGroupTarget.value,
+                work_hours: workHours.value,
                 efficiency: target_total > 0 ? (targeted_qty / target_total * 100) : null,
             };
         });
@@ -1659,7 +1677,6 @@ createApp({
                 .map(([stepno, data]) => ({
                     stepno: Number(stepno),
                     total: data.total,
-                    target: groupTarget.value,
                     workorder_count: data.workorders.size,
                 }))
                 .sort((a, b) => a.stepno - b.stepno);
@@ -1718,44 +1735,57 @@ createApp({
                 const visibleSteps = (emp.steps || []).filter(step => {
                     return !wrkOrderFilter.value || step.workorder === wrkOrderFilter.value;
                 });
-                const workorderGroups = new Map();
-                visibleSteps.forEach(step => {
-                    const workorder = step.workorder || '无工单';
-                    if (!workorderGroups.has(workorder)) workorderGroups.set(workorder, []);
-                    workorderGroups.get(workorder).push(step);
+                const sortedSteps = [...visibleSteps].sort((a, b) => {
+                    const stepCompare = (Number(a.stepno) || 0) - (Number(b.stepno) || 0);
+                    if (stepCompare !== 0) return stepCompare;
+                    return naturalCompare(a.workorder || '无工单', b.workorder || '无工单');
                 });
 
-                if (workorderGroups.size === 0) {
-                    workorderGroups.set('--', [{
+                if (sortedSteps.length === 0) {
+                    sortedSteps.push({
                         stepno: '--',
                         description: '',
                         step_time: null,
                         qty: emp.qty || 0,
                         output_value: null,
-                    }]);
+                        workorder: '--',
+                    });
                 }
 
-                const groups = [...workorderGroups.entries()]
-                    .sort((a, b) => naturalCompare(a[0], b[0]));
-                const empRowspan = groups.reduce((sum, [, steps]) => sum + steps.length, 0);
-                let employeeRowIndex = 0;
+                const stepCounts = new Map();
+                sortedSteps.forEach(step => {
+                    const stepKey = String(step.stepno);
+                    stepCounts.set(stepKey, (stepCounts.get(stepKey) || 0) + 1);
+                });
 
-                groups.forEach(([workorder, steps]) => {
-                    const sortedSteps = [...steps].sort((a, b) => {
-                        return (Number(a.stepno) || 0) - (Number(b.stepno) || 0);
-                    });
-                    sortedSteps.forEach((step, stepIndex) => {
-                        rows.push({
-                            emp,
-                            _step: step,
-                            _wo_name: workorder,
-                            _woFirst: stepIndex === 0,
-                            _woRowspan: sortedSteps.length,
-                            _empFirst: employeeRowIndex === 0,
-                            _empRowspan: empRowspan,
-                            _total_qty: emp.qty,
-                        });
-                        employeeRowIndex += 1;
+                sortedSteps.forEach((step, stepIndex) => {
+                    const stepKey = String(step.stepno);
+                    const previousStep = sortedSteps[stepIndex - 1];
+                    const previousWorkorder = previousStep
+                        ? (previousStep.workorder || '无工单')
+                        : null;
+                    const workorder = step.workorder || '无工单';
+                    const workorderFirst = previousWorkorder !== workorder;
+                    let workorderRowspan = 1;
+                    if (workorderFirst) {
+                        while (
+                            stepIndex + workorderRowspan < sortedSteps.length
+                            && (sortedSteps[stepIndex + workorderRowspan].workorder || '无工单') === workorder
+                        ) {
+                            workorderRowspan += 1;
+                        }
+                    }
+                    rows.push({
+                        emp,
+                        _step: step,
+                        _wo_name: workorder,
+                        _woFirst: workorderFirst,
+                        _woRowspan: workorderRowspan,
+                        _targetFirst: !previousStep || String(previousStep.stepno) !== stepKey,
+                        _targetRowspan: stepCounts.get(stepKey),
+                        _empFirst: stepIndex === 0,
+                        _empRowspan: sortedSteps.length,
+                        _total_qty: emp.qty,
                     });
                 });
             });
@@ -2094,7 +2124,10 @@ createApp({
                 }
                 const data = await readResponse(resp);
                 groupTarget.value = type === 'flow' ? data.group_target : null;
+                currentGroupTarget.value = type === 'flow' ? data.current_group_target : null;
+                workHours.value = type === 'flow' ? data.work_hours : null;
                 groupTargetDraft.value = groupTarget.value || 0;
+                workHoursDraft.value = workHours.value || 10;
                 const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
@@ -2125,7 +2158,10 @@ createApp({
                 }
                 const data = await resp.json();
                 groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
+                currentGroupTarget.value = detailType.value === 'flow' ? data.current_group_target : null;
+                workHours.value = detailType.value === 'flow' ? data.work_hours : null;
                 if (!isEditing.value) groupTargetDraft.value = groupTarget.value || 0;
+                if (!isEditing.value) workHoursDraft.value = workHours.value || 10;
                 const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
@@ -2285,6 +2321,7 @@ createApp({
                 const payload = {
                     flow: detailKey.value,
                     group_target: Number(groupTargetDraft.value),
+                    work_hours: Number(workHoursDraft.value),
                 };
                 const resp = await fetch(basePath + 'api/dashboard/set-targets/', {
                     method: 'POST',
@@ -2296,6 +2333,7 @@ createApp({
                 });
                 await readResponse(resp);
                 groupTarget.value = Number(groupTargetDraft.value);
+                workHours.value = Number(workHoursDraft.value);
                 isEditing.value = false;
                 await loadDetail(detailType.value, detailKey.value);
             } catch (e) {
@@ -2350,7 +2388,8 @@ createApp({
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
             filterByWorkOrder, getWorkorderItems,
             getStepTarget, getStepTargetRate, getDisplayedTarget, getDisplayedTargetRate,
-            isEditing, groupTarget, groupTargetDraft, sortKey, sortAsc,
+            isEditing, groupTarget, currentGroupTarget, workHours,
+            groupTargetDraft, workHoursDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, fmtOutputValue, fmtStepTime, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,

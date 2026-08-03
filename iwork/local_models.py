@@ -75,6 +75,11 @@ class GroupTargetProduction(models.Model):
     target_date = models.DateField('目标日期')
     flow_name = models.CharField('生产组', max_length=40)
     target_qty = models.IntegerField('整组目标产量', default=0)
+    planned_work_minutes = models.PositiveIntegerField(
+        '计划工作分钟',
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
 

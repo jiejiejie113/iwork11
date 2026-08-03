@@ -174,8 +174,17 @@ def test_flow_target_uses_one_group_input_and_read_only_allocations():
     assert 'v-model.number="draft[' not in TEMPLATE
     assert 'getStepTarget(row.emp, row._step.stepno)' in TEMPLATE
     assert 'getStepTargetRate(row.emp, row._step.stepno)' in TEMPLATE
-    assert '目标 {[ fmtNum(s.target) ]}' in TEMPLATE
+    assert '目标 {[ fmtNum(s.target) ]}' not in TEMPLATE
     assert 'if (!isEditing.value) groupTargetDraft.value = groupTarget.value || 0;' in TEMPLATE
+
+
+def test_flow_target_uses_work_hours_and_merges_same_employee_step_cells():
+    """工作时长应随整组目标保存，同员工同工序的目标与达成率应合并显示。"""
+    assert 'placeholder="工作时间（小时）"' in TEMPLATE
+    assert 'v-model.number="workHoursDraft"' in TEMPLATE
+    assert 'work_hours: Number(workHoursDraft.value)' in TEMPLATE
+    assert 'v-if="row._targetFirst" :rowspan="row._targetRowspan"' in TEMPLATE
+    assert 'current_group_target' in TEMPLATE
 
 
 def test_detail_default_date_uses_business_timezone():

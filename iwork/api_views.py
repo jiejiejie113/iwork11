@@ -1,7 +1,7 @@
 import json
 import time
 import asyncio
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -530,7 +530,91 @@ def _get_group_target_with_fallback(target_date, flow_name):
     return None
 
 
-def _distribute_group_target(employees, group_target):
+def _get_group_work_minutes_with_fallback(target_date, flow_name):
+    """获取指定生产组的计划工作分钟数。
+
+    Args:
+        target_date (date): 目标日期。
+        flow_name (str): 生产组名称。
+
+    Returns:
+        int | None: 已保存的计划工作分钟；旧记录未设置时返回 None。
+    """
+    key = f'group_work_minutes:{target_date.isoformat()}:{flow_name}'
+    cached = cache.get(key)
+    if cached is not None:
+        return int(cached)
+
+    try:
+        planned_work_minutes = GroupTargetProduction.objects.filter(
+            target_date=target_date,
+            flow_name=flow_name,
+        ).values_list('planned_work_minutes', flat=True).first()
+        if planned_work_minutes is not None:
+            cache.set(
+                key,
+                int(planned_work_minutes),
+                timeout=_seconds_to_midnight(),
+            )
+            return int(planned_work_minutes)
+    except Exception as exc:
+        logger.error('从数据库读取计划工作时间失败: {}', exc)
+    return None
+
+
+def _calculate_current_group_target(
+    group_target,
+    planned_work_minutes,
+    elapsed_work_minutes,
+):
+    """按当前已工作时长折算整组当前时段目标。
+
+    Args:
+        group_target (int): 整组全天目标。
+        planned_work_minutes (int | None): 计划工作分钟。
+        elapsed_work_minutes (int | None): 当前已工作分钟；None 表示历史或无时段。
+
+    Returns:
+        int: 四舍五入后的当前时段整组目标，且不会超过全天目标。
+    """
+    if planned_work_minutes is None or elapsed_work_minutes is None:
+        return group_target
+    bounded_minutes = min(max(elapsed_work_minutes, 0), planned_work_minutes)
+    current_target = (
+        Decimal(group_target)
+        * Decimal(bounded_minutes)
+        / Decimal(planned_work_minutes)
+    ).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+    return int(current_target)
+
+
+def _allocate_step_target(step_workers, target):
+    """把同一道工序的目标按员工稳定分配。
+
+    Args:
+        step_workers (dict[str, set[str]]): 工序与去重员工集合。
+        target (int): 每道工序需要分配的目标。
+
+    Returns:
+        dict[str, dict[str, int]]: 工序下每名员工的目标。
+    """
+    allocations = {}
+    for stepno in sorted(step_workers, key=lambda value: int(value)):
+        employee_ids = sorted(step_workers[stepno], key=lambda value: int(value))
+        base_target, remainder = divmod(target, len(employee_ids))
+        allocations[stepno] = {
+            employee_id: base_target + (index < remainder)
+            for index, employee_id in enumerate(employee_ids)
+        }
+    return allocations
+
+
+def _distribute_group_target(
+    employees,
+    group_target,
+    planned_work_minutes=None,
+    elapsed_work_minutes=None,
+):
     """
     将整组目标分配到每道工序及工序内员工。
 
@@ -539,10 +623,12 @@ def _distribute_group_target(employees, group_target):
 
     Args:
         employees (list[dict]): 当前生产组的员工与工序明细。
-        group_target (int): 整组目标产量。
+        group_target (int): 整组全天目标产量。
+        planned_work_minutes (int | None): 计划工作分钟。
+        elapsed_work_minutes (int | None): 当前已工作分钟。
 
     Returns:
-        dict: 各工序的目标和人数汇总。
+        tuple[dict, int]: 各工序目标汇总和整组当前时段目标。
     """
     step_workers = {}
     for employee in employees:
@@ -551,18 +637,19 @@ def _distribute_group_target(employees, group_target):
             stepno = str(step.get('stepno'))
             step_workers.setdefault(stepno, set()).add(employee_id)
 
-    allocations = {}
+    current_group_target = _calculate_current_group_target(
+        group_target,
+        planned_work_minutes,
+        elapsed_work_minutes,
+    )
+    full_allocations = _allocate_step_target(step_workers, group_target)
+    current_allocations = _allocate_step_target(step_workers, current_group_target)
     step_targets = {}
     for stepno in sorted(step_workers, key=lambda value: int(value)):
-        employee_ids = sorted(step_workers[stepno], key=lambda value: int(value))
-        base_target, remainder = divmod(group_target, len(employee_ids))
-        allocations[stepno] = {
-            employee_id: base_target + (index < remainder)
-            for index, employee_id in enumerate(employee_ids)
-        }
         step_targets[stepno] = {
             'target': group_target,
-            'worker_count': len(employee_ids),
+            'current_target': current_group_target,
+            'worker_count': len(step_workers[stepno]),
         }
 
     for employee in employees:
@@ -574,8 +661,10 @@ def _distribute_group_target(employees, group_target):
 
         employee_step_targets = {}
         for stepno, actual_qty in step_actuals.items():
-            target = allocations[stepno][employee_id]
+            full_target = full_allocations[stepno][employee_id]
+            target = current_allocations[stepno][employee_id]
             employee_step_targets[stepno] = {
+                'full_target': full_target,
                 'target': target,
                 'actual_qty': actual_qty,
                 'target_rate': actual_qty / target * 100 if target > 0 else None,
@@ -586,6 +675,9 @@ def _distribute_group_target(employees, group_target):
             step['target_rate'] = step_target['target_rate']
 
         employee['step_targets'] = employee_step_targets
+        employee['full_target'] = sum(
+            item['full_target'] for item in employee_step_targets.values()
+        )
         employee['target'] = sum(item['target'] for item in employee_step_targets.values())
         employee['target_rate'] = (
             employee['total_qty'] / employee['target'] * 100
@@ -593,7 +685,7 @@ def _distribute_group_target(employees, group_target):
             else None
         )
 
-    return step_targets
+    return step_targets, current_group_target
 
 
 def _with_employee_efficiency(employees, target_date):
@@ -638,10 +730,24 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         employees.append(employee)
     total_qty = sum(e['total_qty'] for e in employees)
 
+    work_minutes, employees = _with_employee_efficiency(employees, target_date)
     group_target = _get_group_target_with_fallback(target_date, flow_name)
+    planned_work_minutes = _get_group_work_minutes_with_fallback(
+        target_date,
+        flow_name,
+    )
     step_targets = {}
+    current_group_target = None
     if group_target is not None:
-        step_targets = _distribute_group_target(employees, group_target)
+        elapsed_work_minutes = work_minutes
+        if target_date == get_business_date() and elapsed_work_minutes is None:
+            elapsed_work_minutes = 0
+        step_targets, current_group_target = _distribute_group_target(
+            employees,
+            group_target,
+            planned_work_minutes=planned_work_minutes,
+            elapsed_work_minutes=elapsed_work_minutes,
+        )
         for employee in employees:
             employee['wo_targets'] = {}
     else:
@@ -663,8 +769,6 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
                 if key.startswith(employee_id + '@')
             }
 
-    work_minutes, employees = _with_employee_efficiency(employees, target_date)
-
     result = {
         'flow': flow_name,
         'date': target_date.isoformat(),
@@ -674,6 +778,12 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         'hourly_trend': hourly_data.get(flow_name, []),
         'employees': employees,
         'group_target': group_target,
+        'current_group_target': current_group_target,
+        'work_hours': (
+            planned_work_minutes / 60
+            if planned_work_minutes is not None
+            else None
+        ),
         'step_targets': step_targets,
     }
     if mode == 'local':
@@ -1000,6 +1110,7 @@ def set_targets(request):
     请求体（整组格式为当前页面标准，旧格式仅用于向后兼容）：
         flow (str): 生产组名称。
         group_target (int): 整组目标；每道工序获得相同目标并按人数分配。
+        work_hours (number): 计划工作小时数，用于折算当前时段目标。
         targets (dict): {reg_per_sys_id: target_qty}（旧格式，仍支持）
         wo_targets (dict): {"1001@WO-001": 150, "1001@WO-002": 150}（旧格式）
 
@@ -1041,11 +1152,42 @@ def set_targets(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        work_hours = request.data.get('work_hours')
+        planned_work_minutes = None
+        if work_hours is not None:
+            try:
+                work_hours_decimal = Decimal(str(work_hours).strip())
+            except (InvalidOperation, ValueError):
+                work_hours_decimal = Decimal(0)
+            if (
+                not work_hours_decimal.is_finite()
+                or work_hours_decimal <= 0
+                or work_hours_decimal > 24
+            ):
+                return Response(
+                    {'error': '工作时间必须大于 0 且不超过 24 小时'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            planned_work_minutes = int(
+                (work_hours_decimal * 60).quantize(
+                    Decimal('1'),
+                    rounding=ROUND_HALF_UP,
+                )
+            )
+            if planned_work_minutes < 1:
+                return Response(
+                    {'error': '工作时间必须大于 0 且不超过 24 小时'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         today = get_business_date()
+        defaults = {'target_qty': group_target_int}
+        if planned_work_minutes is not None:
+            defaults['planned_work_minutes'] = planned_work_minutes
         GroupTargetProduction.objects.update_or_create(
             target_date=today,
             flow_name=flow_name,
-            defaults={'target_qty': group_target_int},
+            defaults=defaults,
         )
         cache_key = f'group_target:{today.isoformat()}:{flow_name}'
         cache.set(
@@ -1053,11 +1195,27 @@ def set_targets(request):
             group_target_int,
             timeout=_seconds_to_midnight(),
         )
-        logger.info('整组目标已保存: {} = {}', flow_name, group_target_int)
+        if planned_work_minutes is not None:
+            cache.set(
+                f'group_work_minutes:{today.isoformat()}:{flow_name}',
+                planned_work_minutes,
+                timeout=_seconds_to_midnight(),
+            )
+        logger.info(
+            '整组目标已保存: {} = {}, 工作时间={}小时',
+            flow_name,
+            group_target_int,
+            planned_work_minutes / 60 if planned_work_minutes is not None else '沿用',
+        )
         return Response({
             'status': 'ok',
             'flow': flow_name,
             'group_target': group_target_int,
+            'work_hours': (
+                planned_work_minutes / 60
+                if planned_work_minutes is not None
+                else None
+            ),
         })
 
     targets = request.data.get('targets', {})

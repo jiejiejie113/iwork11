@@ -619,10 +619,11 @@ class TestFlowDetailEndpoint:
         assert 'employee_efficiency' not in cached_employees[0]
         assert 'target' not in cached_employees[0]
 
+    @patch('iwork.api_views._get_group_work_minutes_with_fallback', return_value=600)
     @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
     @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
     def test_group_target_is_distributed_to_each_step_worker(
-        self, _mock_minutes, _mock_group_target,
+        self, _mock_minutes, _mock_group_target, _mock_group_work_minutes,
     ):
         """整组目标应独立分配给每道工序，再按工序人数分配到员工。"""
         from iwork.api_views import flow_detail
@@ -654,16 +655,21 @@ class TestFlowDetailEndpoint:
 
         assert response.status_code == 200
         assert response.data['group_target'] == 1000
+        assert response.data['work_hours'] == 10
+        assert response.data['current_group_target'] == 350
         assert response.data['step_targets'] == {
-            '1': {'target': 1000, 'worker_count': 2},
-            '2': {'target': 1000, 'worker_count': 5},
+            '1': {'target': 1000, 'current_target': 350, 'worker_count': 2},
+            '2': {'target': 1000, 'current_target': 350, 'worker_count': 5},
         }
         first_employee = response.data['employees'][0]
-        assert first_employee['step_targets']['1']['target'] == 500
-        assert first_employee['step_targets']['2']['target'] == 200
-        assert first_employee['target'] == 700
+        assert first_employee['step_targets']['1']['full_target'] == 500
+        assert first_employee['step_targets']['1']['target'] == 175
+        assert first_employee['step_targets']['2']['full_target'] == 200
+        assert first_employee['step_targets']['2']['target'] == 70
+        assert first_employee['full_target'] == 700
+        assert first_employee['target'] == 245
         assert first_employee['target_rate'] == pytest.approx(
-            first_employee['total_qty'] / 700 * 100,
+            first_employee['total_qty'] / 245 * 100,
         )
 
     @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
@@ -703,6 +709,71 @@ class TestFlowDetailEndpoint:
         assert assigned == {1003: 333, 1001: 334, 1002: 333}
         assert sum(assigned.values()) == 1000
         assert 'target' not in employees[0]['steps'][0]
+
+    @patch('iwork.api_views._get_group_work_minutes_with_fallback', return_value=600)
+    @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=420)
+    def test_group_target_uses_current_work_period_for_target_rate(
+        self, _mock_minutes, _mock_group_target, _mock_group_work_minutes,
+    ):
+        """15:00 已工作7小时，10小时目标应折算为当前时段目标700。"""
+        from iwork.api_views import flow_detail
+
+        employees = [
+            {
+                'reg_per_sys_id': employee_id,
+                'total_qty': 140,
+                'output_value': 0,
+                'steps': [
+                    {'stepno': 2, 'qty': 140, 'workorder': f'WO-{employee_id}'},
+                ],
+            }
+            for employee_id in range(1001, 1006)
+        ]
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result({
+                'flow_employees': {'SO3-L3A': employees},
+                'flow_hourly': {'SO3-L3A': []},
+            }),
+        ):
+            response = flow_detail(
+                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
+                flow_name='SO3-L3A',
+            )
+
+        assert response.data['current_group_target'] == 700
+        assert response.data['employees'][0]['target'] == 140
+        assert response.data['employees'][0]['target_rate'] == 100
+
+    def test_same_employee_step_aggregates_actuals_across_workorders(self):
+        """同一员工同一工序的多个本厂款号应共用一个目标和达成率。"""
+        from iwork.api_views import _distribute_group_target
+
+        employees = [
+            {
+                'reg_per_sys_id': 1001,
+                'total_qty': 100,
+                'steps': [
+                    {'stepno': 2, 'qty': 60, 'workorder': 'WO-1'},
+                    {'stepno': 2, 'qty': 40, 'workorder': 'WO-2'},
+                ],
+            },
+            {
+                'reg_per_sys_id': 1002,
+                'total_qty': 50,
+                'steps': [{'stepno': 2, 'qty': 50, 'workorder': 'WO-3'}],
+            },
+        ]
+
+        _distribute_group_target(employees, 1000)
+
+        step_target = employees[0]['step_targets']['2']
+        assert step_target['target'] == 500
+        assert step_target['actual_qty'] == 100
+        assert step_target['target_rate'] == 20
+        assert employees[0]['steps'][0]['target'] == 500
+        assert employees[0]['steps'][1]['target'] == 500
 
 
 class TestStepnoDetailEndpoint:
@@ -916,6 +987,55 @@ class TestSetTargets:
 
         assert response.status_code == 400
         assert response.data['error'] == '整组目标不能小于 0'
+        mock_update_or_create.assert_not_called()
+
+    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    @patch('iwork.api_views.cache')
+    def test_set_group_target_saves_work_hours(self, mock_cache, mock_update_or_create):
+        """保存整组目标时应同时保存计划工作时长。"""
+        from iwork.api_views import set_targets
+
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={'flow': 'SO3-L3A', 'group_target': 1000, 'work_hours': 10},
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        assert response.status_code == 200
+        assert response.data['work_hours'] == 10
+        mock_update_or_create.assert_called_once_with(
+            target_date=date.today(),
+            flow_name='SO3-L3A',
+            defaults={'target_qty': 1000, 'planned_work_minutes': 600},
+        )
+        assert mock_cache.set.call_count == 2
+
+    @pytest.mark.parametrize('work_hours', [0, 0.001, 25, 'invalid'])
+    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    def test_set_group_target_rejects_invalid_work_hours(
+        self,
+        mock_update_or_create,
+        work_hours,
+    ):
+        """计划工作时长必须大于0且不超过24小时。"""
+        from iwork.api_views import set_targets
+
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={
+                'flow': 'SO3-L3A',
+                'group_target': 1000,
+                'work_hours': work_hours,
+            },
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        assert response.status_code == 400
+        assert response.data['error'] == '工作时间必须大于 0 且不超过 24 小时'
         mock_update_or_create.assert_not_called()
 
     @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
