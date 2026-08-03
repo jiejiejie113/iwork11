@@ -10,6 +10,13 @@
 | `uninstall_services.ps1` | 清理旧 NSSM 部署 | 删除历史 `iwork-django`、`iwork-daphne`、Celery Windows 服务，不操作 Docker 数据 |
 | `..\DTD_nginx\scripts\Rebuild-Local.ps1` | Portal 与 iwork 联合重建 | 推荐入口；从 DTD_nginx 根目录调用 `-Target iwork` 或 `-Target all` |
 
+## 本地部署规则
+
+- 本地工作区中的代码或配置修改允许在尚未提交、尚未推送时，直接部署到本地 Docker 进行验证。
+- 本地部署不要求 Git 工作区干净；部署前应确认差异范围，避免把无关文件或敏感配置打入镜像。
+- 本规则仅适用于 `local` 环境，不代表允许把未提交代码部署到服务器或生产环境。
+- 服务器或生产部署继续以已审查、可追溯的 Git 提交为准，并遵守既有拉取、重建和回滚流程。
+
 ## 测试入口
 
 - `pytest tests/ -q` 使用 `iwork.test_settings`，通过内存 SQLite、LocMem 和内存 Celery 运行，不连接生产数据库。
