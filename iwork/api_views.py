@@ -1,10 +1,12 @@
 import json
 import time
 import asyncio
+from decimal import Decimal, InvalidOperation
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 from django.core.cache import cache
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -34,7 +36,11 @@ from iwork.local_queries import (
     get_kanban_stats as local_get_kanban_stats,
     get_workorder_detail as local_get_workorder_detail,
 )
-from iwork.local_models import HistoricalSyncState, TargetProduction
+from iwork.local_models import (
+    GroupTargetProduction,
+    HistoricalSyncState,
+    TargetProduction,
+)
 from iwork.read_model.errors import ReadModelNotReadyError
 from iwork.read_model.queries import ReadModelQueries
 from iwork.read_model.store import SnapshotReadResult
@@ -495,6 +501,101 @@ def _get_wo_targets_with_fallback(target_date):
         return {}
 
 
+def _get_group_target_with_fallback(target_date, flow_name):
+    """
+    获取指定生产组的整组目标产量。
+
+    Args:
+        target_date (date): 目标日期。
+        flow_name (str): 生产组名称。
+
+    Returns:
+        int | None: 已保存的整组目标；未设置时返回 None。
+    """
+    key = f'group_target:{target_date.isoformat()}:{flow_name}'
+    cached = cache.get(key)
+    if cached is not None:
+        return int(cached)
+
+    try:
+        target = GroupTargetProduction.objects.filter(
+            target_date=target_date,
+            flow_name=flow_name,
+        ).values_list('target_qty', flat=True).first()
+        if target is not None:
+            cache.set(key, int(target), timeout=_seconds_to_midnight())
+            return int(target)
+    except Exception as exc:
+        logger.error('从数据库读取整组目标产量失败: {}', exc)
+    return None
+
+
+def _distribute_group_target(employees, group_target):
+    """
+    将整组目标分配到每道工序及工序内员工。
+
+    每道工序都获得完整的整组目标。工序目标按员工 ID 稳定排序后进行整数分配，
+    不能整除的余数依次补给排序靠前的员工，确保个人目标之和等于工序目标。
+
+    Args:
+        employees (list[dict]): 当前生产组的员工与工序明细。
+        group_target (int): 整组目标产量。
+
+    Returns:
+        dict: 各工序的目标和人数汇总。
+    """
+    step_workers = {}
+    for employee in employees:
+        employee_id = str(employee['reg_per_sys_id'])
+        for step in employee.get('steps', []):
+            stepno = str(step.get('stepno'))
+            step_workers.setdefault(stepno, set()).add(employee_id)
+
+    allocations = {}
+    step_targets = {}
+    for stepno in sorted(step_workers, key=lambda value: int(value)):
+        employee_ids = sorted(step_workers[stepno], key=lambda value: int(value))
+        base_target, remainder = divmod(group_target, len(employee_ids))
+        allocations[stepno] = {
+            employee_id: base_target + (index < remainder)
+            for index, employee_id in enumerate(employee_ids)
+        }
+        step_targets[stepno] = {
+            'target': group_target,
+            'worker_count': len(employee_ids),
+        }
+
+    for employee in employees:
+        employee_id = str(employee['reg_per_sys_id'])
+        step_actuals = {}
+        for step in employee.get('steps', []):
+            stepno = str(step.get('stepno'))
+            step_actuals[stepno] = step_actuals.get(stepno, 0) + (step.get('qty') or 0)
+
+        employee_step_targets = {}
+        for stepno, actual_qty in step_actuals.items():
+            target = allocations[stepno][employee_id]
+            employee_step_targets[stepno] = {
+                'target': target,
+                'actual_qty': actual_qty,
+                'target_rate': actual_qty / target * 100 if target > 0 else None,
+            }
+        for step in employee.get('steps', []):
+            step_target = employee_step_targets[str(step.get('stepno'))]
+            step['target'] = step_target['target']
+            step['target_rate'] = step_target['target_rate']
+
+        employee['step_targets'] = employee_step_targets
+        employee['target'] = sum(item['target'] for item in employee_step_targets.values())
+        employee['target_rate'] = (
+            employee['total_qty'] / employee['target'] * 100
+            if employee['target'] > 0
+            else None
+        )
+
+    return step_targets
+
+
 def _with_employee_efficiency(employees, target_date):
     """复制员工快照并按请求时刻注入有效上班分钟对应的效率。"""
     work_minutes = get_effective_work_minutes(target_date)
@@ -530,16 +631,37 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         employees_data = detail_payload.get('flow_employees', {})
         hourly_data = detail_payload.get('flow_hourly', {})
 
-    employees = [dict(item) for item in employees_data.get(flow_name, [])]
+    employees = []
+    for source_employee in employees_data.get(flow_name, []):
+        employee = dict(source_employee)
+        employee['steps'] = [dict(step) for step in source_employee.get('steps', [])]
+        employees.append(employee)
     total_qty = sum(e['total_qty'] for e in employees)
 
-    # 读取已保存的目标产量并注入到员工数据中
-    targets_dict = _get_targets_with_fallback(target_date)
-    wo_targets_dict = _get_wo_targets_with_fallback(target_date)
-    for emp in employees:
-        eid = str(emp['reg_per_sys_id'])
-        emp['target'] = int(targets_dict.get(eid, 0))
-        emp['wo_targets'] = {k.split('@')[1]: v for k, v in wo_targets_dict.items() if k.startswith(eid + '@')}
+    group_target = _get_group_target_with_fallback(target_date, flow_name)
+    step_targets = {}
+    if group_target is not None:
+        step_targets = _distribute_group_target(employees, group_target)
+        for employee in employees:
+            employee['wo_targets'] = {}
+    else:
+        # 未设置整组目标时继续读取旧员工目标，兼容已有历史数据。
+        targets_dict = _get_targets_with_fallback(target_date)
+        wo_targets_dict = _get_wo_targets_with_fallback(target_date)
+        for employee in employees:
+            employee_id = str(employee['reg_per_sys_id'])
+            employee['target'] = int(targets_dict.get(employee_id, 0))
+            employee['target_rate'] = (
+                employee['total_qty'] / employee['target'] * 100
+                if employee['target'] > 0
+                else None
+            )
+            employee['step_targets'] = {}
+            employee['wo_targets'] = {
+                key.split('@')[1]: value
+                for key, value in wo_targets_dict.items()
+                if key.startswith(employee_id + '@')
+            }
 
     work_minutes, employees = _with_employee_efficiency(employees, target_date)
 
@@ -551,6 +673,8 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         'work_minutes': work_minutes,
         'hourly_trend': hourly_data.get(flow_name, []),
         'employees': employees,
+        'group_target': group_target,
+        'step_targets': step_targets,
     }
     if mode == 'local':
         state = _snapshot_state(target_date)
@@ -873,13 +997,69 @@ def set_targets(request):
     """
     设置目标产量（HTTP POST）
 
-    请求体（支持两种格式，向后兼容）：
+    请求体（整组格式为当前页面标准，旧格式仅用于向后兼容）：
+        flow (str): 生产组名称。
+        group_target (int): 整组目标；每道工序获得相同目标并按人数分配。
         targets (dict): {reg_per_sys_id: target_qty}（旧格式，仍支持）
-        wo_targets (dict): {"1001@WO-001": 150, "1001@WO-002": 150}（新格式）
+        wo_targets (dict): {"1001@WO-001": 150, "1001@WO-002": 150}（旧格式）
 
-    工单级目标：每个工单独立一行存储
-    员工总目标：由工单目标自动聚合计算
+    Returns:
+        Response: 保存结果；参数无效时返回 400。
     """
+    group_target = request.data.get('group_target')
+    if group_target is not None:
+        flow_name = str(request.data.get('flow', '')).strip()
+        if not flow_name:
+            return Response(
+                {'error': '保存整组目标时必须提供生产组'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if flow_name not in settings.VISIBLE_FLOWS:
+            return Response(
+                {'error': '生产组不在允许范围内'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            group_target_decimal = Decimal(str(group_target).strip())
+        except (InvalidOperation, ValueError):
+            return Response(
+                {'error': '整组目标必须是整数'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if (
+            not group_target_decimal.is_finite()
+            or group_target_decimal != group_target_decimal.to_integral_value()
+        ):
+            return Response(
+                {'error': '整组目标必须是整数'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        group_target_int = int(group_target_decimal)
+        if group_target_int < 0:
+            return Response(
+                {'error': '整组目标不能小于 0'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        today = get_business_date()
+        GroupTargetProduction.objects.update_or_create(
+            target_date=today,
+            flow_name=flow_name,
+            defaults={'target_qty': group_target_int},
+        )
+        cache_key = f'group_target:{today.isoformat()}:{flow_name}'
+        cache.set(
+            cache_key,
+            group_target_int,
+            timeout=_seconds_to_midnight(),
+        )
+        logger.info('整组目标已保存: {} = {}', flow_name, group_target_int)
+        return Response({
+            'status': 'ok',
+            'flow': flow_name,
+            'group_target': group_target_int,
+        })
+
     targets = request.data.get('targets', {})
     wo_targets = request.data.get('wo_targets', {})
     today = get_business_date()

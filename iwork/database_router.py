@@ -16,6 +16,7 @@ class DatabaseRouter:
     local_models = {
         'localpytckreg3',
         'targetproduction',
+        'grouptargetproduction',
         'productionorder',
         'historicalproductionfact',
         'historicalstepsnapshot',

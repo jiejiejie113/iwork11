@@ -164,6 +164,20 @@ def test_flow_table_separates_target_rate_and_employee_efficiency():
     assert '· 产值 {[ fmtNum(detailSummary.targeted_qty) ]}' not in TEMPLATE
 
 
+def test_flow_target_uses_one_group_input_and_read_only_allocations():
+    """目标编辑应只输入整组值，员工和工序目标由系统分配并只读展示。"""
+    assert 'placeholder="整组目标"' in TEMPLATE
+    assert 'v-model.number="groupTargetDraft"' in TEMPLATE
+    assert "group_target: Number(groupTargetDraft.value)" in TEMPLATE
+    assert "flow: detailKey.value" in TEMPLATE
+    assert 'v-model.number="woDraft[' not in TEMPLATE
+    assert 'v-model.number="draft[' not in TEMPLATE
+    assert 'getStepTarget(row.emp, row._step.stepno)' in TEMPLATE
+    assert 'getStepTargetRate(row.emp, row._step.stepno)' in TEMPLATE
+    assert '目标 {[ fmtNum(s.target) ]}' in TEMPLATE
+    assert 'if (!isEditing.value) groupTargetDraft.value = groupTarget.value || 0;' in TEMPLATE
+
+
 def test_detail_default_date_uses_business_timezone():
     """详情默认日期应使用业务时区。"""
     assert 'function businessDateString()' in TEMPLATE

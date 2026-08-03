@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import Mock
 from iwork.database_router import DatabaseRouter
 
@@ -116,3 +115,15 @@ class TestDatabaseRouterLocalPytckreg3:
         """普通 Pytckreg3 任何库都不允许迁移"""
         result = self.router.allow_migrate('iwork', 'iwork', model_name='pytckreg3')
         assert result is False
+
+    def test_group_target_production_uses_local_database(self):
+        """整组目标模型应固定读写并迁移到 iwork_local。"""
+        model = self._make_model(model_name='grouptargetproduction')
+
+        assert self.router.db_for_read(model) == 'iwork_local'
+        assert self.router.db_for_write(model) == 'iwork_local'
+        assert self.router.allow_migrate(
+            'iwork_local',
+            'iwork',
+            model_name='grouptargetproduction',
+        ) is True

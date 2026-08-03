@@ -619,6 +619,91 @@ class TestFlowDetailEndpoint:
         assert 'employee_efficiency' not in cached_employees[0]
         assert 'target' not in cached_employees[0]
 
+    @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    def test_group_target_is_distributed_to_each_step_worker(
+        self, _mock_minutes, _mock_group_target,
+    ):
+        """整组目标应独立分配给每道工序，再按工序人数分配到员工。"""
+        from iwork.api_views import flow_detail
+
+        employees = []
+        for employee_id in range(1001, 1006):
+            steps = [{'stepno': 2, 'qty': employee_id - 990, 'workorder': 'WO-1'}]
+            if employee_id in (1001, 1002):
+                steps.append({'stepno': 1, 'qty': 100, 'workorder': 'WO-1'})
+            employees.append({
+                'reg_per_sys_id': employee_id,
+                'total_qty': sum(step['qty'] for step in steps),
+                'output_value': 0,
+                'steps': steps,
+            })
+
+        bundle = {
+            'flow_employees': {'SO3-L3A': employees},
+            'flow_hourly': {'SO3-L3A': []},
+        }
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ):
+            response = flow_detail(
+                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
+                flow_name='SO3-L3A',
+            )
+
+        assert response.status_code == 200
+        assert response.data['group_target'] == 1000
+        assert response.data['step_targets'] == {
+            '1': {'target': 1000, 'worker_count': 2},
+            '2': {'target': 1000, 'worker_count': 5},
+        }
+        first_employee = response.data['employees'][0]
+        assert first_employee['step_targets']['1']['target'] == 500
+        assert first_employee['step_targets']['2']['target'] == 200
+        assert first_employee['target'] == 700
+        assert first_employee['target_rate'] == pytest.approx(
+            first_employee['total_qty'] / 700 * 100,
+        )
+
+    @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    def test_group_target_remainder_is_stable_and_preserves_step_total(
+        self, _mock_minutes, _mock_group_target,
+    ):
+        """目标不能整除人数时应稳定分配余数，且个人目标合计不变。"""
+        employees = [
+            {
+                'reg_per_sys_id': employee_id,
+                'total_qty': 10,
+                'output_value': 0,
+                'steps': [{'stepno': 2, 'qty': 10, 'workorder': 'WO-1'}],
+            }
+            for employee_id in (1003, 1001, 1002)
+        ]
+
+        from iwork.api_views import flow_detail
+
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result({
+                'flow_employees': {'SO3-L3A': employees},
+                'flow_hourly': {'SO3-L3A': []},
+            }),
+        ):
+            response = flow_detail(
+                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
+                flow_name='SO3-L3A',
+            )
+
+        assigned = {
+            employee['reg_per_sys_id']: employee['step_targets']['2']['target']
+            for employee in response.data['employees']
+        }
+        assert assigned == {1003: 333, 1001: 334, 1002: 333}
+        assert sum(assigned.values()) == 1000
+        assert 'target' not in employees[0]['steps'][0]
+
 
 class TestStepnoDetailEndpoint:
     """GET /api/dashboard/detail/stepno/<stepno>/"""
@@ -786,3 +871,66 @@ class TestSetTargets:
         response = set_targets(request)
         assert response.status_code == 200
         assert response.data['count'] == 0
+
+    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    @patch('iwork.api_views.cache')
+    def test_set_group_target_success(self, mock_cache, mock_update_or_create):
+        """整组目标应按业务日期和生产组持久化，并刷新当天缓存。"""
+        from iwork.api_views import set_targets
+
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={'flow': 'SO3-L3A', 'group_target': 1000},
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        assert response.status_code == 200
+        assert response.data['status'] == 'ok'
+        assert response.data['flow'] == 'SO3-L3A'
+        assert response.data['group_target'] == 1000
+        mock_update_or_create.assert_called_once_with(
+            target_date=date.today(),
+            flow_name='SO3-L3A',
+            defaults={'target_qty': 1000},
+        )
+        mock_cache.set.assert_called_once_with(
+            f'group_target:{date.today().isoformat()}:SO3-L3A',
+            1000,
+            timeout=mock_cache.set.call_args.kwargs['timeout'],
+        )
+
+    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    def test_set_group_target_rejects_negative_value(self, mock_update_or_create):
+        """负数整组目标应返回 400，且不能写入数据库。"""
+        from iwork.api_views import set_targets
+
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={'flow': 'SO3-L3A', 'group_target': -1},
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        assert response.status_code == 400
+        assert response.data['error'] == '整组目标不能小于 0'
+        mock_update_or_create.assert_not_called()
+
+    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    def test_set_group_target_rejects_fractional_value(self, mock_update_or_create):
+        """小数整组目标不能被静默截断为整数。"""
+        from iwork.api_views import set_targets
+
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={'flow': 'SO3-L3A', 'group_target': 1000.5},
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        assert response.status_code == 400
+        assert response.data['error'] == '整组目标必须是整数'
+        mock_update_or_create.assert_not_called()

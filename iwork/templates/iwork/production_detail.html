@@ -405,7 +405,13 @@
                 👤 {[ detailSummary.worker_count ]}人
                 <span v-if="detailSummary.target_total > 0">
                     · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
-                    · 🎯 目标 {[ fmtNum(detailSummary.target_total) ]}
+                    <template v-if="detailSummary.group_target !== null">
+                        · 🎯 整组目标 {[ fmtNum(detailSummary.group_target) ]}
+                        · 工序目标合计 {[ fmtNum(detailSummary.target_total) ]}
+                    </template>
+                    <template v-else>
+                        · 旧员工目标合计 {[ fmtNum(detailSummary.target_total) ]}
+                    </template>
                     · 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}
                     · <span :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
                         目标达成率 {[ detailSummary.efficiency.toFixed(1) ]}% {[ detailSummary.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
@@ -430,11 +436,14 @@
                 </select>
                 <input v-model="tableSearch" placeholder="搜索员工ID..."
                     class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-                <button v-if="detailLayout === 'table' && !isEditing && !isHistoricalDate" @click="startEditing"
+                <input v-if="detailType === 'flow' && isEditing" v-model.number="groupTargetDraft"
+                    type="number" min="0" step="1" placeholder="整组目标"
+                    class="w-32 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm tabular-nums">
+                <button v-if="detailType === 'flow' && detailLayout === 'table' && !isEditing && !isHistoricalDate" @click="startEditing"
                     class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
-                <button v-if="detailLayout === 'table' && isEditing" @click="cancelEditing"
+                <button v-if="detailType === 'flow' && detailLayout === 'table' && isEditing" @click="cancelEditing"
                     class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
-                <button v-if="detailLayout === 'table' && isEditing" @click="saveTargets"
+                <button v-if="detailType === 'flow' && detailLayout === 'table' && isEditing" @click="saveTargets"
                     class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
             </div>
         </div>
@@ -459,6 +468,7 @@
                         <span class="text-slate-300">工序{[ s.stepno ]}</span>
                         <span class="text-xs flex items-center gap-1.5">
                             <span class="font-mono font-bold" :style="{ color: getHeatColor(s.total) }">{[ fmtNum(s.total) ]}</span>
+                            <span v-if="s.target !== null" class="text-amber-400">目标 {[ fmtNum(s.target) ]}</span>
                             <span class="text-slate-500">{[ s.workorder_count ]}单</span>
                         </span>
                     </button>
@@ -556,14 +566,12 @@
                                         class="py-2 px-3 text-cyan-300 font-bold tabular-nums text-right border-r border-slate-700">
                                         {[ fmtOutputValue(row.emp.output_value) ]}
                                     </td>
-                                    <td v-if="row._woFirst" :rowspan="row._woRowspan" class="py-2 px-3 border-r border-slate-700">
-                                        <input v-if="isEditing" v-model.number="woDraft[row.emp.reg_per_sys_id + '@' + row._wo_name]" type="number" min="0"
-                                            class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                        <span v-else class="tabular-nums">{[ getWoTarget(row.emp, row._wo_name) > 0 ? fmtNum(getWoTarget(row.emp, row._wo_name)) : '--' ]}</span>
+                                    <td class="py-2 px-3 border-r border-slate-700 tabular-nums">
+                                        {[ getStepTarget(row.emp, row._step.stepno) > 0 ? fmtNum(getStepTarget(row.emp, row._step.stepno)) : '--' ]}
                                     </td>
-                                    <td v-if="row._empFirst" :rowspan="row._empRowspan" class="py-2 px-3 text-right">
-                                        <span v-if="row.emp.target > 0" :class="row.emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ row.emp.efficiency.toFixed(1) ]}%
+                                    <td class="py-2 px-3 text-right">
+                                        <span v-if="getStepTargetRate(row.emp, row._step.stepno) !== null" :class="getStepTargetRate(row.emp, row._step.stepno) >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                            {[ getStepTargetRate(row.emp, row._step.stepno).toFixed(1) ]}%
                                         </span>
                                         <span v-else class="text-slate-500">--</span>
                                     </td>
@@ -588,13 +596,11 @@
                                         {[ fmtOutputValue(emp.output_value) ]}
                                     </td>
                                     <td class="py-2 px-3">
-                                        <input v-if="isEditing" v-model.number="draft[emp.reg_per_sys_id]" type="number" min="0"
-                                            class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-center text-sm tabular-nums">
-                                        <span v-else class="tabular-nums">{[ getCombinedTarget(emp) > 0 ? fmtNum(getCombinedTarget(emp)) : (emp.target > 0 ? fmtNum(emp.target) : '--') ]}</span>
+                                        <span class="tabular-nums">{[ getDisplayedTarget(emp) > 0 ? fmtNum(getDisplayedTarget(emp)) : '--' ]}</span>
                                     </td>
                                     <td class="py-2 px-3 text-right">
-                                        <span v-if="(getCombinedTarget(emp) || emp.target) > 0" :class="emp.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ emp.efficiency.toFixed(1) ]}%
+                                        <span v-if="getDisplayedTargetRate(emp) !== null" :class="getDisplayedTargetRate(emp) >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                                            {[ getDisplayedTargetRate(emp).toFixed(1) ]}%
                                         </span>
                                         <span v-else class="text-slate-500">--</span>
                                     </td>
@@ -760,8 +766,8 @@ createApp({
         const lastUpdateTime = ref('');
 
         const isEditing = ref(false);
-        const draft = reactive({});
-        const woDraft = reactive({});   // 工单级目标: {"1001@WO-001": 150}
+        const groupTarget = ref(null);
+        const groupTargetDraft = ref(0);
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
         const detailTableScrollRef = ref(null);
@@ -1435,46 +1441,12 @@ createApp({
         }
 
         function startEditing() {
-            // 深拷贝当前目标值到 draft
-            employees.value.forEach(emp => {
-                draft[emp.reg_per_sys_id] = emp.target || 0;
-                // 工单目标：已有保存的恢复，否则按产量比例分摊
-                const wo_targets = emp.wo_targets || {};
-                const woItems = getWorkorderItems(emp);
-                if (Object.keys(wo_targets).length > 0) {
-                    woItems.forEach(([wo]) => {
-                        woDraft[emp.reg_per_sys_id + '@' + wo] = wo_targets[wo] || 0;
-                    });
-                } else if (woItems.length > 0 && emp.target > 0) {
-                    // 无历史记录：按当前产量比例分摊目标
-                    const totalQty = emp.qty || 1;
-                    let remaining = emp.target;
-                    woItems.forEach(([wo, woQty], idx) => {
-                        if (idx === woItems.length - 1) {
-                            woDraft[emp.reg_per_sys_id + '@' + wo] = remaining;
-                        } else {
-                            const share = Math.round(emp.target * woQty / totalQty);
-                            woDraft[emp.reg_per_sys_id + '@' + wo] = share;
-                            remaining -= share;
-                        }
-                    });
-                } else {
-                    woItems.forEach(([wo]) => {
-                        woDraft[emp.reg_per_sys_id + '@' + wo] = 0;
-                    });
-                }
-            });
+            if (detailType.value !== 'flow') return;
+            groupTargetDraft.value = groupTarget.value || 0;
             isEditing.value = true;
         }
         function cancelEditing() {
-            // 丢弃 draft，恢复到原始目标值
-            const t = targets[detailTargetScopeKey()] || {};
-            employees.value.forEach(emp => {
-                emp.target = t[String(emp.reg_per_sys_id)] || 0;
-                emp.efficiency = emp.target > 0 ? (emp.qty / emp.target * 100) : null;
-            });
-            // 清除 woDraft
-            Object.keys(woDraft).forEach(k => delete woDraft[k]);
+            groupTargetDraft.value = groupTarget.value || 0;
             isEditing.value = false;
         }
 
@@ -1508,6 +1480,7 @@ createApp({
                 targeted_count: withTarget.length,
                 targeted_qty,
                 target_total,
+                group_target: groupTarget.value,
                 efficiency: target_total > 0 ? (targeted_qty / target_total * 100) : null,
             };
         });
@@ -1641,25 +1614,32 @@ createApp({
             return Object.entries(map).sort((a, b) => b[1] - a[1]);
         }
 
-        // 获取员工在指定工单上的目标产量
-        function getWoTarget(emp, workorder) {
-            const key = emp.reg_per_sys_id + '@' + workorder;
-            if (isEditing.value && key in woDraft) return woDraft[key] || 0;
-            const wo_targets = emp.wo_targets || {};
-            return wo_targets[workorder] || 0;
+        // 获取员工在指定工序上的自动分配目标
+        function getStepTarget(emp, stepno) {
+            const item = (emp.step_targets || {})[String(stepno)];
+            return item ? (item.target || 0) : (emp.target || 0);
         }
 
-        // 获取员工的合并目标（所有工单目标之和）
-        function getCombinedTarget(emp) {
-            if (isEditing.value) {
-                let total = 0;
-                const prefix = emp.reg_per_sys_id + '@';
-                Object.entries(woDraft).forEach(([k, v]) => {
-                    if (k.startsWith(prefix)) total += (Number(v) || 0);
-                });
-                return total;
-            }
-            return emp.target || 0;
+        // 获取员工指定工序的目标达成率
+        function getStepTargetRate(emp, stepno) {
+            const item = (emp.step_targets || {})[String(stepno)];
+            return item && item.target_rate !== undefined
+                ? item.target_rate
+                : (emp.efficiency ?? null);
+        }
+
+        // 侧边栏选中工序时展示该工序目标，否则展示员工全部工序目标合计
+        function getDisplayedTarget(emp) {
+            return selectedStep.value === null
+                ? (emp.target || 0)
+                : getStepTarget(emp, selectedStep.value);
+        }
+
+        // 侧边栏选中工序时展示该工序达成率，否则展示员工全部工序达成率
+        function getDisplayedTargetRate(emp) {
+            return selectedStep.value === null
+                ? (emp.efficiency ?? null)
+                : getStepTargetRate(emp, selectedStep.value);
         }
 
         // 工序侧边栏数据源
@@ -1679,6 +1659,7 @@ createApp({
                 .map(([stepno, data]) => ({
                     stepno: Number(stepno),
                     total: data.total,
+                    target: groupTarget.value,
                     workorder_count: data.workorders.size,
                 }))
                 .sort((a, b) => a.stepno - b.stepno);
@@ -2112,6 +2093,8 @@ createApp({
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${key}/?date=${selectedDate.value}`);
                 }
                 const data = await readResponse(resp);
+                groupTarget.value = type === 'flow' ? data.group_target : null;
+                groupTargetDraft.value = groupTarget.value || 0;
                 const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
@@ -2122,7 +2105,7 @@ createApp({
                         qty: totalQty,
                         steps: emp.steps || [],
                         target: target,
-                        efficiency: target > 0 ? (totalQty / target * 100) : null,
+                        efficiency: emp.target_rate ?? (target > 0 ? (totalQty / target * 100) : null),
                     };
                 });
                 targets[detailTargetScopeKey(type, key)] = responseTargets;
@@ -2141,6 +2124,8 @@ createApp({
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${detailKey.value}/?date=${selectedDate.value}`);
                 }
                 const data = await resp.json();
+                groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
+                if (!isEditing.value) groupTargetDraft.value = groupTarget.value || 0;
                 const responseTargets = {};
                 employees.value = (data.employees || []).map(emp => {
                     const totalQty = (emp.steps || []).reduce((s, st) => s + (st.qty || 0), 0) || emp.total_qty || emp.qty || 0;
@@ -2151,7 +2136,7 @@ createApp({
                         qty: totalQty,
                         steps: emp.steps || [],
                         target: target,
-                        efficiency: target > 0 ? (totalQty / target * 100) : null,
+                        efficiency: emp.target_rate ?? (target > 0 ? (totalQty / target * 100) : null),
                     };
                 });
                 targets[detailTargetScopeKey()] = responseTargets;
@@ -2295,31 +2280,12 @@ createApp({
         }
 
         async function saveTargets() {
-            const t = {};
-            const wo = {};
-            const empTotals = {};
-
-            // 收集工单级目标，聚合为员工总目标
-            Object.entries(woDraft).forEach(([key, qty]) => {
-                const v = Number(qty) || 0;
-                if (v > 0) {
-                    wo[key] = v;
-                    const empId = key.split('@')[0];
-                    empTotals[empId] = (empTotals[empId] || 0) + v;
-                }
-            });
-
-            // 更新 employees 的 target 为工单聚合值
-            employees.value.forEach(emp => {
-                const total = empTotals[emp.reg_per_sys_id] || Number(draft[emp.reg_per_sys_id]) || 0;
-                emp.target = total;
-                emp.efficiency = total > 0 ? (emp.qty / total * 100) : null;
-                if (total > 0) t[String(emp.reg_per_sys_id)] = total;
-            });
-
+            if (detailType.value !== 'flow') return;
             try {
-                const payload = { targets: t };
-                if (Object.keys(wo).length > 0) payload.wo_targets = wo;
+                const payload = {
+                    flow: detailKey.value,
+                    group_target: Number(groupTargetDraft.value),
+                };
                 const resp = await fetch(basePath + 'api/dashboard/set-targets/', {
                     method: 'POST',
                     headers: {
@@ -2328,26 +2294,15 @@ createApp({
                     },
                     body: JSON.stringify(payload),
                 });
-                if (resp.ok) {
-                    targets[detailTargetScopeKey()] = t;
-                    // 回写工单目标到 employees，确保展开模式立即显示
-                    employees.value.forEach(emp => {
-                        const empWo = {};
-                        const prefix = emp.reg_per_sys_id + '@';
-                        Object.entries(wo).forEach(([k, v]) => {
-                            if (k.startsWith(prefix)) empWo[k.slice(prefix.length)] = v;
-                        });
-                        emp.wo_targets = empWo;
-                    });
-                } else {
-                    throw new Error('保存失败: ' + resp.statusText);
-                }
+                await readResponse(resp);
+                groupTarget.value = Number(groupTargetDraft.value);
+                isEditing.value = false;
+                await loadDetail(detailType.value, detailKey.value);
             } catch (e) {
                 console.error('保存目标失败:', e);
                 alert(e.message || '保存目标失败');
                 return;
             }
-            isEditing.value = false;
         }
 
         // 生命周期
@@ -2393,8 +2348,9 @@ createApp({
             detailTitle, detailSummary, detailStepnos,
             stepSummary, stepHeatRange, getHeatColor,
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
-            filterByWorkOrder, getWorkorderItems, getWoTarget, getCombinedTarget,
-            isEditing, draft, woDraft, sortKey, sortAsc,
+            filterByWorkOrder, getWorkorderItems,
+            getStepTarget, getStepTargetRate, getDisplayedTarget, getDisplayedTargetRate,
+            isEditing, groupTarget, groupTargetDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
             fmtNum, fmtOutputValue, fmtStepTime, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,

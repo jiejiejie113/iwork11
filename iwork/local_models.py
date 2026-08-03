@@ -65,6 +65,37 @@ class TargetProduction(models.Model):
         return f'{self.target_date} - {self.employee_id}{wo_tag}: {self.target_qty}'
 
 
+class GroupTargetProduction(models.Model):
+    """
+    生产组每日目标产量。
+
+    同一生产组每天只保存一个整组目标。接口读取实时员工工序后，将该目标复制到
+    每道工序，并按工序内去重员工人数分配个人目标。
+    """
+    target_date = models.DateField('目标日期')
+    flow_name = models.CharField('生产组', max_length=40)
+    target_qty = models.IntegerField('整组目标产量', default=0)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'group_target_production'
+        unique_together = ('target_date', 'flow_name')
+        managed = True
+        verbose_name = '生产组目标产量'
+        verbose_name_plural = '生产组目标产量'
+
+    def __str__(self) -> str:
+        """
+        返回包含日期、生产组和目标值的可读文本。
+
+        Returns:
+            str: 整组目标记录的可读文本。
+        """
+        return f'{self.target_date} - {self.flow_name}: {self.target_qty}'
+
+
 class ProductionOrder(models.Model):
     """
     生产工单信息（本地存储）
