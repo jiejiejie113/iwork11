@@ -316,3 +316,58 @@ def test_fact_counts_preserve_sql_null_semantics():
     assert basic[69]["workorder_count"] == 0
     assert overview["SO3-L3A"]["stepnos"]["70"]["workers"] == 1
     assert overview["SO3-L3A"]["total_workers"] == 1
+
+
+def test_realtime_workorders_keep_products_and_current_step_flows():
+    """SSE 内嵌工单必须保留产品字段，且不能混入其他工序的 Flow。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    cache.clear()
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 70,
+                "wrk_order": "ABC123-01",
+                "flow": "SO3-L3A",
+                "station_id": "A01",
+                "event_hour": 8,
+                "qty": 60,
+                "record_count": 1,
+            },
+            {
+                "reg_per_sys_id": 1002,
+                "stepno": 69,
+                "wrk_order": "ABC123-01",
+                "flow": "OTHER-STEP-FLOW",
+                "station_id": "B01",
+                "event_hour": 8,
+                "qty": 40,
+                "record_count": 1,
+            },
+        ],
+        products={
+            "ABC123-01": {"product_name": "产品甲", "order_no": "ORDER-1"},
+        },
+    )
+
+    snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
+    workorder = snapshot["views"]["realtime"][70]["workorders"][0]
+
+    assert workorder == {
+        "wrk_order": "ABC123-01",
+        "total_qty": 60,
+        "flows": ["SO3-L3A"],
+        "product_name": "产品甲",
+        "order_no": "ORDER-1",
+    }
+
+    all_workorder = snapshot["views"]["realtime"]["all"]["workorders"][0]
+    assert all_workorder == {
+        "wrk_order": "ABC123-01",
+        "total_qty": 100,
+        "flows": ["OTHER-STEP-FLOW", "SO3-L3A"],
+        "product_name": "产品甲",
+        "order_no": "ORDER-1",
+    }

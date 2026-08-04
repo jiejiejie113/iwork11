@@ -257,18 +257,21 @@ class ReadModelFactSource:
             dict: 按工序组织的高产工单列表。
         """
         totals: dict[tuple[int, str], int] = defaultdict(int)
-        flows: dict[str, set[str]] = defaultdict(set)
+        flows: dict[tuple[int, str], set[str]] = defaultdict(set)
         for item in self._realtime_facts():
             stepno = self._stepno(item)
             wrk_order = str(item.get("wrk_order") or "")
             totals[(stepno, wrk_order)] += self._qty(item)
-            flows[wrk_order].add(self._flow(item))
+            flows[(stepno, wrk_order)].add(self._flow(item))
         result: dict[int, list[dict]] = defaultdict(list)
         for (stepno, wrk_order), qty in totals.items():
+            product = self.products.get(wrk_order, {})
             result[stepno].append({
                 "wrk_order": wrk_order,
                 "total_qty": qty,
-                "flows": sorted(flows[wrk_order]),
+                "flows": sorted(flows[(stepno, wrk_order)]),
+                "product_name": product.get("product_name", ""),
+                "order_no": product.get("order_no", ""),
             })
         for stepno, rows in result.items():
             result[stepno] = sorted(

@@ -134,6 +134,8 @@ flows = list(settings.VISIBLE_FLOWS)
     'total_qty': int,      # 总产量
     'worker_count': int,   # 人数（仅 paginated 版本）
     'flows': list[str],    # 关联的 Flow 分组列表
+    'product_name': str,   # 产品名称
+    'order_no': str,       # 生产单号
 }
 ```
 
@@ -152,8 +154,18 @@ flows = list(settings.VISIBLE_FLOWS)
 
 `get_batch_workorders_list` 返回格式：
 ```python
-{stepno: [{'wrk_order': str, 'total_qty': int, 'flows': list[str]}]}
+{stepno: [{
+    'wrk_order': str,
+    'total_qty': int,
+    'flows': list[str],
+    'product_name': str,
+    'order_no': str,
+}]}
 ```
+
+每个工序视图的 `flows` 必须按 `(StepNo, WrkOrder)` 隔离，禁止混入同一工单在其他
+工序出现的分组。SSE 内嵌工单与首次加载的分页工单 API 必须同时提供产品名称、生产
+单号和当前工序分组，避免一分钟刷新后覆盖为字段不完整的数据。
 
 ### 4.4 Flow 员工明细
 
@@ -199,7 +211,8 @@ MySQL `REPEATABLE READ` 事务快照内，再一起发布到同一 Redis 版本�
 
 接口分配结果仅在响应副本中注入，不得修改 Redis 版本化快照中的原始员工和工序数据。
 
-`statistics.py` 中 `get_batch_stats` 合并工单时，`flows` 字段会跨工序合并去重。
+`statistics.py` 中 `get_batch_stats` 生成 `all` 视图时，`flows` 字段会跨工序合并去重，
+同时必须保留 `product_name` 和 `order_no`。
 
 ---
 

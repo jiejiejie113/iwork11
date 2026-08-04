@@ -387,6 +387,7 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
     all_wo = []
     wo_merged = {}
     wo_flows = {}
+    wo_products = {}
     for items in batch_wo.values():
         for item in items:
             k = item['wrk_order']
@@ -394,7 +395,13 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
             if k not in wo_flows:
                 wo_flows[k] = set()
             wo_flows[k].update(item.get('flows', []))
-    all_wo = [{'wrk_order': k, 'total_qty': v, 'flows': sorted(wo_flows.get(k, set()))}
+            wo_products.setdefault(k, {
+                'product_name': item.get('product_name', ''),
+                'order_no': item.get('order_no', ''),
+            })
+    all_wo = [{'wrk_order': k, 'total_qty': v,
+               'flows': sorted(wo_flows.get(k, set())),
+               **wo_products.get(k, {})}
               for k, v in sorted(wo_merged.items(), key=lambda kv: kv[1], reverse=True)[:20]]
 
     all_stepnos_sorted = sorted(all_stepnos, reverse=True)
