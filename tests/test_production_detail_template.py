@@ -237,6 +237,23 @@ def test_flow_detail_displays_cumulative_quantity_summary_and_rows():
     assert 'fmtNum(emp.cumulative_qty)' in TEMPLATE
 
 
+def test_step_sidebar_can_switch_between_today_and_cumulative_quantity():
+    """左侧工序汇总应默认显示今日产量，并可在展开按钮左侧切换累计产量。"""
+    assert "const stepQuantityMode = ref('today');" in TEMPLATE
+    assert "stepQuantityMode.value === 'cumulative'" in TEMPLATE
+    assert 's.cumulative_qty || 0' in TEMPLATE
+
+    toolbar = TEMPLATE.split('<div class="flex items-center gap-3">', 1)[1].split(
+        '</div>',
+        1,
+    )[0]
+    assert 'v-if="detailType === \'flow\'"' in toolbar
+    assert "@click=\"stepQuantityMode = stepQuantityMode === 'today'" in toolbar
+    assert "stepQuantityMode === 'today' ? '今日产量' : '累计产量'" in toolbar
+    assert toolbar.index('stepQuantityMode') < toolbar.index('collapsed = !collapsed')
+    assert 'map[s.stepno].total += quantity;' in TEMPLATE
+
+
 def test_detail_default_date_uses_business_timezone():
     """详情默认日期应使用业务时区。"""
     assert 'function businessDateString()' in TEMPLATE
