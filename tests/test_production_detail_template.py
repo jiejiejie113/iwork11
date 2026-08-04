@@ -136,6 +136,26 @@ def test_product_chart_uses_compact_height_on_tablet_viewports():
     assert 'style="height:300px;"' not in TEMPLATE
 
 
+def test_product_chart_pin_switches_scroll_owner_and_freezes_tree_header():
+    """产品图表固定时仅树表滚动，取消固定后应由整个产品区滚动。"""
+    product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
+    product_view = product_view.split('<!-- ===== 详情页 ===== -->', 1)[0]
+
+    assert 'const productChartPinned = ref(true);' in TEMPLATE
+    assert '@click="toggleProductChartPinned"' in product_view
+    assert "productChartPinned ? '取消固定' : '固定图表'" in product_view
+    assert 'productRows, productChartMetric, productChartPinned, productChartTitle' in TEMPLATE
+    assert 'setProductChartMetric, toggleProductChartPinned, toggleRow' in TEMPLATE
+    assert 'data-product-scroll-root' in product_view
+    assert "productChartPinned ? 'overflow-hidden' : 'overflow-y-auto'" in product_view
+    assert 'data-product-tree-scroll' in product_view
+    assert (
+        "productChartPinned ? 'flex-1 min-h-0 overflow-auto' : 'overflow-visible'"
+        in product_view
+    )
+    assert 'sticky top-0 z-20' in product_view
+
+
 def test_overview_employee_search_control_is_removed():
     """生产详情概览不应再显示无效的员工ID搜索框。"""
     assert 'v-model="searchQuery"' not in TEMPLATE

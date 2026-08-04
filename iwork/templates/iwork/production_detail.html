@@ -272,9 +272,12 @@
 
         <!-- 产品模式：图表固定 + 表格可滚动 -->
         <template v-if="groupMode === 'product'">
+        <div data-product-scroll-root class="flex-1 min-h-0 flex flex-col"
+             :class="productChartPinned ? 'overflow-hidden' : 'overflow-y-auto'">
         <div class="product-chart-panel flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4">
             <div class="flex items-center justify-between gap-3 mb-2">
                 <h3 class="text-xs font-semibold text-slate-300">{[ productChartTitle ]}</h3>
+                <div class="flex items-center gap-2">
                 <div class="flex bg-slate-900 rounded-md p-0.5 border border-slate-700 text-xs">
                     <button @click="setProductChartMetric('qty')"
                         :class="productChartMetric === 'qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
@@ -287,11 +290,18 @@
                         :class="productChartMetric === 'output_value' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
                         class="px-3 py-1 rounded transition-colors">产值</button>
                 </div>
+                <button @click="toggleProductChartPinned"
+                    :class="productChartPinned ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-slate-200'"
+                    class="px-3 py-1 rounded-md border text-xs transition-colors">
+                    {[ productChartPinned ? '取消固定' : '固定图表' ]}
+                </button>
+                </div>
             </div>
             <div class="flex-1" style="height:calc(100% - 30px);"><canvas id="product-chart"></canvas></div>
         </div>
 
-        <div class="flex-1 overflow-y-auto bg-slate-800 border border-slate-700 rounded-lg flex flex-col">
+        <div class="bg-slate-800 border border-slate-700 rounded-lg flex flex-col"
+             :class="productChartPinned ? 'flex-1 min-h-0 overflow-hidden' : 'flex-shrink-0'">
             <!-- 拖拽区：上区备选 / 下区激活 -->
             <div class="flex-shrink-0 border-b border-slate-700">
                 <!-- 上区：备选区 -->
@@ -343,9 +353,10 @@
             </div>
 
             <!-- 动态树形表格 -->
-            <div class="flex-1 overflow-auto">
+            <div data-product-tree-scroll
+                 :class="productChartPinned ? 'flex-1 min-h-0 overflow-auto' : 'overflow-visible'">
             <!-- 表头（保留 table 视觉，固定不参与过渡）-->
-            <div class="text-left text-slate-400 border-b border-slate-700 bg-slate-800 text-xs"
+            <div class="sticky top-0 z-20 text-left text-slate-400 border-b border-slate-700 bg-slate-800 text-xs"
                  :style="{ display: 'grid', gridTemplateColumns: productGridColumns }">
                 <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3">工序描述</div>
@@ -397,6 +408,7 @@
                 </transition-group>
             </div>
             </div>
+        </div>
         </div>
     </template>
 </div>
@@ -820,6 +832,7 @@ createApp({
         // 维度管理（拖拽控制层级）
         const productList = ref([]);
         const productChartMetric = ref('qty');
+        const productChartPinned = ref(true);
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
@@ -1177,6 +1190,11 @@ createApp({
             productChartMetric.value = metric;
             saveProductViewState();
             nextTick(() => renderProductChart());
+        }
+
+        function toggleProductChartPinned() {
+            productChartPinned.value = !productChartPinned.value;
+            nextTick(() => charts['product-chart']?.resize());
         }
 
         function toggleRow(row) {
@@ -2461,7 +2479,8 @@ createApp({
             fmtNum, fmtOutputValue, fmtStepTime, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             showStepMetadataColumns, productGridColumns,
-            productRows, productChartMetric, productChartTitle, setProductChartMetric, toggleRow, treeWrapEl,
+            productRows, productChartMetric, productChartPinned, productChartTitle,
+            setProductChartMetric, toggleProductChartPinned, toggleRow, treeWrapEl,
             activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragHeight, tagDragStyle,
             onTagPointerDown,
             dragStart,
