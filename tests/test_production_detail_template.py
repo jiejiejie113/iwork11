@@ -156,6 +156,25 @@ def test_product_chart_pin_switches_scroll_owner_and_freezes_tree_header():
     assert 'sticky top-0 z-20' in product_view
 
 
+def test_product_view_hides_scrollbars_without_disabling_scroll():
+    """产品区和树表应只隐藏滚动条外观，并保留原有 overflow 滚动能力。"""
+    product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
+    product_view = product_view.split('<!-- ===== 详情页 ===== -->', 1)[0]
+    product_scroll_root = product_view.split('data-product-scroll-root', 1)[1].split(
+        '>',
+        1,
+    )[0]
+    product_tree_scroll = product_view.split('data-product-tree-scroll', 1)[1].split(
+        '>',
+        1,
+    )[0]
+
+    assert 'hide-scrollbar' in product_scroll_root
+    assert 'hide-scrollbar' in product_tree_scroll
+    assert "productChartPinned ? 'overflow-hidden' : 'overflow-y-auto'" in product_scroll_root
+    assert "productChartPinned ? 'flex-1 min-h-0 overflow-auto'" in product_tree_scroll
+
+
 def test_overview_employee_search_control_is_removed():
     """生产详情概览不应再显示无效的员工ID搜索框。"""
     assert 'v-model="searchQuery"' not in TEMPLATE
