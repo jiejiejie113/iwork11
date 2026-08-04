@@ -53,6 +53,41 @@ def test_product_chart_switches_and_sorts_by_selected_metric():
     assert 'items.sort((a, b) => b.value - a.value)' in TEMPLATE
 
 
+def test_product_view_displays_and_charts_cumulative_quantity():
+    """产品树应显示累计产量，图表切换后按累计值重新排序。"""
+    product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
+    product_view = product_view.split('<!-- ===== 详情页 ===== -->', 1)[0]
+
+    assert "setProductChartMetric('cumulative_qty')" in product_view
+    assert '<button v-if="!isHistoricalDate"' in product_view
+    assert '>累计产量</div>' in product_view
+    assert 'fmtNum(row.cumulativeQty)' in product_view
+    assert "['qty', 'cumulative_qty', 'output_value']" in TEMPLATE
+    assert 'cumulative_qty: fl.cumulative_qty ?? null' in TEMPLATE
+    assert 'const hasCompleteCumulativeQty = groupLeaves.every' in TEMPLATE
+    assert 'cumulativeQty: totalCumulativeQty' in TEMPLATE
+    assert "cumulative_qty: 'cumulativeQty'" in TEMPLATE
+    assert 'const allowedProductChartMetrics = isHistoricalDate.value' in TEMPLATE
+
+    chart_items = TEMPLATE.split('const productChartItems = computed', 1)[1].split(
+        'const productChartLabels',
+        1,
+    )[0]
+    assert 'items.sort((a, b) => b.value - a.value)' in chart_items
+
+
+def test_product_chart_resets_cumulative_metric_when_switching_to_history():
+    """从今日切换历史日期时，产品图表应回退今日产量指标。"""
+    date_change = TEMPLATE.split('function changeProductionDate()', 1)[1].split(
+        'async function loadDetail',
+        1,
+    )[0]
+
+    assert "isHistoricalDate.value && productChartMetric.value === 'cumulative_qty'" in date_change
+    assert "productChartMetric.value = 'qty';" in date_change
+    assert 'saveProductViewState();' in date_change
+
+
 def test_product_view_state_is_saved_and_restored_in_browser():
     """产品维度、树路径和图表指标应保存到浏览器并在加载时恢复。"""
     assert "const PRODUCT_VIEW_STORAGE_KEY = 'iwork:production-detail:product-view:v1';" in TEMPLATE
@@ -68,7 +103,7 @@ def test_product_view_state_rejects_invalid_cache_and_stale_tree_path():
     """非法缓存应回退默认值，失效树路径应在数据加载后截断。"""
     assert 'function normalizeSelectedLevels(levels)' in TEMPLATE
     assert 'dimensionPool.includes(level)' in TEMPLATE
-    assert "['qty', 'output_value'].includes(state.productChartMetric)" in TEMPLATE
+    assert 'allowedProductChartMetrics.includes(state.productChartMetric)' in TEMPLATE
     assert "state.activePath.filter(key => typeof key === 'string')" in TEMPLATE
     assert 'function normalizeProductActivePath()' in TEMPLATE
     assert 'normalizeProductActivePath();' in TEMPLATE

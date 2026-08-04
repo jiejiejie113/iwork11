@@ -557,11 +557,24 @@ class ReadModelFactSource:
             flow = self._flow(item)
             row = grouped.setdefault(
                 (wrk_order, stepno, flow),
-                {"qty": 0, "workers": set()},
+                {"qty": 0, "cumulative_qty": 0, "workers": set()},
             )
             row["qty"] += self._qty(item)
             if item.get("reg_per_sys_id") is not None:
                 row["workers"].add(item.get("reg_per_sys_id"))
+
+        current_wrk_orders = {wrk_order for wrk_order, _stepno, _flow in grouped}
+        for item in self.cumulative_facts:
+            wrk_order = str(item.get("wrk_order") or "")
+            flow = self._flow(item)
+            if wrk_order not in current_wrk_orders or flow not in ALLOWED_FLOWS:
+                continue
+            stepno = self._stepno(item)
+            row = grouped.setdefault(
+                (wrk_order, stepno, flow),
+                {"qty": 0, "cumulative_qty": 0, "workers": set()},
+            )
+            row["cumulative_qty"] += int(item.get("cumulative_qty") or 0)
 
         product_map: dict[str, dict] = {}
         for (wrk_order, stepno, flow), values in sorted(grouped.items()):
@@ -578,6 +591,7 @@ class ReadModelFactSource:
             flows[flow] = {
                 "flow": flow,
                 "qty": values["qty"],
+                "cumulative_qty": values["cumulative_qty"],
                 "workers": len(values["workers"]),
             }
 
@@ -604,6 +618,9 @@ class ReadModelFactSource:
                         "step_time": step_time,
                         "output_value": qty * step_time if step_time is not None else None,
                         "qty": qty,
+                        "cumulative_qty": sum(
+                            row["cumulative_qty"] for row in flow_rows
+                        ),
                         "workers": sum(row["workers"] for row in flow_rows),
                         "flows": flow_rows,
                     })
@@ -611,6 +628,9 @@ class ReadModelFactSource:
                 workorder_rows.append({
                     "wrk_order": wrk_order,
                     "qty": sum(row["qty"] for row in step_rows),
+                    "cumulative_qty": sum(
+                        row["cumulative_qty"] for row in step_rows
+                    ),
                     "stepno_count": len(step_rows),
                     "stepnos": step_rows,
                 })
@@ -619,6 +639,9 @@ class ReadModelFactSource:
                 "product_name": product_name,
                 "order_no": order_no,
                 "total_qty": sum(row["qty"] for row in workorder_rows),
+                "cumulative_qty": sum(
+                    row["cumulative_qty"] for row in workorder_rows
+                ),
                 "wrk_order_count": len(workorder_rows),
                 "wrk_orders": workorder_rows,
             }

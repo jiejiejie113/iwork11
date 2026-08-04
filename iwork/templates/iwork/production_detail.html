@@ -279,6 +279,10 @@
                     <button @click="setProductChartMetric('qty')"
                         :class="productChartMetric === 'qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
                         class="px-3 py-1 rounded transition-colors">产量</button>
+                    <button v-if="!isHistoricalDate"
+                        @click="setProductChartMetric('cumulative_qty')"
+                        :class="productChartMetric === 'cumulative_qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                        class="px-3 py-1 rounded transition-colors">累计产量</button>
                     <button @click="setProductChartMetric('output_value')"
                         :class="productChartMetric === 'output_value' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
                         class="px-3 py-1 rounded transition-colors">产值</button>
@@ -346,6 +350,7 @@
                 <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3">工序描述</div>
                 <div class="py-2 px-3 text-right">产量</div>
+                <div class="py-2 px-3 text-right">累计产量</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3 text-right">标准工时</div>
                 <div class="py-2 px-3 text-right">产值</div>
                 <div class="py-2 px-3 text-right">信息</div>
@@ -370,6 +375,9 @@
                         </div>
                         <div class="py-1.5 px-3 text-right"
                             :class="row.depth === 0 ? 'text-emerald-400 font-bold' : row.depth === 1 ? 'text-emerald-400 font-bold' : 'text-slate-300'">{[ fmtNum(row.qty) ]}</div>
+                        <div class="py-1.5 px-3 text-right text-amber-300 tabular-nums">
+                            {[ row.cumulativeQty !== null && row.cumulativeQty !== undefined ? fmtNum(row.cumulativeQty) : '--' ]}
+                        </div>
                         <div v-if="showStepMetadataColumns" class="py-1.5 px-3 text-right text-slate-300 tabular-nums">
                             {[ row.metadataResolved && row.stepTime !== null && row.stepTime !== undefined ? row.stepTime : '--' ]}
                         </div>
@@ -838,7 +846,10 @@ createApp({
                 if (Array.isArray(state.activePath)) {
                     activePath.value = state.activePath.filter(key => typeof key === 'string');
                 }
-                productChartMetric.value = ['qty', 'output_value'].includes(state.productChartMetric)
+                const allowedProductChartMetrics = isHistoricalDate.value
+                    ? ['qty', 'output_value']
+                    : ['qty', 'cumulative_qty', 'output_value'];
+                productChartMetric.value = allowedProductChartMetrics.includes(state.productChartMetric)
                     ? state.productChartMetric
                     : 'qty';
             } catch (e) { /* 浏览器存储不可用时使用默认状态 */ }
@@ -863,9 +874,9 @@ createApp({
         });
         const productGridColumns = computed(() => {
             if (showStepMetadataColumns.value) {
-                return 'minmax(260px, 1fr) minmax(180px, 240px) 80px 110px 100px 100px';
+                return 'minmax(260px, 1fr) minmax(180px, 240px) 80px 90px 110px 100px 100px';
             }
-            return 'minmax(260px, 1fr) 80px 100px 140px';
+            return 'minmax(260px, 1fr) 80px 90px 100px 140px';
         });
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
@@ -895,6 +906,7 @@ createApp({
                                     : null,
                                 flow: fl.flow,
                                 qty: fl.qty || 0,
+                                cumulative_qty: fl.cumulative_qty ?? null,
                                 workers: fl.workers || 0,
                             });
                         }
@@ -922,6 +934,12 @@ createApp({
                     ? buildGroupedTree(groupLeaves, restLevels, [...ancestorDims, curDim])
                     : [];
                 const totalQty = groupLeaves.reduce((s, l) => s + l.qty, 0);
+                const hasCompleteCumulativeQty = groupLeaves.every(
+                    leaf => leaf.cumulative_qty !== null && leaf.cumulative_qty !== undefined
+                );
+                const totalCumulativeQty = hasCompleteCumulativeQty
+                    ? groupLeaves.reduce((sum, leaf) => sum + leaf.cumulative_qty, 0)
+                    : null;
                 const totalWorkers = groupLeaves.reduce((s, l) => s + l.workers, 0);
                 const hasCompleteOutputValue = groupLeaves.every(
                     leaf => leaf.output_value !== null && leaf.output_value !== undefined
@@ -948,6 +966,7 @@ createApp({
                 nodes.push({
                     name: displayName,
                     qty: totalQty,
+                    cumulativeQty: totalCumulativeQty,
                     outputValue: totalOutputValue,
                     info,
                     metadataResolved: completesStepMetadataPair,
@@ -1002,6 +1021,7 @@ createApp({
                         depth, key,
                         name: node.name,
                         qty: node.qty,
+                        cumulativeQty: node.cumulativeQty,
                         outputValue: node.outputValue,
                         info: node.info,
                         metadataResolved: node.metadataResolved,
@@ -1112,7 +1132,12 @@ createApp({
         }
 
         const productChartItems = computed(() => {
-            const metricKey = productChartMetric.value === 'output_value' ? 'outputValue' : 'qty';
+            const metricKeys = {
+                qty: 'qty',
+                cumulative_qty: 'cumulativeQty',
+                output_value: 'outputValue',
+            };
+            const metricKey = metricKeys[productChartMetric.value] || 'qty';
             const items = getProductChartRows().map(row => ({
                 label: row.name,
                 value: Number(row[metricKey] ?? 0),
@@ -1128,7 +1153,12 @@ createApp({
             return productChartItems.value.map(item => item.value);
         });
         const productChartMetricLabel = computed(() => {
-            return productChartMetric.value === 'output_value' ? '产值' : '产量';
+            const labels = {
+                qty: '产量',
+                cumulative_qty: '累计产量',
+                output_value: '产值',
+            };
+            return labels[productChartMetric.value] || '产量';
         });
         const productChartTitle = computed(() => {
             if (!chartFocusKey.value) {
@@ -1142,6 +1172,7 @@ createApp({
         });
 
         function setProductChartMetric(metric) {
+            if (metric === 'cumulative_qty' && isHistoricalDate.value) return;
             if (productChartMetric.value === metric) return;
             productChartMetric.value = metric;
             saveProductViewState();
@@ -2086,6 +2117,10 @@ createApp({
             window.history.replaceState({}, '', url);
             isEditing.value = false;
             historySnapshotMessage.value = '';
+            if (isHistoricalDate.value && productChartMetric.value === 'cumulative_qty') {
+                productChartMetric.value = 'qty';
+                saveProductViewState();
+            }
             if (currentView.value === 'detail') {
                 loadDetail(detailType.value, detailKey.value);
             } else if (groupMode.value === 'product') {
