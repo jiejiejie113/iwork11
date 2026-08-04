@@ -1,12 +1,13 @@
 import time
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import date, timedelta
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Sum, Count
+from django.db import connections, transaction
+from django.db.models import Count, Min, Sum
 from loguru import logger
 
-from iwork.local_models import ProductionOrder
+from iwork.local_models import IGarmentProductionOrder, ProductionOrder
 
 
 def apply_stepno_filter(queryset, stepno_filter: list[int] | None):
@@ -45,6 +46,117 @@ def get_records_queryset(target: date) -> object:
     from iwork.models import Pytckreg3
     start, end = get_date_range(target)
     return Pytckreg3.objects.using('iwork').filter(RegDate__gte=start, RegDate__lt=end)
+
+
+def get_igarment_creation_dates(wrk_orders: list[str]) -> dict[str, date]:
+    """读取每个完整 WrkOrder 对应的最早 iGarment 创建日期。
+
+    Args:
+        wrk_orders: 生产事实中的完整工单号。
+
+    Returns:
+        dict[str, date]: 按完整工单号组织的最早创建日期。
+    """
+    normalized = sorted({str(item) for item in wrk_orders if item})
+    if not normalized:
+        return {}
+    customer_orders = {
+        wrk_order: wrk_order[:6]
+        for wrk_order in normalized
+        if len(wrk_order) >= 6
+    }
+    if not customer_orders:
+        return {}
+    rows = (
+        IGarmentProductionOrder.objects.using('iwork_local')
+        .filter(customer_order_no__in=sorted(set(customer_orders.values())))
+        .exclude(customer_order_no='')
+        .values('customer_order_no')
+        .annotate(first_created_date=Min('created_date'))
+    )
+    dates_by_customer_order = {
+        row['customer_order_no']: row['first_created_date'].date()
+        for row in rows
+        if row['first_created_date'] is not None
+    }
+    return {
+        wrk_order: dates_by_customer_order[customer_order]
+        for wrk_order, customer_order in customer_orders.items()
+        if customer_order in dates_by_customer_order
+    }
+
+
+@contextmanager
+def read_model_consistent_snapshot():
+    """让本轮多个远程只读查询共享同一个可重复读快照。
+
+    Yields:
+        None: 调用方可在上下文中执行属于同一快照的远程只读查询。
+    """
+    connection = connections['iwork']
+    if connection.vendor == 'mysql':
+        with connection.cursor() as cursor:
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    with transaction.atomic(using='iwork'):
+        yield
+
+
+def get_read_model_cumulative_rows(
+    creation_dates: dict[str, date],
+) -> list[dict]:
+    """按 iGarment 最早创建日分批汇总当前工单的累计生产事实。
+
+    每个创建日期使用独立的 ``UNION ALL`` 分支，避免大型 OR 条件触发远程
+    数据库读超时；调用方负责将该查询与当天事实查询放在同一个可重复读事务
+    中，保证统一快照水位。
+
+    Args:
+        creation_dates: 按完整 WrkOrder 组织的最早创建日期。
+
+    Returns:
+        list[dict]: 按 Flow、员工、工序和完整工单汇总的累计产量。
+    """
+    if not creation_dates:
+        return []
+
+    from iwork.models import Pytckreg3
+
+    orders_by_date: dict[date, list[str]] = {}
+    for wrk_order, start_date in creation_dates.items():
+        if not wrk_order or start_date is None:
+            continue
+        orders_by_date.setdefault(start_date, []).append(wrk_order)
+    if not orders_by_date:
+        return []
+
+    querysets = []
+    for start_date, wrk_orders in sorted(orders_by_date.items()):
+        start, _end = get_date_range(start_date)
+        querysets.append(
+            Pytckreg3.objects.using('iwork')
+            .filter(
+                WrkOrder__in=sorted(set(wrk_orders)),
+                RegDate__gte=start,
+            )
+            .exclude(Flow='')
+            .filter(Flow__in=settings.ALLOWED_FLOWS)
+            .values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
+            .annotate(cumulative_qty=Sum('Qty'))
+            .order_by()
+        )
+    rows = querysets[0]
+    if len(querysets) > 1:
+        rows = rows.union(*querysets[1:], all=True)
+    return [
+        {
+            'reg_per_sys_id': row['RegPerSysID'],
+            'stepno': row['StepNo'],
+            'wrk_order': row['WrkOrder'] or '',
+            'flow': row['Flow'] or '',
+            'cumulative_qty': row['cumulative_qty'] or 0,
+        }
+        for row in rows
+    ]
 
 
 def get_basic_stats(target: date, stepno_filter: list[int] | None = None) -> dict:
@@ -776,14 +888,21 @@ def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
 
             employee = emp_map[emp_id]
             employee['total_qty'] += qty
-            employee['steps'].append({
+            step = {
                 'stepno': row['StepNo'],
                 'qty': qty,
                 'workorder': workorder,
                 'description': metadata.get('description', ''),
                 'step_time': step_time,
                 'output_value': output_value,
-            })
+            }
+            if 'cumulative_qty' in row:
+                cumulative_qty = row['cumulative_qty'] or 0
+                step['cumulative_qty'] = cumulative_qty
+                employee['cumulative_qty'] = (
+                    employee.get('cumulative_qty', 0) + cumulative_qty
+                )
+            employee['steps'].append(step)
             if output_value is None:
                 employee['output_complete'] = False
             else:
@@ -793,7 +912,7 @@ def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
 
         employees = []
         for employee_id, values in emp_map.items():
-            employees.append({
+            item = {
                 'reg_per_sys_id': employee_id,
                 'total_qty': values['total_qty'],
                 'output_value': (
@@ -801,7 +920,10 @@ def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
                 ),
                 'steps': values['steps'],
                 'workorders': sorted(values['workorders']),
-            })
+            }
+            if 'cumulative_qty' in values:
+                item['cumulative_qty'] = values['cumulative_qty']
+            employees.append(item)
         result[flow_name] = sorted(
             employees,
             key=lambda employee: employee['total_qty'],

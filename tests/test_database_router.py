@@ -127,3 +127,15 @@ class TestDatabaseRouterLocalPytckreg3:
             'iwork',
             model_name='grouptargetproduction',
         ) is True
+
+    def test_igarment_production_order_uses_local_database(self):
+        """iGarment 精简快照模型应固定路由到 iwork_local。"""
+        model = self._make_model(model_name='igarmentproductionorder')
+
+        assert self.router.db_for_read(model) == 'iwork_local'
+        assert self.router.db_for_write(model) == 'iwork_local'
+        assert self.router.allow_migrate(
+            'iwork_local',
+            'iwork',
+            model_name='igarmentproductionorder',
+        ) is True

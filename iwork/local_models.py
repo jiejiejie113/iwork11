@@ -137,6 +137,38 @@ class ProductionOrder(models.Model):
         return f'{self.order_no} - {self.style_no}'
 
 
+class IGarmentProductionOrder(models.Model):
+    """iGarment 生产订单精简快照（本地 MySQL）。"""
+
+    customer_order_no = models.CharField(
+        '客户订单编号',
+        max_length=20,
+        blank=True,
+        default='',
+    )
+    order_no = models.CharField('订单编号', max_length=50)
+    quantity = models.IntegerField('订单数量')
+    created_date = models.DateTimeField('创建日期')
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'igarment_production_orders'
+        managed = True
+        indexes = [
+            models.Index(
+                fields=['customer_order_no', 'created_date'],
+                name='idx_igarment_customer_created',
+            ),
+            models.Index(fields=['order_no'], name='idx_igarment_order_no'),
+        ]
+        verbose_name = 'iGarment 生产订单'
+        verbose_name_plural = 'iGarment 生产订单'
+
+    def __str__(self) -> str:
+        """返回客户订单编号和订单编号组成的可读标识。"""
+        return f'{self.customer_order_no} - {self.order_no}'
+
+
 class HistoricalProductionFact(models.Model):
     """按小时聚合的本地历史生产事实。"""
 

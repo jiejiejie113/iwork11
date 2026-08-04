@@ -31,17 +31,25 @@ class ReadModelFactSource:
         if source is None:
             from iwork import queries as source
 
-        facts = source.get_read_model_fact_rows(business_date)
-        wrk_orders = sorted({
-            str(item.get("wrk_order") or "")
-            for item in facts
-            if item.get("wrk_order")
-        })
+        with source.read_model_consistent_snapshot():
+            facts = source.get_read_model_fact_rows(business_date)
+            wrk_orders = sorted({
+                str(item.get("wrk_order") or "")
+                for item in facts
+                if item.get("wrk_order")
+            })
+            creation_dates = source.get_igarment_creation_dates(wrk_orders)
+            cumulative_facts = source.get_read_model_cumulative_rows(
+                creation_dates,
+            )
+            products = source.get_read_model_products(wrk_orders)
+            step_metadata = source.get_batch_step_metadata(wrk_orders)
         return cls(
             business_date=business_date,
             facts=facts,
-            products=source.get_read_model_products(wrk_orders),
-            step_metadata=source.get_batch_step_metadata(wrk_orders),
+            cumulative_facts=cumulative_facts,
+            products=products,
+            step_metadata=step_metadata,
             history_source=source,
         )
 
@@ -49,6 +57,7 @@ class ReadModelFactSource:
         self,
         business_date: date,
         facts: list[dict],
+        cumulative_facts: list[dict] | None = None,
         products: dict | None = None,
         step_metadata: dict | None = None,
         history_source=None,
@@ -58,12 +67,23 @@ class ReadModelFactSource:
         Args:
             business_date: 事实所属的曼谷业务日期。
             facts: 单次远程查询返回的细粒度生产事实。
+            cumulative_facts: 按当前明细粒度汇总的累计生产事实。
             products: 按完整工单号组织的本地产品信息。
             step_metadata: 按工单和工序组织的描述与标准工时。
             history_source: 只用于读取业务日期之前月度数据的查询适配器。
         """
         self.business_date = business_date
         self.facts = tuple(dict(item) for item in facts)
+        self.cumulative_facts = tuple(dict(item) for item in cumulative_facts or [])
+        self.cumulative_qty = {
+            (
+                str(item.get("flow") or ""),
+                item.get("reg_per_sys_id"),
+                int(item.get("stepno") or 0),
+                str(item.get("wrk_order") or ""),
+            ): int(item.get("cumulative_qty") or 0)
+            for item in self.cumulative_facts
+        }
         self.products = dict(products or {})
         self.step_metadata = dict(step_metadata or {})
         self.history_source = history_source
@@ -466,6 +486,10 @@ class ReadModelFactSource:
                 "StepNo": stepno,
                 "WrkOrder": wrk_order,
                 "qty": qty,
+                "cumulative_qty": self.cumulative_qty.get(
+                    (flow, employee_id, stepno, wrk_order),
+                    0,
+                ),
             }
             for (flow, employee_id, stepno, wrk_order), qty in sorted(
                 totals.items(),

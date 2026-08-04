@@ -3,6 +3,7 @@
 """
 from unittest.mock import patch, Mock
 from datetime import date
+import pytest
 from django.utils import timezone
 
 
@@ -22,6 +23,121 @@ class TestGetDateRange:
         start, end = get_date_range(date(2026, 5, 12))
         assert (end - start).days == 1
         assert start.hour == 0 and start.minute == 0
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_igarment_creation_dates_use_earliest_day_per_workorder():
+    """同一 WrkOrder 多个创建时间时应取最早日期，并忽略空编号。"""
+    from iwork.local_models import IGarmentProductionOrder
+    from iwork.queries import get_igarment_creation_dates
+
+    IGarmentProductionOrder.objects.using('iwork_local').bulk_create([
+        IGarmentProductionOrder(
+            customer_order_no='BU1211',
+            order_no='ORDER-2',
+            quantity=20,
+            created_date=timezone.make_aware(
+                timezone.datetime(2026, 6, 12, 9, 0),
+            ),
+        ),
+        IGarmentProductionOrder(
+            customer_order_no='BU1211',
+            order_no='ORDER-1',
+            quantity=10,
+            created_date=timezone.make_aware(
+                timezone.datetime(2026, 6, 10, 15, 30),
+            ),
+        ),
+        IGarmentProductionOrder(
+            customer_order_no='',
+            order_no='UNMATCHED',
+            quantity=1,
+            created_date=timezone.make_aware(
+                timezone.datetime(2020, 1, 1, 0, 0),
+            ),
+        ),
+    ])
+
+    assert get_igarment_creation_dates(['BU1211', 'BU1211-01', 'MISSING', '']) == {
+        'BU1211': date(2026, 6, 10),
+        'BU1211-01': date(2026, 6, 10),
+    }
+
+
+@patch('iwork.models.Pytckreg3')
+def test_cumulative_rows_include_creation_day(mock_model):
+    """累计查询必须使用 RegDate >= 最早创建日，并保持当前明细粒度。"""
+    from iwork.queries import get_read_model_cumulative_rows
+
+    queryset = mock_model.objects.using.return_value.filter.return_value
+    rows = (
+        queryset.exclude.return_value.filter.return_value.values.return_value
+        .annotate.return_value.order_by.return_value
+    )
+    rows.__iter__.return_value = iter([{
+        'RegPerSysID': 1001,
+        'StepNo': 70,
+        'WrkOrder': 'BU1211',
+        'Flow': 'SO3-L3B',
+        'cumulative_qty': 23152,
+    }])
+
+    result = get_read_model_cumulative_rows({'BU1211': date(2026, 6, 10)})
+
+    query_filter = mock_model.objects.using.return_value.filter.call_args.kwargs
+    assert query_filter['RegDate__gte'].date() == date(2026, 6, 10)
+    assert query_filter['WrkOrder__in'] == ['BU1211']
+    assert result == [{
+        'reg_per_sys_id': 1001,
+        'stepno': 70,
+        'wrk_order': 'BU1211',
+        'flow': 'SO3-L3B',
+        'cumulative_qty': 23152,
+    }]
+
+
+@patch('iwork.models.Pytckreg3')
+def test_cumulative_rows_union_each_creation_date_branch(mock_model):
+    """不同创建日期必须用独立 UNION 分支，避免大型 OR 聚合读超时。"""
+    from iwork.queries import get_read_model_cumulative_rows
+
+    queryset = mock_model.objects.using.return_value
+    rows = (
+        queryset.filter.return_value.exclude.return_value.filter.return_value
+        .values.return_value.annotate.return_value.order_by.return_value
+    )
+    rows.union.return_value.__iter__.return_value = iter([])
+
+    get_read_model_cumulative_rows({
+        'BU1211': date(2026, 6, 10),
+        'BU1212': date(2026, 6, 11),
+    })
+
+    assert queryset.filter.call_count == 2
+    assert [call.kwargs['RegDate__gte'].date() for call in queryset.filter.call_args_list] == [
+        date(2026, 6, 10),
+        date(2026, 6, 11),
+    ]
+    rows.union.assert_called_once_with(rows, all=True)
+
+
+@patch('iwork.queries.transaction.atomic')
+@patch('iwork.queries.connections')
+def test_read_model_snapshot_uses_repeatable_read(mock_connections, mock_atomic):
+    """多条远程查询必须运行在同一个 MySQL 可重复读事务中。"""
+    from iwork.queries import read_model_consistent_snapshot
+
+    connection = mock_connections.__getitem__.return_value
+    connection.vendor = 'mysql'
+    cursor = connection.cursor.return_value.__enter__.return_value
+
+    with read_model_consistent_snapshot():
+        pass
+
+    cursor.execute.assert_called_once_with(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+    )
+    mock_atomic.assert_called_once_with(using='iwork')
 
 
 class TestApplyStepnoFilter:

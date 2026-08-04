@@ -563,6 +563,7 @@ class TestFlowDetailEndpoint:
             'flow_employees': {'VCO-L5': [{
                 'reg_per_sys_id': 1001,
                 'total_qty': 500,
+                'cumulative_qty': 800,
                 'output_value': 420.0,
                 'steps': [],
             }]},
@@ -579,6 +580,7 @@ class TestFlowDetailEndpoint:
         assert response.status_code == 200
         assert response.data['flow'] == 'VCO-L5'
         assert response.data['work_minutes'] == 210
+        assert response.data['cumulative_qty'] == 800
         assert len(response.data['employees']) == 1
         assert response.data['employees'][0]['employee_efficiency'] == 200.0
         assert response.data['source'] == 'redis_snapshot'

@@ -2,7 +2,7 @@
 本地模型测试
 """
 import pytest
-from iwork.local_models import LocalPytckreg3
+from iwork.local_models import IGarmentProductionOrder, LocalPytckreg3
 
 
 class TestLocalPytckreg3:
@@ -32,3 +32,12 @@ class TestLocalPytckreg3:
         
         qty_field = LocalPytckreg3._meta.get_field('Qty')
         assert qty_field.default == 0
+
+
+def test_igarment_order_model_matches_server_snapshot_table():
+    """iGarment 模型字段必须与服务器同步任务创建的 MySQL 表一致。"""
+    assert IGarmentProductionOrder._meta.db_table == 'igarment_production_orders'
+    assert IGarmentProductionOrder._meta.get_field('customer_order_no').max_length == 20
+    assert IGarmentProductionOrder._meta.get_field('order_no').max_length == 50
+    assert IGarmentProductionOrder._meta.get_field('quantity').get_internal_type() == 'IntegerField'
+    assert IGarmentProductionOrder._meta.get_field('created_date').get_internal_type() == 'DateTimeField'

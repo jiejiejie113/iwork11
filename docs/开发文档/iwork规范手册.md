@@ -165,6 +165,16 @@ flows = list(settings.VISIBLE_FLOWS)
 Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时效率；接口按请求时刻注入
 `work_minutes` 和 `employee_efficiency`，并通过响应头返回快照版本和陈旧状态。
 
+累计产量使用 `iwork_local.igarment_production_orders` 提供的工单创建日期。完整
+`WrkOrder` 可能带 `-0`、`P` 等后缀，必须沿用产品映射规则，以前 6 位匹配
+`customer_order_no`。若同一客户订单编号有多个创建时间，必须取
+`MIN(created_date)` 并转换为业务日期；远程生产查询按相同
+`(Flow, RegPerSysID, StepNo, WrkOrder)` 粒度汇总，日期条件必须为
+`RegDate >= 创建日期`，包含创建当天。不同创建日期使用可索引的独立查询分支并通过
+`UNION ALL` 合并，禁止重新拼成大型 `OR` 条件。当天事实与累计事实必须位于同一个
+MySQL `REPEATABLE READ` 事务快照内，再一起发布到同一 Redis 版本；Web/API 请求
+不得临时回源远程生产库。
+
 ### 4.5 整组目标产量与目标达成率
 
 生产组（Flow）详情使用整组目标输入，不允许逐员工或逐工单编辑目标。当前页面通过
@@ -326,6 +336,9 @@ const workorderItems = computed(() => {
 | `employees[].steps[].description` | `row._step.description` | 组合键工序描述 |
 | `employees[].steps[].step_time` | `row._step.step_time` | 标准工时 |
 | `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
+| `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
+| `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
+| `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
 | `employees[].output_value` | `emp.output_value` | 员工总产值 |
 | `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
 | `source` | 历史快照标识 | `local_snapshot` 表示本地只读历史数据 |
@@ -382,6 +395,25 @@ D:\DM\DTD_nginx\logs\watchdog\maintenance\iwork-production-orders.json
 ```
 
 有效维护期只跳过 iwork HTTP 探测。Docker Engine、`DKT_iwork` 容器、其他容器及其他应用 HTTP 仍正常监控。Python 告警监控保留 iwork 维护前状态，不发送虚假故障或恢复邮件。过期、损坏或字段不匹配的标记一律不放行。
+
+### 9.4 iGarment 创建日期快照同步
+
+服务器额外维护以下精简快照：
+
+```text
+D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
+    → 客戶訂單編號、訂單編號、數量、創建日期
+    → iwork_local.igarment_production_orders
+```
+
+- 任务名：`\DKT\iwork-iGarment-Production-Orders-Sync`；
+- 时间：服务器北京时间每天 `00:30`，避开 `00:00` 原生产订单任务的最长执行窗口；
+- 执行脚本：`scripts\sync-igarment-production-orders.ps1`；
+- 导入脚本：`scripts\import_igarment_production_orders.py`；
+- 与原生产订单任务共享全局互斥锁和看门狗认可的 30 分钟维护标记；
+- 使用独立 SHA-256 状态和日志，源文件未变化时成功跳过；
+- MySQL 的旧快照删除、批量写入和行数复核位于同一个事务，失败保留上一版；
+- `客戶訂單編號` 为空的源行允许保留，但累计查询不得将其用于 WrkOrder 匹配。
 
 ## 10. 修改检查清单
 

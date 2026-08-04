@@ -18,6 +18,7 @@ class DatabaseRouter:
         'targetproduction',
         'grouptargetproduction',
         'productionorder',
+        'igarmentproductionorder',
         'historicalproductionfact',
         'historicalstepsnapshot',
         'historicalsyncstate',

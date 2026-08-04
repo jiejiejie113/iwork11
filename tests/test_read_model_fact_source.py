@@ -1,5 +1,6 @@
 """单次基础事实采集生成实时读模型的行为测试。"""
 
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
@@ -81,6 +82,90 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
     assert snapshot["metadata"]["record_count"] == 4
 
 
+def test_flow_detail_uses_same_snapshot_cumulative_quantity():
+    """Flow 当日产量和从工单创建日起的累计产量应来自同一事实源。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[{
+            "reg_per_sys_id": 1001,
+            "stepno": 70,
+            "wrk_order": "BU1211",
+            "flow": "SO3-L3B",
+            "qty": 80,
+            "record_count": 2,
+        }],
+        cumulative_facts=[{
+            "reg_per_sys_id": 1001,
+            "stepno": 70,
+            "wrk_order": "BU1211",
+            "flow": "SO3-L3B",
+            "cumulative_qty": 23152,
+        }],
+    )
+
+    snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
+    employee = snapshot["views"]["detail"]["flow_employees"]["SO3-L3B"][0]
+
+    assert employee["total_qty"] == 80
+    assert employee["cumulative_qty"] == 23152
+    assert employee["steps"][0]["cumulative_qty"] == 23152
+
+
+def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
+    """当天事实和累计事实必须在同一远程一致性快照内采集。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    state = {"active": False}
+    remote = Mock()
+
+    @contextmanager
+    def consistent_snapshot():
+        state["active"] = True
+        try:
+            yield
+        finally:
+            state["active"] = False
+
+    def checked(value):
+        def query(*_args):
+            assert state["active"] is True
+            return value
+
+        return query
+
+    remote.read_model_consistent_snapshot.side_effect = consistent_snapshot
+    remote.get_read_model_fact_rows.side_effect = checked([{
+        "reg_per_sys_id": 1001,
+        "stepno": 70,
+        "wrk_order": "BU1211",
+        "flow": "SO3-L3B",
+        "qty": 80,
+        "record_count": 2,
+    }])
+    remote.get_igarment_creation_dates.return_value = {
+        "BU1211": date(2026, 6, 10),
+    }
+    remote.get_read_model_cumulative_rows.side_effect = checked([{
+        "reg_per_sys_id": 1001,
+        "stepno": 70,
+        "wrk_order": "BU1211",
+        "flow": "SO3-L3B",
+        "cumulative_qty": 23152,
+    }])
+    remote.get_read_model_products.return_value = {}
+    remote.get_batch_step_metadata.side_effect = checked({})
+
+    source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
+
+    assert source.cumulative_qty[("SO3-L3B", 1001, 70, "BU1211")] == 23152
+    remote.get_igarment_creation_dates.assert_called_once_with(["BU1211"])
+    remote.get_read_model_cumulative_rows.assert_called_once_with({
+        "BU1211": date(2026, 6, 10),
+    })
+
+
 @patch("iwork.read_model.builder.ReadModelFactSource.collect")
 def test_default_builder_collects_one_remote_fact_set(mock_collect):
     """默认构建入口必须只收集一次远程基础事实。"""
@@ -116,6 +201,9 @@ def test_collector_uses_remote_history_only_before_business_date():
     }]
     remote.get_read_model_products.return_value = {}
     remote.get_batch_step_metadata.return_value = {}
+    remote.read_model_consistent_snapshot.side_effect = nullcontext
+    remote.get_igarment_creation_dates.return_value = {}
+    remote.get_read_model_cumulative_rows.return_value = []
     remote.get_batch_monthly_total_trend.return_value = {
         70: [{"date": "2026-08-02", "qty": 80}],
     }

@@ -140,8 +140,8 @@ def test_flow_table_uses_composite_key_step_rows():
     assert 'row._step.output_value' in TEMPLATE
     assert 'row._woFirst' in TEMPLATE
     assert 'row._empFirst' in TEMPLATE
-    assert "collapsed ? 'min-w-[780px]' : 'min-w-[1180px]'" in TEMPLATE
-    assert ':colspan="collapsed ? 6 : 12"' in TEMPLATE
+    assert "collapsed ? 'min-w-[860px]' : 'min-w-[1280px]'" in TEMPLATE
+    assert ':colspan="collapsed ? 7 : 13"' in TEMPLATE
     assert 'max-lg:h-[220px]' in TEMPLATE
 
 
@@ -198,6 +198,7 @@ def test_expanded_flow_table_uses_requested_column_order():
         '工序号',
         '工序描述',
         '产量',
+        '累计产量',
         '总产量',
         '目标',
         '目标达成率',
@@ -216,6 +217,7 @@ def test_expanded_flow_table_uses_requested_column_order():
         'row._step.stepno',
         'row._step.description',
         'fmtNum(row._step.qty)',
+        'fmtNum(row._step.cumulative_qty)',
         'fmtNum(row._total_qty)',
         'getStepTarget(row.emp, row._step.stepno)',
         'getStepTargetRate(row.emp, row._step.stepno)',
@@ -226,6 +228,13 @@ def test_expanded_flow_table_uses_requested_column_order():
     ]
     positions = [expanded_row.index(cell) for cell in expected_cells]
     assert positions == sorted(positions)
+
+
+def test_flow_detail_displays_cumulative_quantity_summary_and_rows():
+    """累计产量应在 Flow 顶部、展开行和收起员工行中展示。"""
+    assert '· 累计产量 {[ fmtNum(detailSummary.cumulative_qty) ]}' in TEMPLATE
+    assert 'fmtNum(row._step.cumulative_qty)' in TEMPLATE
+    assert 'fmtNum(emp.cumulative_qty)' in TEMPLATE
 
 
 def test_detail_default_date_uses_business_timezone():

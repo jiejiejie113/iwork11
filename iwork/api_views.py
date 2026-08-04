@@ -731,6 +731,7 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         employee['steps'] = [dict(step) for step in source_employee.get('steps', [])]
         employees.append(employee)
     total_qty = sum(e['total_qty'] for e in employees)
+    cumulative_qty = sum(int(e.get('cumulative_qty') or 0) for e in employees)
 
     work_minutes, employees = _with_employee_efficiency(employees, target_date)
     group_target = _get_group_target_with_fallback(target_date, flow_name)
@@ -775,6 +776,7 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         'flow': flow_name,
         'date': target_date.isoformat(),
         'total_qty': total_qty,
+        'cumulative_qty': cumulative_qty,
         'worker_count': len(employees),
         'work_minutes': work_minutes,
         'hourly_trend': hourly_data.get(flow_name, []),
