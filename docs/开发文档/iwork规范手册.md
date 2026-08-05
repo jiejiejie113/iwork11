@@ -189,6 +189,24 @@ Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时�
 MySQL `REPEATABLE READ` 事务快照内，再一起发布到同一 Redis 版本；Web/API 请求
 不得临时回源远程生产库。
 
+累计产量的展示和聚合必须遵循以下边界：
+
+1. 当前业务日的 Flow 详情在员工、工序、工单和 Flow 汇总层同时返回
+   `cumulative_qty`；左侧工序栏默认显示今日产量，只允许通过“今日产量/累计产量”按钮
+   切换汇总口径，工序顺序始终按工序号数值升序。
+2. 产品树必须合并“当天产品视图已经出现的工单”所对应的累计事实，因此同一工单内
+   “今日产量为 0、但历史累计产量大于 0”的工序仍需保留。当天完全未出现的工单不会
+   仅因存在历史累计事实而重新加入产品树；产品、工单、工序和 Flow 四层累计值必须由
+   当前节点集的同一批叶子事实逐级汇总。
+3. 产品视图的累计产量指标只对当前业务日开放。切换到历史日期时必须隐藏累计产量按钮，
+   如果浏览器曾保存该指标则回退到今日产量，不能把缺失的历史累计值当作有效数据。
+4. 当前快照中没有匹配累计事实的叶子按累计产量 `0` 汇总。产值元数据不完整时界面显示
+   `--`，参与产品树排序时按 `0` 处理，但不能把 `0` 回写到 API 或 Redis 快照中掩盖
+   缺失的产值元数据。
+5. 历史 Flow 快照目前不保存累计产量；历史 Flow 页面即使出现累计切换，其缺失值回退
+   结果也只是兼容显示，不是真实累计数据，不得用于报表或跨日期比较。历史累计功能需在
+   历史快照模型单独落地后才能开放。
+
 ### 4.5 整组目标产量与目标达成率
 
 生产组（Flow）详情使用整组目标输入，不允许逐员工或逐工单编辑目标。当前页面通过
@@ -197,21 +215,44 @@ MySQL `REPEATABLE READ` 事务快照内，再一起发布到同一 Redis 版本�
 ```json
 {
   "flow": "SO3-L3A",
-  "group_target": 1000
+  "group_target": 1000,
+  "work_hours": 10
 }
 ```
 
 整组目标按业务日期和 Flow 保存到本地 `group_target_production` 表，并缓存为
-`group_target:{date}:{flow}`。读取 Flow 详情时遵循以下规则：
+`group_target:{date}:{flow}`；计划工作时长换算成分钟保存到 `planned_work_minutes`，并
+缓存为 `group_work_minutes:{date}:{flow}`。`work_hours` 必须大于 0 且不超过 24，允许
+小数，保存时按四舍五入换算为整数分钟，且换算结果必须至少为 1 分钟；请求未提供时
+沿用已有计划工作时长。
+
+当前时段目标按有效工作分钟计算：
+
+```text
+取整工作分钟 = min(ceil(有效工作分钟 / 60) × 60, 计划工作分钟)
+当前时段目标 = round_half_up(整组全天目标 × 取整工作分钟 / 计划工作分钟)
+```
+
+有效工作分钟必须先按第 5 节的班次规则扣除午休，再向上取整到下一整小时；已在整点时
+不继续进位，超过计划工作时间时封顶为全天目标。历史日期或旧记录没有计划工作时长时，
+当前时段目标等于整组全天目标。读取 Flow 详情时遵循以下规则：
 
 1. 当前 Flow 出现的每道工序都获得完整的整组目标；整组目标为 1000 时，每道工序目标均为 1000。
-2. 每道工序按去重员工人数分配整数个人目标；无法整除时按员工 ID 升序分配余数，确保个人目标合计严格等于工序目标。
-3. 员工工序达成率 = 该员工在该工序的实际产量 / 该员工的工序目标 × 100%。
-4. 员工汇总达成率 = 员工全部工序实际产量 / 员工全部工序目标合计 × 100%。
-5. 未设置整组目标的旧日期继续读取旧员工/工单目标；新页面只提供整组目标编辑入口。
-6. “按工序”详情可能跨多个 Flow，因此不提供整组目标编辑，避免把单个目标错误应用到多个生产组。
+2. 全天目标和当前时段目标分别按每道工序的去重员工人数分配整数个人目标；无法整除时
+   按员工 ID 数值升序分配余数，确保个人目标合计严格等于对应工序目标。
+3. 页面“目标”列展示当前时段个人目标；员工工序达成率 = 该员工在该工序所有工单的
+   实际产量合计 / 当前时段个人目标 × 100%。
+4. 同一员工负责多个本厂款号且工序相同时，只计算一份工序目标和达成率。展开表格必须
+   将这两列按员工与工序合并单元格显示，不能按工单重复展示。
+5. 员工汇总达成率 = 员工全部工序实际产量 / 员工全部当前时段目标合计 × 100%。
+6. 未设置整组目标的旧日期继续读取旧员工/工单目标；新页面只提供整组目标和工作时间
+   编辑入口。
+7. “按工序”详情可能跨多个 Flow，因此不提供整组目标编辑，避免把单个目标错误应用到多个生产组。
 
-接口分配结果仅在响应副本中注入，不得修改 Redis 版本化快照中的原始员工和工序数据。
+接口返回 `group_target`、`current_group_target`、`work_hours` 和 `step_targets`。分配结果
+仅在响应副本中注入，不得修改 Redis 版本化快照中的原始员工和工序数据。左侧工序栏
+不显示目标值；展开明细列顺序固定为：员工 ID、本厂款号、工序号、工序描述、产量、
+累计产量、总产量、目标、目标达成率、标准工时、产值、总产值、员工效率。
 
 `statistics.py` 中 `get_batch_stats` 生成 `all` 视图时，`flows` 字段会跨工序合并去重，
 同时必须保留 `product_name` 和 `order_no`。
@@ -290,6 +331,13 @@ function stepColor(idx, stepno) {
   `normal_flows` 白名单；“普通线”按钮默认开启，树表和图表共同使用同一份本地过滤
   结果，切换时不得发起新请求。普通线开关不写入 `localStorage`，每次进入页面均回到
   默认开启状态。
+- 产品图表指标是树表和图表的唯一排序来源：今日产量对应 `qty`，累计产量对应
+  `cumulative_qty`，产值对应 `output_value`。产品名称、本厂款号和生产线层按当前指标
+  降序；工序层不受指标切换影响，始终按工序号数值升序。
+- 以上排序规则必须递归应用到每个树层级；指标值相同时保持输入的稳定顺序，不增加名称
+  或 Flow 的次级排序。
+- 图表只能读取当前焦点节点的直属子节点，并严格沿用树表顺序，禁止再对图表数据执行
+  独立排序。切换指标后必须同时重建树表和图表，并保留仍然有效的展开路径。
 
 ---
 
@@ -336,7 +384,7 @@ const workorderItems = computed(() => {
 
 ## 9. 前后端字段同步
 
-### 8.1 实时数据 API → dashboard.html
+### 9.1 实时数据 API → dashboard.html
 
 | API 字段 | 前端变量 | 用途 |
 |----------|----------|------|
@@ -349,7 +397,7 @@ const workorderItems = computed(() => {
 | `workorders` | `data.workorders` | 工单列表 |
 | `all_stepnos` | `data.all_stepnos` | 工序下拉列表 |
 
-### 8.2 生产详情 API → production_detail.html
+### 9.2 生产详情 API → production_detail.html
 
 | API 字段 | 前端变量 | 用途 |
 |----------|----------|------|
@@ -362,6 +410,11 @@ const workorderItems = computed(() => {
 | `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
 | `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
 | `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
+| `group_target` | `groupTarget` | 整组全天目标 |
+| `current_group_target` | `currentGroupTarget` | 按有效工作时长折算的当前时段目标 |
+| `work_hours` | `workHours` | 计划工作小时数 |
+| `step_targets` | 当前未直接绑定 | 顶层工序目标汇总，供接口核对和后续展示使用 |
+| `employees[].step_targets` | `emp.step_targets` | 员工各工序的全天/当前目标及达成率 |
 | `products` | `productList` | 按产品、工单、工序和 Flow 聚合的完整产品树 |
 | `normal_flows` | `productNormalFlows` | 产品视图“普通线”本地过滤白名单 |
 | `employees[].output_value` | `emp.output_value` | 员工总产值 |
@@ -375,7 +428,7 @@ const workorderItems = computed(() => {
 失败时显示明确错误，不能把错误 JSON 或空列表当作有效历史数据。历史目标只使用后端
 按日期返回的 `target` / `wo_targets`，不得使用浏览器旧值覆盖。
 
-### 8.3 修改规则
+### 9.3 修改规则
 
 1. **后端新增字段** → 前端 `Object.assign` / `map` 中同步添加
 2. **后端删除字段** → 前端引用处同步删除，否则显示 `undefined`
@@ -383,9 +436,9 @@ const workorderItems = computed(() => {
 
 ---
 
-## 9. 生产订单每日同步
+## 10. 生产订单每日同步
 
-### 9.1 数据流与一致性
+### 10.1 数据流与一致性
 
 ```text
 D:\DM\iwork\sqlite\production_orders.db（只读挂载）
@@ -399,7 +452,7 @@ D:\DM\iwork\sqlite\production_orders.db（只读挂载）
 - SQLite 空表不得覆盖已有 MySQL 快照；
 - 成功发布后必须核对 SQLite 与 MySQL 行数一致。
 
-### 9.2 计划任务
+### 10.2 计划任务
 
 - 任务名：`\DKT\iwork-Production-Orders-Sync`；
 - 执行账户：`SYSTEM`，最高权限；
@@ -411,7 +464,7 @@ D:\DM\iwork\sqlite\production_orders.db（只读挂载）
 
 脚本以 SHA-256 记录上次成功快照。源文件哈希未变化时返回成功并跳过 Docker；只有导入成功后才原子更新成功状态，失败不得覆盖成功哈希。
 
-### 9.3 看门狗维护窗口
+### 10.3 看门狗维护窗口
 
 同步脚本在导入期间创建带 30 分钟 TTL 的维护标记：
 
@@ -421,7 +474,7 @@ D:\DM\DTD_nginx\logs\watchdog\maintenance\iwork-production-orders.json
 
 有效维护期只跳过 iwork HTTP 探测。Docker Engine、`DKT_iwork` 容器、其他容器及其他应用 HTTP 仍正常监控。Python 告警监控保留 iwork 维护前状态，不发送虚假故障或恢复邮件。过期、损坏或字段不匹配的标记一律不放行。
 
-### 9.4 iGarment 创建日期快照同步
+### 10.4 iGarment 创建日期快照同步
 
 服务器额外维护以下精简快照：
 
@@ -440,25 +493,47 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - MySQL 的旧快照删除、批量写入和行数复核位于同一个事务，失败保留上一版；
 - `客戶訂單編號` 为空的源行允许保留，但累计查询不得将其用于 WrkOrder 匹配。
 
-## 10. 修改检查清单
+### 10.5 累计产量源明细审计导出
+
+`scripts/export_wrkorder_cumulative_details.py` 是人工核对累计产量差异的只读审计工具，
+不属于定时同步、Redis 快照构建或应用运行依赖。使用时只修改脚本顶部的全局
+`WRKORDER`，脚本必须按完整 `WrkOrder` 精确匹配 `pytckreg3`：
+
+- 查询不得添加日期、Flow 或工序白名单，不得执行 `SUM`、`GROUP BY`、去重或字段转换；
+- 导出字段只由脚本顶部 `SOURCE_FIELDS` 定义，源记录逐行写入，按工序号、登记日期时间、
+  TicketNo 和 SeqNo 排序，便于与应用聚合结果反向核对；
+- 运维必须提供只读生产库账号；脚本只保证执行参数化 `SELECT`，不会验证账号权限。
+  凭据按顺序从 `scripts/export.env`、当前工作目录的 `export.env` 或现有 `iwork/.env`
+  读取，不得写入脚本或提交到 Git；
+- 使用服务端游标和 `openpyxl` 只写模式处理大结果集，输出到 `scripts/output`，文件名为
+  `pytckreg3_<WrkOrder>_累计产量源明细_<时间戳>.xlsx`；
+- 文件先写入同目录唯一临时文件，成功关闭后再替换为正式文件；失败时清理临时文件并
+  保留日志，不能留下看似完整的半成品。
+
+## 11. 修改检查清单
 
 每次修改后，按以下清单检查：
 
 - [ ] **配置变更**：`settings.py` → 更新本手册第 2 节
-- [ ] **字段变更**：API 返回字段 → 更新本手册第 4/8 节 + 前端模板
+- [ ] **字段变更**：API 返回字段 → 更新本手册第 4/9 节 + 前端模板
 - [ ] **查询变更**：`queries.py` 的历史同语义查询 → 同步修改 `local_queries.py`；仅用于当前业务日单次采集的事实入口不新增历史镜像
 - [ ] **图表变更**：字体/颜色/数据源 → 更新本手册第 6 节
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
-- [ ] **隐藏分组**：修改 `HIDDEN_FLOWS` → 更新本手册第 3 节
-- [ ] **重建容器**：`docker compose up -d --build`
+- [ ] **Flow 语义**：按生产线继续应用白名单；按产品名称返回完整 Flow，并在浏览器本地切换普通线
+- [ ] **累计产量**：创建日期匹配、同事务水位、完整产品 Flow 和历史日期限制保持一致
+- [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
+- [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
+  使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
+  完成最终重建并验证容器状态和实际接口。用户明确要求暂不提交、暂不部署或仅修改代码时
+  从其要求；仅文档变更无需重建应用
 
 ---
 
-## 11. 产量看板模块
+## 12. 产量看板模块
 
 > 新增于 2026-06-16
 
-### 11.1 架构
+### 12.1 架构
 
 | 文件 | 变更 |
 |------|------|
@@ -472,7 +547,7 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 | `iwork/templates/iwork/_header.html` | 添加"产量看板"标签 |
 | `iwork/settings.py` | 新增 `KANBAN_DEFAULT_STEPNO='70'`、`KANBAN_DEFAULT_PAGE_SIZE=50` |
 
-### 11.2 API 端点
+### 12.2 API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -481,14 +556,14 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 | GET | `/api/kanban/ranking/` | 排行榜分页列表（50条/页） |
 | GET | `/api/kanban/filter-options/` | 筛选项（stepnos, wrk_orders, flows, employees） |
 
-### 11.3 默认配置
+### 12.3 默认配置
 
 ```python
 KANBAN_DEFAULT_STEPNO = '70'    # 默认工序
 KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 ```
 
-### 11.4 筛选器
+### 12.4 筛选器
 
 - **工序**：单选，默认 `'70'`
 - **款号**：单选，默认全部（空字符串）
@@ -497,7 +572,7 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 - **清空按钮**：恢复默认值（stepno='70'，其余全部）
 - **日期**：日期选择器，默认当天
 
-### 11.5 前端技术栈
+### 12.5 前端技术栈
 
 - Vue 3 CDN（分隔符 `{[` `]}`）
 - Tailwind CSS CDN（darkMode: 'class'）
