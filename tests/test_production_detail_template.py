@@ -45,16 +45,28 @@ def test_metadata_is_only_populated_when_composite_key_is_resolved():
     assert "const displayName = curDim === 'stepno' ? '工序' + val : val;" in TEMPLATE
 
 
-def test_product_chart_switches_and_sorts_by_selected_metric():
-    """产品图表应按所选指标切换并排序。"""
+def test_product_metric_controls_tree_sort_and_chart_reuses_tree_order():
+    """产品指标应控制树表排序，图表应直接沿用树表顺序。"""
     assert "const productChartMetric = ref('qty');" in TEMPLATE
     assert "setProductChartMetric('qty')" in TEMPLATE
     assert "setProductChartMetric('output_value')" in TEMPLATE
-    assert 'items.sort((a, b) => b.value - a.value)' in TEMPLATE
+    assert 'function productMetricValue(item, metric)' in TEMPLATE
+    assert 'return Number(item[metricKey] ?? 0);' in TEMPLATE
+    assert '[...ancestorDims, curDim],' in TEMPLATE
+    assert 'sortMetric,' in TEMPLATE
+    assert 'nodes.sort((a, b) => a._rawVal - b._rawVal);' in TEMPLATE
+    assert 'productMetricValue(b, sortMetric) - productMetricValue(a, sortMetric)' in TEMPLATE
+
+    chart_items = TEMPLATE.split('const productChartItems = computed', 1)[1].split(
+        'const productChartLabels',
+        1,
+    )[0]
+    assert 'value: productMetricValue(row, productChartMetric.value)' in chart_items
+    assert 'items.sort(' not in chart_items
 
 
 def test_product_view_displays_and_charts_cumulative_quantity():
-    """产品树应显示累计产量，图表切换后按累计值重新排序。"""
+    """产品树应显示累计产量，图表切换后沿用树表排序。"""
     product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
     product_view = product_view.split('<!-- ===== 详情页 ===== -->', 1)[0]
 
@@ -73,7 +85,8 @@ def test_product_view_displays_and_charts_cumulative_quantity():
         'const productChartLabels',
         1,
     )[0]
-    assert 'items.sort((a, b) => b.value - a.value)' in chart_items
+    assert 'value: productMetricValue(row, productChartMetric.value)' in chart_items
+    assert 'items.sort(' not in chart_items
 
 
 def test_product_chart_resets_cumulative_metric_when_switching_to_history():

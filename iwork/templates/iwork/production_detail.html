@@ -894,6 +894,16 @@ createApp({
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
         const levelShortLabels = { product: '产品', wrk_order: '款号', stepno: '工序', flow: '线体' };
+        const productMetricNodeKeys = {
+            qty: 'qty',
+            cumulative_qty: 'cumulativeQty',
+            output_value: 'outputValue',
+        };
+
+        function productMetricValue(item, metric) {
+            const metricKey = productMetricNodeKeys[metric] || 'qty';
+            return Number(item[metricKey] ?? 0);
+        }
 
         function pickDim(leaf, dim) {
             if (dim === 'product') return leaf.product_name;
@@ -929,7 +939,12 @@ createApp({
             return leaves;
         }
 
-        function buildGroupedTree(leaves, levels, ancestorDims = []) {
+        function buildGroupedTree(
+            leaves,
+            levels,
+            ancestorDims = [],
+            sortMetric = productChartMetric.value,
+        ) {
             if (!levels.length || !leaves.length) return [];
             const curDim = levels[0];
             const restLevels = levels.slice(1);
@@ -944,7 +959,12 @@ createApp({
             const nodes = [];
             for (const [val, groupLeaves] of groups) {
                 const children = restLevels.length
-                    ? buildGroupedTree(groupLeaves, restLevels, [...ancestorDims, curDim])
+                    ? buildGroupedTree(
+                        groupLeaves,
+                        restLevels,
+                        [...ancestorDims, curDim],
+                        sortMetric,
+                    )
                     : [];
                 const totalQty = groupLeaves.reduce((s, l) => s + l.qty, 0);
                 const hasCompleteCumulativeQty = groupLeaves.every(
@@ -990,11 +1010,13 @@ createApp({
                     _rawVal: val,
                 });
             }
-            // 排序：工序层按时序升序，其余层按产量降序
+            // 排序：工序层按时序升序，其余层按当前图表指标降序
             if (curDim === 'stepno') {
                 nodes.sort((a, b) => a._rawVal - b._rawVal);
             } else {
-                nodes.sort((a, b) => b.qty - a.qty);
+                nodes.sort((a, b) => (
+                    productMetricValue(b, sortMetric) - productMetricValue(a, sortMetric)
+                ));
             }
             return nodes;
         }
@@ -1145,17 +1167,10 @@ createApp({
         }
 
         const productChartItems = computed(() => {
-            const metricKeys = {
-                qty: 'qty',
-                cumulative_qty: 'cumulativeQty',
-                output_value: 'outputValue',
-            };
-            const metricKey = metricKeys[productChartMetric.value] || 'qty';
             const items = getProductChartRows().map(row => ({
                 label: row.name,
-                value: Number(row[metricKey] ?? 0),
+                value: productMetricValue(row, productChartMetric.value),
             }));
-            items.sort((a, b) => b.value - a.value);
             return items;
         });
 
