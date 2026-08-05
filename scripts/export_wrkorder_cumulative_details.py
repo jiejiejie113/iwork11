@@ -14,8 +14,104 @@ from openpyxl import Workbook
 from pymysql.cursors import SSCursor
 
 # ======
-# 查询配置：日常使用只需修改这里的工单号
+# 查询模式配置
+EXPORT_MODE = "compact"  # detail：单工单完整明细；compact：多工单精简汇总
 WRKORDER = "BU1211"
+WRKORDERS = (
+    "BU0724",
+    "BU0730",
+    "BU0750",
+    "BU0751",
+    "BU0796",
+    "BU0994",
+    "BU1022",
+    "BU1072",
+    "BU1073",
+    "BU1081",
+    "BU1082",
+    "BU1083",
+    "BU1087",
+    "BU1089",
+    "BU1090",
+    "BU1129",
+    "BU1130",
+    "BU1143",
+    "BU1148",
+    "BU1160",
+    "BU1161",
+    "BU1162",
+    "BU1163",
+    "BU1165",
+    "BU1165A",
+    "BU1166",
+    "BU1166A",
+    "BU1179",
+    "BU1180",
+    "BU1185",
+    "BU1190",
+    "BU1191",
+    "BU1194",
+    "BU1195",
+    "BU1197",
+    "BU1198",
+    "BU1202",
+    "BU1203",
+    "BU1203A",
+    "BU1205",
+    "BU1210",
+    "BU1211",
+    "BU1217",
+    "BU1218",
+    "BU1220",
+    "BU1229",
+    "BU1237",
+    "BU1242",
+    "BU1243",
+    "BU1245",
+    "BU1246",
+    "BU1255",
+    "BU1256",
+    "BU1257",
+    "BU1258",
+    "BU1259",
+    "BU1260",
+    "BU1261",
+    "BU1262",
+    "BU1268",
+    "BU1269",
+    "BU1270",
+    "BU1271",
+    "BU1272",
+    "BU1273",
+    "BU1276",
+    "BU1277",
+    "BU1284",
+    "BU1285",
+    "BU1289",
+    "BU1290",
+    "BU1291",
+    "BU1292",
+    "BU1293",
+    "BU1294",
+    "BU1295",
+    "BU1300",
+    "BU1310",
+    "BU1311",
+    "BU1312",
+    "BU1313",
+    "BU1314",
+    "BU1317",
+    "BU1318",
+    "BU1319",
+    "BU1320",
+    "BU1328",
+    "BU1339",
+    "BU1342",
+    "BU1377",
+    "BU1388",
+    "BU1389",
+)
+COMPACT_STEP_NOS = (1, 3, 6)
 
 # ======
 # 文件路径配置
@@ -60,6 +156,11 @@ SOURCE_FIELDS = (
     "SerialNum",
     "StationID",
 )
+COMPACT_EXPORT_FIELDS = (
+    "WrkOrder",
+    "起始RegDate",
+    *(f"StepNo={step_no} Qty总和" for step_no in COMPACT_STEP_NOS),
+)
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "
@@ -96,6 +197,42 @@ def build_detail_query() -> str:
         FROM `pytckreg3`
         WHERE `WrkOrder` = %s
         ORDER BY `StepNo`, `RegDate`, `RegTime`, `TicketNo`, `SeqNo`
+    """
+
+
+def build_compact_query(wrkorder_count: int) -> str:
+    """
+    构建多工单精简汇总的参数化只读查询。
+
+    最早 RegDate 从工单全部记录中获取，三个工序只限制各自的 Qty 汇总，
+    因此不能在 WHERE 中提前过滤 StepNo。
+
+    Args:
+        wrkorder_count (int): 查询的工单数量。
+
+    Returns:
+        str: 按工单汇总最早日期和指定工序产量的查询。
+
+    Raises:
+        ValueError: 工单数量小于 1。
+    """
+    if wrkorder_count < 1:
+        raise ValueError("精简模式至少需要一个 WRKORDER")
+
+    placeholders = ", ".join("%s" for _ in range(wrkorder_count))
+    qty_expressions = ",\n            ".join(
+        "COALESCE(SUM(CASE WHEN `StepNo` = "
+        f"{step_no} THEN `Qty` ELSE 0 END), 0) AS `StepNo_{step_no}_Qty`"
+        for step_no in COMPACT_STEP_NOS
+    )
+    return f"""
+        SELECT
+            `WrkOrder`,
+            MIN(`RegDate`) AS `StartRegDate`,
+            {qty_expressions}
+        FROM `pytckreg3`
+        WHERE `WrkOrder` IN ({placeholders})
+        GROUP BY `WrkOrder`
     """
 
 
@@ -156,6 +293,20 @@ def build_output_path(wrkorder: str, output_dir: Path) -> Path:
     safe_wrkorder = re.sub(r'[^0-9A-Za-z_-]+', "_", wrkorder)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return output_dir / f"pytckreg3_{safe_wrkorder}_累计产量源明细_{timestamp}.xlsx"
+
+
+def build_compact_output_path(output_dir: Path) -> Path:
+    """
+    生成精简汇总导出文件路径。
+
+    Args:
+        output_dir (Path): 导出目录。
+
+    Returns:
+        Path: 最终 XLSX 文件路径。
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return output_dir / f"pytckreg3_工单累计产量精简汇总_{timestamp}.xlsx"
 
 
 def export_wrkorder_details(
@@ -235,16 +386,119 @@ def export_wrkorder_details(
             connection.close()
 
 
+def export_compact_summary(
+    wrkorders: tuple[str, ...],
+    output_dir: Path = OUTPUT_DIR,
+    db_config: dict[str, Any] | None = None,
+    connection_factory: Callable[..., Any] = pymysql.connect,
+) -> tuple[Path, int]:
+    """
+    批量导出各工单的最早日期和指定工序累计产量。
+
+    查询结果会按传入工单顺序输出。生产表中不存在的工单仍保留一行，
+    起始日期为空，三个工序的 Qty 总和为 0。
+
+    Args:
+        wrkorders (tuple[str, ...]): 要汇总的完整 WrkOrder 列表。
+        output_dir (Path): XLSX 输出目录。
+        db_config (dict[str, Any] | None): 数据库连接参数，默认从配置文件加载。
+        connection_factory (Callable[..., Any]): 数据库连接工厂，默认使用 PyMySQL。
+
+    Returns:
+        tuple[Path, int]: 导出文件路径和输出工单行数。
+
+    Raises:
+        ValueError: 工单列表为空、包含空值或包含重复项。
+        pymysql.MySQLError: 生产库连接或查询失败。
+    """
+    normalized_wrkorders = tuple(wrkorder.strip() for wrkorder in wrkorders)
+    if not normalized_wrkorders:
+        raise ValueError("精简模式至少需要一个 WRKORDER")
+    if any(not wrkorder for wrkorder in normalized_wrkorders):
+        raise ValueError("WRKORDER 列表不能包含空值")
+    if len(set(normalized_wrkorders)) != len(normalized_wrkorders):
+        raise ValueError("WRKORDER 列表不能包含重复项")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = build_compact_output_path(output_dir)
+    temp_path = output_path.with_name(
+        f"{output_path.stem}.{uuid4().hex}.tmp{output_path.suffix}"
+    )
+    connection = None
+    workbook = None
+
+    try:
+        config = db_config if db_config is not None else load_db_config()
+        logger.info(
+            "开始查询生产源表精简汇总: WRKORDER数量={}, host={}, database={}",
+            len(normalized_wrkorders),
+            config.get("host", ""),
+            config.get("database", ""),
+        )
+        connection = connection_factory(**config)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                build_compact_query(len(normalized_wrkorders)),
+                normalized_wrkorders,
+            )
+            query_rows = list(cursor)
+
+        summaries = {str(row[0]): row[1:] for row in query_rows}
+        workbook = Workbook(write_only=True)
+        worksheet = workbook.create_sheet(title="工单累计产量精简汇总")
+        worksheet.append(COMPACT_EXPORT_FIELDS)
+        empty_summary = (None, *(0 for _ in COMPACT_STEP_NOS))
+        for wrkorder in normalized_wrkorders:
+            start_regdate, *qty_totals = summaries.get(wrkorder, empty_summary)
+            worksheet.append(
+                (
+                    wrkorder,
+                    start_regdate,
+                    *(qty_total or 0 for qty_total in qty_totals),
+                )
+            )
+
+        workbook.save(temp_path)
+        workbook.close()
+        workbook = None
+        temp_path.replace(output_path)
+        logger.success(
+            "精简汇总导出完成: {}，输出 {} 个工单，其中 {} 个匹配生产数据",
+            output_path,
+            len(normalized_wrkorders),
+            len(summaries),
+        )
+        return output_path, len(normalized_wrkorders)
+    except Exception:
+        if workbook is not None:
+            workbook.close()
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def main() -> int:
     """
-    执行全局配置中的工单累计产量源明细导出。
+    根据全局模式执行完整明细或精简汇总导出。
 
     Returns:
         int: 成功返回 0，失败返回 1。
     """
     configure_logging()
     try:
-        export_wrkorder_details(WRKORDER)
+        normalized_mode = EXPORT_MODE.strip().lower()
+        if normalized_mode == "detail":
+            export_wrkorder_details(WRKORDER)
+        elif normalized_mode == "compact":
+            export_compact_summary(WRKORDERS)
+        else:
+            raise ValueError(
+                f"不支持的 EXPORT_MODE: {EXPORT_MODE}，只能使用 detail 或 compact"
+            )
     except Exception as exc:
         logger.exception("导出失败: {}", exc)
         return 1
