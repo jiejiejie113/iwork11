@@ -65,8 +65,8 @@ def test_igarment_creation_dates_use_earliest_day_per_workorder():
 
 
 @patch('iwork.models.Pytckreg3')
-def test_cumulative_rows_include_creation_day(mock_model):
-    """累计查询必须使用创建日起点，并保留全部 Flow 的聚合事实。"""
+def test_cumulative_rows_use_all_non_null_regdates(mock_model):
+    """累计查询应按完整工单一次汇总全部非空日期的 Flow 事实。"""
     from iwork.queries import get_read_model_cumulative_rows
 
     queryset = mock_model.objects.using.return_value.filter.return_value
@@ -97,11 +97,12 @@ def test_cumulative_rows_include_creation_day(mock_model):
         },
     ])
 
-    result = get_read_model_cumulative_rows({'BU1211': date(2026, 6, 10)})
+    result = get_read_model_cumulative_rows(['BU1211', 'BU1211', ''])
 
     query_filter = mock_model.objects.using.return_value.filter.call_args.kwargs
-    assert query_filter['RegDate__gte'].date() == date(2026, 6, 10)
+    assert query_filter['RegDate__isnull'] is False
     assert query_filter['WrkOrder__in'] == ['BU1211']
+    assert 'RegDate__gte' not in query_filter
     assert result == [
         {
             'reg_per_sys_id': 1001,
@@ -130,8 +131,8 @@ def test_cumulative_rows_include_creation_day(mock_model):
 
 
 @patch('iwork.models.Pytckreg3')
-def test_cumulative_rows_union_each_creation_date_branch(mock_model):
-    """不同创建日期必须用独立 UNION 分支，避免大型 OR 聚合读超时。"""
+def test_cumulative_rows_use_one_query_for_multiple_workorders(mock_model):
+    """多个工单必须通过一个 IN 聚合查询完成，不再按创建日期 UNION。"""
     from iwork.queries import get_read_model_cumulative_rows
 
     queryset = mock_model.objects.using.return_value
@@ -139,21 +140,40 @@ def test_cumulative_rows_union_each_creation_date_branch(mock_model):
         queryset.filter.return_value.values.return_value
         .annotate.return_value.order_by.return_value
     )
-    rows.union.return_value.__iter__.return_value = iter([])
+    rows.__iter__.return_value = iter([])
+
+    get_read_model_cumulative_rows(['BU1212', 'BU1211'])
+
+    queryset.filter.assert_called_once_with(
+        WrkOrder__in=['BU1211', 'BU1212'],
+        RegDate__isnull=False,
+    )
+    queryset.filter.return_value.exclude.assert_not_called()
+    queryset.filter.return_value.filter.assert_not_called()
+    rows.union.assert_not_called()
+
+
+@patch('iwork.models.Pytckreg3')
+def test_cumulative_rows_keep_legacy_creation_date_mapping_interface(mock_model):
+    """旧版创建日期映射参数仍可调用，但日期值不再参与累计过滤。"""
+    from iwork.queries import get_read_model_cumulative_rows
+
+    queryset = mock_model.objects.using.return_value
+    rows = (
+        queryset.filter.return_value.values.return_value
+        .annotate.return_value.order_by.return_value
+    )
+    rows.__iter__.return_value = iter([])
 
     get_read_model_cumulative_rows({
         'BU1211': date(2026, 6, 10),
         'BU1212': date(2026, 6, 11),
     })
 
-    assert queryset.filter.call_count == 2
-    assert [call.kwargs['RegDate__gte'].date() for call in queryset.filter.call_args_list] == [
-        date(2026, 6, 10),
-        date(2026, 6, 11),
-    ]
-    queryset.filter.return_value.exclude.assert_not_called()
-    queryset.filter.return_value.filter.assert_not_called()
-    rows.union.assert_called_once_with(rows, all=True)
+    queryset.filter.assert_called_once_with(
+        WrkOrder__in=['BU1211', 'BU1212'],
+        RegDate__isnull=False,
+    )
 
 
 @patch('iwork.queries.transaction.atomic')

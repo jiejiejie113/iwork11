@@ -102,49 +102,37 @@ def read_model_consistent_snapshot():
 
 
 def get_read_model_cumulative_rows(
-    creation_dates: dict[str, date],
+    wrk_orders: list[str] | dict[str, date],
 ) -> list[dict]:
-    """按 iGarment 最早创建日分批汇总当前工单的累计生产事实。
+    """一次汇总当前工单全部非空登记日期的累计生产事实。
 
-    每个创建日期使用独立的 ``UNION ALL`` 分支，避免大型 OR 条件触发远程
-    数据库读超时；调用方负责将该查询与当天事实查询放在同一个可重复读事务
-    中，保证统一快照水位。
+    查询按完整 WrkOrder 精确匹配，不再依赖 iGarment 创建日期。字典参数仅为
+    兼容旧调用方，其日期值不会参与过滤。调用方负责将该查询与当天事实查询
+    放在同一个可重复读事务中，保证统一快照水位。
 
     Args:
-        creation_dates: 按完整 WrkOrder 组织的最早创建日期。
+        wrk_orders: 完整 WrkOrder 列表，或旧版的 WrkOrder 到日期映射。
 
     Returns:
         list[dict]: 按 Flow、员工、工序和完整工单汇总的累计产量。
     """
-    if not creation_dates:
+    source_orders = wrk_orders.keys() if isinstance(wrk_orders, dict) else wrk_orders
+    normalized = sorted({str(wrk_order) for wrk_order in source_orders if wrk_order})
+    if not normalized:
         return []
 
     from iwork.models import Pytckreg3
 
-    orders_by_date: dict[date, list[str]] = {}
-    for wrk_order, start_date in creation_dates.items():
-        if not wrk_order or start_date is None:
-            continue
-        orders_by_date.setdefault(start_date, []).append(wrk_order)
-    if not orders_by_date:
-        return []
-
-    querysets = []
-    for start_date, wrk_orders in sorted(orders_by_date.items()):
-        start, _end = get_date_range(start_date)
-        querysets.append(
-            Pytckreg3.objects.using('iwork')
-            .filter(
-                WrkOrder__in=sorted(set(wrk_orders)),
-                RegDate__gte=start,
-            )
-            .values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
-            .annotate(cumulative_qty=Sum('Qty'))
-            .order_by()
+    rows = (
+        Pytckreg3.objects.using('iwork')
+        .filter(
+            WrkOrder__in=normalized,
+            RegDate__isnull=False,
         )
-    rows = querysets[0]
-    if len(querysets) > 1:
-        rows = rows.union(*querysets[1:], all=True)
+        .values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
+        .annotate(cumulative_qty=Sum('Qty'))
+        .order_by()
+    )
     return [
         {
             'reg_per_sys_id': row['RegPerSysID'],

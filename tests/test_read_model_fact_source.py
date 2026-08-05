@@ -223,9 +223,6 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
         "qty": 80,
         "record_count": 2,
     }])
-    remote.get_igarment_creation_dates.return_value = {
-        "BU1211": date(2026, 6, 10),
-    }
     remote.get_read_model_cumulative_rows.side_effect = checked([{
         "reg_per_sys_id": 1001,
         "stepno": 70,
@@ -239,10 +236,8 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
     source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
 
     assert source.cumulative_qty[("SO3-L3B", 1001, 70, "BU1211")] == 23152
-    remote.get_igarment_creation_dates.assert_called_once_with(["BU1211"])
-    remote.get_read_model_cumulative_rows.assert_called_once_with({
-        "BU1211": date(2026, 6, 10),
-    })
+    remote.get_igarment_creation_dates.assert_not_called()
+    remote.get_read_model_cumulative_rows.assert_called_once_with(["BU1211"])
 
 
 @patch("iwork.read_model.builder.ReadModelFactSource.collect")
@@ -281,7 +276,6 @@ def test_collector_uses_remote_history_only_before_business_date():
     remote.get_read_model_products.return_value = {}
     remote.get_batch_step_metadata.return_value = {}
     remote.read_model_consistent_snapshot.side_effect = nullcontext
-    remote.get_igarment_creation_dates.return_value = {}
     remote.get_read_model_cumulative_rows.return_value = []
     remote.get_batch_monthly_total_trend.return_value = {
         70: [{"date": "2026-08-02", "qty": 80}],
@@ -302,6 +296,7 @@ def test_collector_uses_remote_history_only_before_business_date():
         {"date": "2026-08-03", "qty": 100},
     ]
     remote.get_read_model_fact_rows.assert_called_once_with(BUSINESS_DATE)
+    remote.get_igarment_creation_dates.assert_not_called()
     remote.get_batch_monthly_total_trend.assert_called_once_with(
         date(2026, 8, 1),
         date(2026, 8, 2),

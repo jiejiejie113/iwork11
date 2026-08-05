@@ -38,9 +38,8 @@ class ReadModelFactSource:
                 for item in facts
                 if item.get("wrk_order")
             })
-            creation_dates = source.get_igarment_creation_dates(wrk_orders)
             cumulative_facts = source.get_read_model_cumulative_rows(
-                creation_dates,
+                wrk_orders,
             )
             products = source.get_read_model_products(wrk_orders)
             step_metadata = source.get_batch_step_metadata(wrk_orders)

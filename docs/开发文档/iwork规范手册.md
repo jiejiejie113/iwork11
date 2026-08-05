@@ -34,10 +34,12 @@ Uvicorn ASGI (4 workers)
 
 ### 实时快照发布不变量
 
-当前业务日只允许 `get_read_model_fact_rows()` 对远程 `pytckreg3` 执行一次基础事实
-聚合查询。实时、当前日月趋势、生产详情、产品视图和 Kanban 必须由
-`ReadModelFactSource` 在内存中从这批不可变事实派生，禁止为任一今日视图再次查询
-`pytckreg3`。月度历史远程查询最多截止当前业务日的前一天；产品信息读取本地
+当前业务日只允许对远程 `pytckreg3` 执行两类受控产量查询：
+`get_read_model_fact_rows()` 的当天基础事实聚合，以及
+`get_read_model_cumulative_rows()` 的当前工单累计事实聚合，两者必须各执行一次并共享
+同一个可重复读事务水位。实时、当前日月趋势、生产详情、产品视图和 Kanban 必须由
+`ReadModelFactSource` 在内存中从这两批不可变事实派生，禁止为任一今日视图追加其他
+`pytckreg3` 查询。月度历史远程查询最多截止当前业务日的前一天；产品信息读取本地
 `ProductionOrder`，工序描述和标准工时的只读元数据查询不参与产量一致性。
 
 `read_model.schemas` 必须在写入 Redis 前校验以下同语义汇总，任一不一致都禁止切换
@@ -179,15 +181,12 @@ flows = list(settings.VISIBLE_FLOWS)
 Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时效率；接口按请求时刻注入
 `work_minutes` 和 `employee_efficiency`，并通过响应头返回快照版本和陈旧状态。
 
-累计产量使用 `iwork_local.igarment_production_orders` 提供的工单创建日期。完整
-`WrkOrder` 可能带 `-0`、`P` 等后缀，必须沿用产品映射规则，以前 6 位匹配
-`customer_order_no`。若同一客户订单编号有多个创建时间，必须取
-`MIN(created_date)` 并转换为业务日期；远程生产查询按相同
-`(Flow, RegPerSysID, StepNo, WrkOrder)` 粒度汇总，日期条件必须为
-`RegDate >= 创建日期`，包含创建当天。不同创建日期使用可索引的独立查询分支并通过
-`UNION ALL` 合并，禁止重新拼成大型 `OR` 条件。当天事实与累计事实必须位于同一个
-MySQL `REPEATABLE READ` 事务快照内，再一起发布到同一 Redis 版本；Web/API 请求
-不得临时回源远程生产库。
+累计产量直接从远程生产事实表按完整 `WrkOrder` 精确匹配，不再依赖 iGarment 创建
+日期。查询必须排除 `RegDate IS NULL` 的无效登记记录，并通过单个 `WrkOrder IN (...)`
+聚合查询按 `(Flow, RegPerSysID, StepNo, WrkOrder)` 粒度执行 `SUM(Qty)`；不得截取
+工单前 6 位，不得先查询 `MIN(RegDate)` 后再执行第二次范围聚合，也不得按工单循环
+请求远程数据库。当天事实与累计事实必须位于同一个 MySQL `REPEATABLE READ` 事务
+快照内，再一起发布到同一 Redis 版本；Web/API 请求不得临时回源远程生产库。
 
 累计产量的展示和聚合必须遵循以下边界：
 
@@ -491,7 +490,8 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - 与原生产订单任务共享全局互斥锁和看门狗认可的 30 分钟维护标记；
 - 使用独立 SHA-256 状态和日志，源文件未变化时成功跳过；
 - MySQL 的旧快照删除、批量写入和行数复核位于同一个事务，失败保留上一版；
-- `客戶訂單編號` 为空的源行允许保留，但累计查询不得将其用于 WrkOrder 匹配。
+- `客戶訂單編號` 为空的源行允许保留；当前累计产量查询不读取该快照，数据模型、查询
+  接口和同步任务继续保留，供后续订单信息功能使用。
 
 ### 10.5 累计产量源明细审计导出
 
@@ -520,7 +520,7 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **图表变更**：字体/颜色/数据源 → 更新本手册第 6 节
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
 - [ ] **Flow 语义**：按生产线继续应用白名单；按产品名称返回完整 Flow，并在浏览器本地切换普通线
-- [ ] **累计产量**：创建日期匹配、同事务水位、完整产品 Flow 和历史日期限制保持一致
+- [ ] **累计产量**：完整工单匹配、排除空 RegDate、单 SQL 聚合、同事务水位、完整产品 Flow 和历史日期限制保持一致
 - [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
 - [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
   使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
