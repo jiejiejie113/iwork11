@@ -713,7 +713,7 @@ def get_batch_product_overview(target_date: date) -> dict:
             }]
         }
     """
-    records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = get_records_queryset(target_date)
 
     rows = list(
         records.values('WrkOrder', 'StepNo', 'Flow')
@@ -835,7 +835,10 @@ def get_batch_product_overview(target_date: date) -> dict:
     if unmatched_raw:
         result.extend(_build_products({'未分类': {'order_no': '', 'wrk_orders': unmatched_raw}}))
 
-    return {'products': result}
+    return {
+        'products': result,
+        'normal_flows': sorted(settings.ALLOWED_FLOWS),
+    }
 
 
 # ============================================================================

@@ -113,6 +113,85 @@ def test_flow_detail_uses_same_snapshot_cumulative_quantity():
     assert employee["steps"][0]["cumulative_qty"] == 23152
 
 
+def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
+    """产品视图应保留全部 Flow，生产线视图仍只显示普通线白名单。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 70,
+                "wrk_order": "BU1191",
+                "flow": "SO3-L3A",
+                "qty": 10,
+                "record_count": 1,
+            },
+            {
+                "reg_per_sys_id": 1002,
+                "stepno": 80,
+                "wrk_order": "BU1191",
+                "flow": "Finishing-QC1",
+                "qty": 20,
+                "record_count": 1,
+            },
+            {
+                "reg_per_sys_id": 1003,
+                "stepno": 90,
+                "wrk_order": "BU1191",
+                "flow": "",
+                "qty": 30,
+                "record_count": 1,
+            },
+        ],
+        cumulative_facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 70,
+                "wrk_order": "BU1191",
+                "flow": "SO3-L3A",
+                "cumulative_qty": 100,
+            },
+            {
+                "reg_per_sys_id": 1002,
+                "stepno": 80,
+                "wrk_order": "BU1191",
+                "flow": "Finishing-QC1",
+                "cumulative_qty": 200,
+            },
+            {
+                "reg_per_sys_id": 1003,
+                "stepno": 90,
+                "wrk_order": "BU1191",
+                "flow": "",
+                "cumulative_qty": 300,
+            },
+        ],
+        products={
+            "BU1191": {"product_name": "Sage pile jacket", "order_no": "ORDER-1"},
+        },
+    )
+
+    flow_overview = source.get_batch_flow_overview(BUSINESS_DATE)
+    flow_employees = source.get_batch_flow_employees(BUSINESS_DATE)
+    product_overview = source.get_batch_product_overview(BUSINESS_DATE)
+    product = product_overview["products"][0]
+    workorder = product["wrk_orders"][0]
+
+    assert set(flow_overview) == {"SO3-L3A"}
+    assert set(flow_employees) == {"SO3-L3A"}
+    assert "SO3-L3A" in product_overview["normal_flows"]
+    assert "Finishing-QC1" not in product_overview["normal_flows"]
+    assert workorder["qty"] == 60
+    assert workorder["cumulative_qty"] == 600
+    assert {
+        flow["flow"]
+        for step in workorder["stepnos"]
+        for flow in step["flows"]
+    } == {"SO3-L3A", "Finishing-QC1", ""}
+
+
 def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
     """当天事实和累计事实必须在同一远程一致性快照内采集。"""
     from iwork.read_model.fact_source import ReadModelFactSource

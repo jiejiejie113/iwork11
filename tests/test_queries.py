@@ -66,34 +66,67 @@ def test_igarment_creation_dates_use_earliest_day_per_workorder():
 
 @patch('iwork.models.Pytckreg3')
 def test_cumulative_rows_include_creation_day(mock_model):
-    """累计查询必须使用 RegDate >= 最早创建日，并保持当前明细粒度。"""
+    """累计查询必须使用创建日起点，并保留全部 Flow 的聚合事实。"""
     from iwork.queries import get_read_model_cumulative_rows
 
     queryset = mock_model.objects.using.return_value.filter.return_value
     rows = (
-        queryset.exclude.return_value.filter.return_value.values.return_value
-        .annotate.return_value.order_by.return_value
+        queryset.values.return_value.annotate.return_value.order_by.return_value
     )
-    rows.__iter__.return_value = iter([{
-        'RegPerSysID': 1001,
-        'StepNo': 70,
-        'WrkOrder': 'BU1211',
-        'Flow': 'SO3-L3B',
-        'cumulative_qty': 23152,
-    }])
+    rows.__iter__.return_value = iter([
+        {
+            'RegPerSysID': 1001,
+            'StepNo': 70,
+            'WrkOrder': 'BU1211',
+            'Flow': 'SO3-L3B',
+            'cumulative_qty': 23152,
+        },
+        {
+            'RegPerSysID': 1002,
+            'StepNo': 80,
+            'WrkOrder': 'BU1211',
+            'Flow': 'Finishing-QC1',
+            'cumulative_qty': 500,
+        },
+        {
+            'RegPerSysID': 1003,
+            'StepNo': 90,
+            'WrkOrder': 'BU1211',
+            'Flow': '',
+            'cumulative_qty': 20,
+        },
+    ])
 
     result = get_read_model_cumulative_rows({'BU1211': date(2026, 6, 10)})
 
     query_filter = mock_model.objects.using.return_value.filter.call_args.kwargs
     assert query_filter['RegDate__gte'].date() == date(2026, 6, 10)
     assert query_filter['WrkOrder__in'] == ['BU1211']
-    assert result == [{
-        'reg_per_sys_id': 1001,
-        'stepno': 70,
-        'wrk_order': 'BU1211',
-        'flow': 'SO3-L3B',
-        'cumulative_qty': 23152,
-    }]
+    assert result == [
+        {
+            'reg_per_sys_id': 1001,
+            'stepno': 70,
+            'wrk_order': 'BU1211',
+            'flow': 'SO3-L3B',
+            'cumulative_qty': 23152,
+        },
+        {
+            'reg_per_sys_id': 1002,
+            'stepno': 80,
+            'wrk_order': 'BU1211',
+            'flow': 'Finishing-QC1',
+            'cumulative_qty': 500,
+        },
+        {
+            'reg_per_sys_id': 1003,
+            'stepno': 90,
+            'wrk_order': 'BU1211',
+            'flow': '',
+            'cumulative_qty': 20,
+        },
+    ]
+    queryset.exclude.assert_not_called()
+    queryset.filter.assert_not_called()
 
 
 @patch('iwork.models.Pytckreg3')
@@ -103,8 +136,8 @@ def test_cumulative_rows_union_each_creation_date_branch(mock_model):
 
     queryset = mock_model.objects.using.return_value
     rows = (
-        queryset.filter.return_value.exclude.return_value.filter.return_value
-        .values.return_value.annotate.return_value.order_by.return_value
+        queryset.filter.return_value.values.return_value
+        .annotate.return_value.order_by.return_value
     )
     rows.union.return_value.__iter__.return_value = iter([])
 
@@ -118,6 +151,8 @@ def test_cumulative_rows_union_each_creation_date_branch(mock_model):
         date(2026, 6, 10),
         date(2026, 6, 11),
     ]
+    queryset.filter.return_value.exclude.assert_not_called()
+    queryset.filter.return_value.filter.assert_not_called()
     rows.union.assert_called_once_with(rows, all=True)
 
 
@@ -522,6 +557,8 @@ class TestGetBatchFlowOverview:
     @patch('iwork.models.Pytckreg3')
     def test_returns_flow_summary_dict(self, mock_model):
         """返回以 Flow 为键的汇总字典"""
+        from django.conf import settings
+
         from iwork.queries import get_batch_flow_overview
 
         mock_qs = mock_model.objects.using.return_value.filter.return_value
@@ -550,6 +587,8 @@ class TestGetBatchFlowOverview:
             'stepnos': {'69': {'qty': 300, 'workers': 8}},
             'total_workers': 8,
         }
+        mock_qs.exclude.assert_called_once_with(Flow='')
+        mock_qs.filter.assert_called_once_with(Flow__in=settings.ALLOWED_FLOWS)
 
 
 class TestGetBatchFlowHourly:
@@ -683,12 +722,14 @@ class TestGetBatchProductOverview:
         from iwork.queries import get_batch_product_overview
 
         queryset = mock_records.return_value
-        queryset.exclude.return_value = queryset
-        queryset.filter.return_value = queryset
         queryset.values.return_value.annotate.return_value.order_by.return_value = [
-            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'VCO-L5', 'qty': 100, 'workers': 2},
-            {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'VCO-L5', 'qty': 50, 'workers': 1},
-            {'WrkOrder': 'BU0724', 'StepNo': 72, 'Flow': 'VCO-L5', 'qty': 20, 'workers': 1},
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'SO3-L3A', 'qty': 100, 'workers': 2},
+            {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'SO3-L3A', 'qty': 50, 'workers': 1},
+            {'WrkOrder': 'BU0724', 'StepNo': 72, 'Flow': 'SO3-L3A', 'qty': 20, 'workers': 1},
+            {
+                'WrkOrder': 'BU0724', 'StepNo': 80,
+                'Flow': 'Finishing-QC1', 'qty': 30, 'workers': 1,
+            },
         ]
         order_query = mock_order.objects.using.return_value.filter.return_value
         order_query.values.return_value.distinct.return_value = [
@@ -710,6 +751,11 @@ class TestGetBatchProductOverview:
         assert steps[1]['output_value'] is None
         assert steps[2]['step_time'] == 0.0
         assert steps[2]['output_value'] == 0.0
+        assert result['products'][0]['total_qty'] == 200
+        assert 'SO3-L3A' in result['normal_flows']
+        assert 'Finishing-QC1' not in result['normal_flows']
+        queryset.exclude.assert_not_called()
+        queryset.filter.assert_not_called()
         mock_metadata.assert_called_once_with(['BU0724'])
 
 

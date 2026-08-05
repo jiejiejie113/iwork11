@@ -70,9 +70,11 @@ def test_product_overview_aggregates_full_cumulative_quantity():
     steps = {item["stepno"]: item for item in workorder["stepnos"]}
 
     assert product["total_qty"] == 15
-    assert product["cumulative_qty"] == 180
-    assert workorder["cumulative_qty"] == 180
-    assert steps[70]["cumulative_qty"] == 150
+    assert product["cumulative_qty"] == 1179
+    assert workorder["cumulative_qty"] == 1179
+    assert steps[70]["cumulative_qty"] == 1149
     assert steps[70]["flows"][0]["cumulative_qty"] == 150
+    assert steps[70]["flows"][1]["flow"] == "NOT-ALLOWED"
+    assert steps[70]["flows"][1]["cumulative_qty"] == 999
     assert steps[69]["qty"] == 0
     assert steps[69]["cumulative_qty"] == 30

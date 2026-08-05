@@ -278,6 +278,11 @@
             <div class="flex items-center justify-between gap-3 mb-2">
                 <h3 class="text-xs font-semibold text-slate-300">{[ productChartTitle ]}</h3>
                 <div class="flex items-center gap-2">
+                <button @click="toggleProductNormalLine"
+                    :aria-pressed="productNormalLineOnly ? 'true' : 'false'"
+                    :class="productNormalLineOnly ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-slate-200'"
+                    class="px-3 py-1 rounded-md border text-xs transition-colors"
+                    title="开启时仅显示普通线，关闭时显示全部生产线">普通线</button>
                 <div class="flex bg-slate-900 rounded-md p-0.5 border border-slate-700 text-xs">
                     <button @click="setProductChartMetric('qty')"
                         :class="productChartMetric === 'qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
@@ -833,6 +838,9 @@ createApp({
         const productList = ref([]);
         const productChartMetric = ref('qty');
         const productChartPinned = ref(true);
+        const productNormalLineOnly = ref(true);
+        const productNormalFlows = ref([]);
+        const productNormalFlowSet = computed(() => new Set(productNormalFlows.value));
         const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
@@ -939,6 +947,13 @@ createApp({
             return leaves;
         }
 
+        const productVisibleLeaves = computed(() => {
+            const leaves = flattenToLeaves(productList.value);
+            if (!productNormalLineOnly.value) return leaves;
+            if (!productNormalFlows.value.length) return leaves;
+            return leaves.filter(leaf => productNormalFlowSet.value.has(leaf.flow));
+        });
+
         function buildGroupedTree(
             leaves,
             levels,
@@ -1023,7 +1038,7 @@ createApp({
 
         function normalizeProductActivePath() {
             const tree = buildGroupedTree(
-                flattenToLeaves(productList.value),
+                productVisibleLeaves.value,
                 selectedLevels.value,
             );
             const validPath = [];
@@ -1044,8 +1059,7 @@ createApp({
         // 动态树形表格行（按 selectedLevels 顺序重分组，activePath 控制唯一展开）
         const productRows = computed(() => {
             if (!selectedLevels.value.length) return [];
-            const leaves = flattenToLeaves(productList.value);
-            const tree = buildGroupedTree(leaves, selectedLevels.value);
+            const tree = buildGroupedTree(productVisibleLeaves.value, selectedLevels.value);
 
             const rows = [];
             function walk(nodes, depth, parentKey) {
@@ -1203,6 +1217,13 @@ createApp({
             if (metric === 'cumulative_qty' && isHistoricalDate.value) return;
             if (productChartMetric.value === metric) return;
             productChartMetric.value = metric;
+            saveProductViewState();
+            nextTick(() => renderProductChart());
+        }
+
+        function toggleProductNormalLine() {
+            productNormalLineOnly.value = !productNormalLineOnly.value;
+            normalizeProductActivePath();
             saveProductViewState();
             nextTick(() => renderProductChart());
         }
@@ -2198,6 +2219,7 @@ createApp({
                 const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                 const data = await readResponse(resp);
                 productList.value = data.products || [];
+                productNormalFlows.value = data.normal_flows || [];
                 normalizeProductActivePath();
                 saveProductViewState();
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
@@ -2287,6 +2309,7 @@ createApp({
                     const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
                     const data = await resp.json();
                     productList.value = data.products || [];
+                    productNormalFlows.value = data.normal_flows || [];
                     normalizeProductActivePath();
                     saveProductViewState();
                     await nextTick();
@@ -2495,6 +2518,7 @@ createApp({
             productList, selectedLevels, availableLevels, levelLabels,
             showStepMetadataColumns, productGridColumns,
             productRows, productChartMetric, productChartPinned, productChartTitle,
+            productNormalLineOnly, toggleProductNormalLine,
             setProductChartMetric, toggleProductChartPinned, toggleRow, treeWrapEl,
             activeTagDrag, tagDragLevel, tagDragSource, tagDragIdx, tagHoverInsertIdx, tagDragWidth, tagDragHeight, tagDragStyle,
             onTagPointerDown,

@@ -207,6 +207,8 @@ class TestGetBatchFlowOverviewLocal:
     @patch('iwork.local_queries.get_records_queryset')
     def test_returns_overview_with_total_qty_and_worker_count(self, mock_records):
         """返回每个 Flow 的 total_qty 和 worker_count"""
+        from django.conf import settings
+
         from iwork.local_queries import get_batch_flow_overview
 
         mock_qs = mock_records.return_value
@@ -231,6 +233,8 @@ class TestGetBatchFlowOverviewLocal:
             'Flow_A': {'stepnos': {'70': {'qty': 500, 'workers': 3}}, 'total_workers': 3},
             'Flow_B': {'stepnos': {'69': {'qty': 300, 'workers': 2}}, 'total_workers': 2},
         }
+        mock_qs.exclude.assert_called_once_with(Flow='')
+        mock_qs.filter.assert_called_once_with(Flow__in=settings.ALLOWED_FLOWS)
 
 
 class TestGetBatchFlowHourlyLocal:
@@ -375,10 +379,12 @@ class TestGetBatchProductOverviewLocal:
         from iwork.local_queries import get_batch_product_overview
 
         queryset = mock_records.return_value
-        queryset.exclude.return_value = queryset
-        queryset.filter.return_value = queryset
         queryset.values.return_value.annotate.return_value.order_by.return_value = [
-            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'VCO-L5', 'qty': 100, 'workers': 2},
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'SO3-L3A', 'qty': 100, 'workers': 2},
+            {
+                'WrkOrder': 'BU0724', 'StepNo': 80,
+                'Flow': 'Finishing-QC1', 'qty': 50, 'workers': 1,
+            },
         ]
         order_query = mock_order.objects.using.return_value.filter.return_value
         order_query.values.return_value.distinct.return_value = [
@@ -391,3 +397,8 @@ class TestGetBatchProductOverviewLocal:
         assert step['description'] == ''
         assert step['step_time'] is None
         assert step['output_value'] is None
+        assert result['products'][0]['total_qty'] == 150
+        assert 'SO3-L3A' in result['normal_flows']
+        assert 'Finishing-QC1' not in result['normal_flows']
+        queryset.exclude.assert_not_called()
+        queryset.filter.assert_not_called()

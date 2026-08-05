@@ -141,6 +141,38 @@ def test_product_silent_refresh_revalidates_state_and_redraws_chart():
     assert 'renderProductChart();' in refresh_block
 
 
+def test_product_view_can_toggle_normal_line_filter_locally():
+    """产品视图应默认显示普通线，并在浏览器本地切换全部 Flow。"""
+    product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
+    product_view = product_view.split('<!-- ===== 详情页 ===== -->', 1)[0]
+    load_block = TEMPLATE.split('async function loadProductOverview()', 1)[1].split(
+        'async function loadDetail',
+        1,
+    )[0]
+    refresh_block = TEMPLATE.split('async function refreshOverviewSilently()', 1)[1].split(
+        'function goDetail',
+        1,
+    )[0]
+    toggle_block = TEMPLATE.split('function toggleProductNormalLine()', 1)[1].split(
+        'function toggleProductChartPinned',
+        1,
+    )[0]
+
+    assert 'const productNormalLineOnly = ref(true);' in TEMPLATE
+    assert 'const productNormalFlows = ref([]);' in TEMPLATE
+    assert '@click="toggleProductNormalLine"' in product_view
+    assert '普通线</button>' in product_view
+    assert 'const productVisibleLeaves = computed(() => {' in TEMPLATE
+    assert 'if (!productNormalLineOnly.value) return leaves;' in TEMPLATE
+    assert 'productNormalFlowSet.value.has(leaf.flow)' in TEMPLATE
+    assert 'buildGroupedTree(productVisibleLeaves.value' in TEMPLATE
+    assert 'productNormalFlows.value = data.normal_flows || [];' in load_block
+    assert 'productNormalFlows.value = data.normal_flows || [];' in refresh_block
+    assert 'normalizeProductActivePath();' in toggle_block
+    assert 'nextTick(() => renderProductChart());' in toggle_block
+    assert 'fetch(' not in toggle_block
+
+
 def test_product_chart_uses_compact_height_on_tablet_viewports():
     """平板视口应使用紧凑图表高度。"""
     assert 'class="product-chart-panel ' in TEMPLATE

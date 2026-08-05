@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-03
+> 最后更新：2026-08-05
 
 ---
 
@@ -106,8 +106,10 @@ flows = list(settings.VISIBLE_FLOWS)
 **配置位置**：`settings.py` → `HIDDEN_FLOWS`
 
 **效果**：
-1. 后端：所有查询函数通过 `VISIBLE_FLOWS` 过滤，隐藏分组数据不查、不缓存
-2. 前端：接收的数据已排除隐藏分组，无需前端过滤
+1. “按生产线”后端查询继续通过 Flow 白名单过滤，隐藏分组数据不查、不缓存。
+2. “按产品名称”是受控例外：后端按 `(WrkOrder, StepNo, Flow)` 聚合并返回全部
+   Flow，同时通过 `normal_flows` 返回普通线白名单；前端默认仅显示普通线，可用
+   “普通线”按钮在浏览器本地切换全部 Flow，不得为切换重复查询远程数据库。
 
 **当前隐藏分组**（21 个）：
 
@@ -284,6 +286,10 @@ function stepColor(idx, stepno) {
   改由整个产品区统一纵向滚动，树状表格不得保留第二个纵向滚动容器。
 - 产品区与树状表格只隐藏滚动条外观，必须保留滚轮、触摸和程序滚动能力。
 - 树状表格表头必须使用 `sticky` 固定在当前滚动容器顶部；切换滚动方式后仍应保持可见。
+- 产品接口只返回一份按 `(WrkOrder, StepNo, Flow)` 聚合的完整产品树及
+  `normal_flows` 白名单；“普通线”按钮默认开启，树表和图表共同使用同一份本地过滤
+  结果，切换时不得发起新请求。普通线开关不写入 `localStorage`，每次进入页面均回到
+  默认开启状态。
 
 ---
 
@@ -356,6 +362,8 @@ const workorderItems = computed(() => {
 | `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
 | `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
 | `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
+| `products` | `productList` | 按产品、工单、工序和 Flow 聚合的完整产品树 |
+| `normal_flows` | `productNormalFlows` | 产品视图“普通线”本地过滤白名单 |
 | `employees[].output_value` | `emp.output_value` | 员工总产值 |
 | `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
 | `source` | 历史快照标识 | `local_snapshot` 表示本地只读历史数据 |

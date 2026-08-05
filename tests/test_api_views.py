@@ -844,6 +844,7 @@ class TestProductOverviewEndpoint:
                     }],
                 }],
             }],
+            'normal_flows': ['SO3-L3A'],
         }
         with patch(
             'iwork.api_views.READ_MODEL.detail',
@@ -855,6 +856,7 @@ class TestProductOverviewEndpoint:
 
         assert response.status_code == 200
         assert response.data['products'] == cached['products']
+        assert response.data['normal_flows'] == ['SO3-L3A']
         assert response.data['source'] == 'redis_snapshot'
         read.assert_called_once()
 

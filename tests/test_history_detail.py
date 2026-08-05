@@ -108,7 +108,7 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_historical_product_overview_uses_snapshot_metadata(client):
-    """历史产品概览应使用快照元数据。"""
+    """历史产品概览应使用快照元数据并保留非普通线 Flow。"""
     target_date = date(2026, 7, 15)
     registered_at = timezone.make_aware(datetime(2026, 7, 15, 10))
     HistoricalProductionFact.objects.using('iwork_local').create(
@@ -124,12 +124,35 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
         qty=183,
         source_record_count=3,
     )
+    HistoricalProductionFact.objects.using('iwork_local').create(
+        production_date=target_date,
+        event_hour=11,
+        registered_date=registered_at,
+        registered_time=registered_at,
+        flow='Finishing-QC1',
+        station_id='QC1',
+        employee_id=1943,
+        wrk_order='BU1208A',
+        step_no=80,
+        qty=50,
+        source_record_count=1,
+    )
     HistoricalStepSnapshot.objects.using('iwork_local').create(
         snapshot_date=target_date,
         wrk_order='BU1208A',
         step_no=38,
         description='翻猪肠绑绳',
         step_time=0.131,
+        style_no='BU1208',
+        product_name='Sage pile jacket',
+        order_no='SO-TEST',
+    )
+    HistoricalStepSnapshot.objects.using('iwork_local').create(
+        snapshot_date=target_date,
+        wrk_order='BU1208A',
+        step_no=80,
+        description='成品检查',
+        step_time=0.2,
         style_no='BU1208',
         product_name='Sage pile jacket',
         order_no='SO-TEST',
@@ -152,12 +175,18 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
     assert payload['source'] == 'local_snapshot'
     product = payload['products'][0]
     assert product['product_name'] == 'Sage pile jacket'
-    assert product['total_qty'] == 183
-    step = product['wrk_orders'][0]['stepnos'][0]
+    assert product['total_qty'] == 233
+    assert 'SO5-L5C' in payload['normal_flows']
+    assert 'Finishing-QC1' not in payload['normal_flows']
+    steps = product['wrk_orders'][0]['stepnos']
+    step = steps[0]
     assert step['description'] == '翻猪肠绑绳'
     assert step['step_time'] == 0.131
     assert step['output_value'] == pytest.approx(23.973)
     assert step['flows'] == [{'flow': 'SO5-L5C', 'qty': 183, 'workers': 1}]
+    assert steps[1]['flows'] == [
+        {'flow': 'Finishing-QC1', 'qty': 50, 'workers': 1},
+    ]
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

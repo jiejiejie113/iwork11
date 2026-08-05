@@ -138,8 +138,6 @@ def get_read_model_cumulative_rows(
                 WrkOrder__in=sorted(set(wrk_orders)),
                 RegDate__gte=start,
             )
-            .exclude(Flow='')
-            .filter(Flow__in=settings.ALLOWED_FLOWS)
             .values('RegPerSysID', 'StepNo', 'WrkOrder', 'Flow')
             .annotate(cumulative_qty=Sum('Qty'))
             .order_by()
@@ -1024,7 +1022,7 @@ def get_batch_product_overview(target_date: date) -> dict:
         }
         按产品总产量降序排列，未匹配到的 WrkOrder 归入"未分类"
     """
-    records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
+    records = get_records_queryset(target_date)
 
     rows = list(
         records.values('WrkOrder', 'StepNo', 'Flow')
@@ -1141,7 +1139,10 @@ def get_batch_product_overview(target_date: date) -> dict:
     if unmatched_raw:
         result.extend(_build_products({'未分类': {'order_no': '', 'wrk_orders': unmatched_raw}}))
 
-    return {'products': result}
+    return {
+        'products': result,
+        'normal_flows': sorted(settings.ALLOWED_FLOWS),
+    }
 
 
 # ============================================================================

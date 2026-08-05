@@ -109,6 +109,14 @@ class ReadModelFactSource:
         """
         return [item for item in self.facts if self._flow(item) in ALLOWED_FLOWS]
 
+    def _product_facts(self) -> list[dict]:
+        """返回产品视图使用的全部 Flow 事实。
+
+        Returns:
+            list[dict]: 未应用普通线白名单的产品生产事实。
+        """
+        return list(self.facts)
+
     @staticmethod
     def _stepno(item: dict) -> int:
         """规范化事实中的工序号。
@@ -554,7 +562,7 @@ class ReadModelFactSource:
             dict: 产品、工单、工序和 Flow 四层生产详情。
         """
         grouped: dict[tuple[str, int, str], dict] = {}
-        for item in self._detail_facts():
+        for item in self._product_facts():
             wrk_order = str(item.get("wrk_order") or "")
             stepno = self._stepno(item)
             flow = self._flow(item)
@@ -570,7 +578,7 @@ class ReadModelFactSource:
         for item in self.cumulative_facts:
             wrk_order = str(item.get("wrk_order") or "")
             flow = self._flow(item)
-            if wrk_order not in current_wrk_orders or flow not in ALLOWED_FLOWS:
+            if wrk_order not in current_wrk_orders:
                 continue
             stepno = self._stepno(item)
             row = grouped.setdefault(
@@ -655,7 +663,10 @@ class ReadModelFactSource:
         products.sort(key=lambda row: row["total_qty"], reverse=True)
         if unclassified is not None:
             products.append(unclassified)
-        return {"products": products}
+        return {
+            "products": products,
+            "normal_flows": sorted(ALLOWED_FLOWS),
+        }
 
     def get_read_model_facts(self, _target_date: date) -> dict:
         """将细粒度事实合并为 Kanban 使用的最低必要粒度。

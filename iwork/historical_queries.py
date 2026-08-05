@@ -247,8 +247,6 @@ def get_batch_product_overview(target_date: date) -> dict:
     """
     rows = list(
         _facts(target_date)
-        .exclude(flow='')
-        .filter(flow__in=settings.ALLOWED_FLOWS)
         .values('wrk_order', 'step_no', 'flow')
         .annotate(qty=Sum('qty'), workers=Count('employee_id', distinct=True))
         .order_by('wrk_order', 'step_no', 'flow')
@@ -328,4 +326,7 @@ def get_batch_product_overview(target_date: date) -> dict:
             'wrk_orders': workorders,
         })
     products.sort(key=lambda item: item['total_qty'], reverse=True)
-    return {'products': products}
+    return {
+        'products': products,
+        'normal_flows': sorted(settings.ALLOWED_FLOWS),
+    }
