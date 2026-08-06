@@ -2278,7 +2278,7 @@ createApp({
                 } else {
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${detailKey.value}/?date=${selectedDate.value}`);
                 }
-                const data = await resp.json();
+                const data = await readResponse(resp);
                 groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
                 currentGroupTarget.value = detailType.value === 'flow' ? data.current_group_target : null;
                 workHours.value = detailType.value === 'flow' ? data.work_hours : null;
@@ -2307,7 +2307,7 @@ createApp({
             try {
                 if (groupMode.value === 'product') {
                     const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
-                    const data = await resp.json();
+                    const data = await readResponse(resp);
                     productList.value = data.products || [];
                     productNormalFlows.value = data.normal_flows || [];
                     normalizeProductActivePath();
@@ -2321,8 +2321,10 @@ createApp({
                     fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
                     fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
                 ]);
-                const flowData = await flowResp.json();
-                const woData = await woResp.json();
+                const [flowData, woData] = await Promise.all([
+                    readResponse(flowResp),
+                    readResponse(woResp),
+                ]);
                 const cards = [];
                 for (const [name, info] of Object.entries(flowData)) {
                     const stepnos = info.stepnos || {};

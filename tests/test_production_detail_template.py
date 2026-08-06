@@ -141,6 +141,26 @@ def test_product_silent_refresh_revalidates_state_and_redraws_chart():
     assert 'renderProductChart();' in refresh_block
 
 
+def test_silent_refresh_validates_http_responses_before_replacing_state():
+    """静默刷新应先拒绝 HTTP 错误，再更新详情或概览数据。"""
+    detail_refresh = TEMPLATE.split(
+        'async function refreshDetailSilently()',
+        maxsplit=1,
+    )[1].split('// 概览静默刷新', maxsplit=1)[0]
+    overview_refresh = TEMPLATE.split(
+        'async function refreshOverviewSilently()',
+        maxsplit=1,
+    )[1].split('function goDetail', maxsplit=1)[0]
+
+    assert 'const data = await readResponse(resp);' in detail_refresh
+    assert 'resp.json()' not in detail_refresh
+    assert 'const data = await readResponse(resp);' in overview_refresh
+    assert 'const [flowData, woData] = await Promise.all([' in overview_refresh
+    assert 'readResponse(flowResp)' in overview_refresh
+    assert 'readResponse(woResp)' in overview_refresh
+    assert '.json()' not in overview_refresh
+
+
 def test_product_view_can_toggle_normal_line_filter_locally():
     """产品视图应默认显示普通线，并在浏览器本地切换全部 Flow。"""
     product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
