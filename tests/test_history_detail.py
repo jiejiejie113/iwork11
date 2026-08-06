@@ -384,10 +384,10 @@ def test_missing_history_snapshot_can_be_built_then_read(client):
             '/api/history/snapshots/2026-07-15/ensure/'
         )
 
-    assert build_response.status_code == 202
+    assert build_response.status_code == 200
     build_payload = build_response.json()
     assert build_payload['created'] is False
-    assert build_payload['code'] == 'history_snapshot_building'
+    assert build_payload['message'] == '本地历史快照已生成'
 
     detail_response = client.get(
         '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-15'
@@ -632,6 +632,63 @@ def test_ensure_snapshot_broker_failure_uses_short_self_healing_lock(
     assert request_lock.timeout == settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT
     request_lease.stop.assert_called_once_with()
     request_lock.release.assert_called_once_with()
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_returns_503_when_confirmed_task_loses_request_lock(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """Broker确认后无法提升完整租约时，不得把入队状态报告为成功。"""
+    request_lock = MagicMock()
+    request_lease = MagicMock()
+    request_lease.lost = True
+
+    with patch(
+        'iwork.api_views_local._claim_snapshot_request',
+        return_value=(request_lock, 'request-token', request_lease, True),
+    ), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
+        return_value=SimpleNamespace(id='task-with-lost-request-lock'),
+    ):
+        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'history_snapshot_queue_unavailable'
+    request_lease.stop.assert_called_once_with()
+    request_lock.release.assert_not_called()
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_returns_503_when_full_request_lease_cannot_be_confirmed(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """Broker确认后完整请求租约提升失败时，不得返回已提交成功。"""
+    request_lock = MagicMock()
+    request_lease = MagicMock()
+    request_lease.lost = False
+
+    with patch(
+        'iwork.api_views_local._claim_snapshot_request',
+        return_value=(request_lock, 'request-token', request_lease, True),
+    ), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
+        return_value=SimpleNamespace(id='task-with-short-request-lock'),
+    ), patch(
+        'iwork.api_views_local.renew_request_lock',
+        return_value=False,
+    ):
+        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'history_snapshot_queue_unavailable'
+    request_lease.stop.assert_called_once_with()
+    request_lock.release.assert_not_called()
 
 
 @patch('iwork.api_views_local._snapshot_state', return_value=None)

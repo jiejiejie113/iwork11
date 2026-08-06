@@ -121,6 +121,36 @@ def _snapshot_payload(state):
     }
 
 
+def _snapshot_queue_confirmation_failure_response(date_obj, target_date):
+    """在请求锁确认失败后区分快照已完成与队列状态不确定。
+
+    Args:
+        date_obj (date): 已解析的历史业务日期。
+        target_date (str): ISO 格式的目标日期文本。
+
+    Returns:
+        Response: 快照已完成时返回 200，否则返回可重试的 503。
+    """
+    completed_state = _snapshot_state(date_obj)
+    if completed_state:
+        logger.info('历史快照 {} 已在队列确认前完成', target_date)
+        return Response(
+            {
+                'created': False,
+                'message': '本地历史快照已生成',
+                'snapshot': _snapshot_payload(completed_state),
+            },
+            status=status.HTTP_200_OK,
+        )
+    return Response(
+        {
+            'error': '历史快照任务状态确认失败，请稍后重试',
+            'code': 'history_snapshot_queue_unavailable',
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 def _claim_snapshot_request(
     target_date: str,
 ) -> tuple[Any, str, RequestLockLease | None, bool]:
@@ -228,19 +258,29 @@ def ensure_snapshot(request, target_date):
                 'Broker提交期间历史快照请求锁已失效: date={}',
                 target_date,
             )
-        if not request_lease.lost:
-            try:
-                if not renew_request_lock(
-                    request_lock,
-                    settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
-                ):
-                    logger.warning('历史快照请求锁确认失败: date={}', target_date)
-            except Exception as renewal_error:
-                logger.warning(
-                    '续租历史快照请求锁失败: date={} error={}',
-                    target_date,
-                    renewal_error,
-                )
+            return _snapshot_queue_confirmation_failure_response(
+                date_obj,
+                target_date,
+            )
+        request_lock_confirmed = False
+        try:
+            request_lock_confirmed = renew_request_lock(
+                request_lock,
+                settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+            )
+            if not request_lock_confirmed:
+                logger.warning('历史快照请求锁确认失败: date={}', target_date)
+        except Exception as renewal_error:
+            logger.warning(
+                '续租历史快照请求锁失败: date={} error={}',
+                target_date,
+                renewal_error,
+            )
+        if not request_lock_confirmed:
+            return _snapshot_queue_confirmation_failure_response(
+                date_obj,
+                target_date,
+            )
         logger.info('历史快照 {} 已提交后台任务: {}', target_date, task.id)
         return Response({
             'created': False,
