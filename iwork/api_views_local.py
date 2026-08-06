@@ -131,7 +131,15 @@ def _snapshot_queue_confirmation_failure_response(date_obj, target_date):
     Returns:
         Response: 快照已完成时返回 200，否则返回可重试的 503。
     """
-    completed_state = _snapshot_state(date_obj)
+    try:
+        completed_state = _snapshot_state(date_obj)
+    except Exception as state_error:
+        logger.warning(
+            '历史快照完成状态确认失败: date={} error={}',
+            target_date,
+            state_error,
+        )
+        completed_state = None
     if completed_state:
         logger.info('历史快照 {} 已在队列确认前完成', target_date)
         return Response(

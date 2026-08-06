@@ -691,6 +691,39 @@ def test_ensure_snapshot_returns_503_when_full_request_lease_cannot_be_confirmed
     request_lock.release.assert_not_called()
 
 
+@patch(
+    'iwork.api_views_local._snapshot_state',
+    side_effect=[None, ConnectionError('iwork_local unavailable')],
+)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_returns_503_when_completion_check_is_unavailable(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """完整租约失败后无法检查完成状态时，应保留短租约并返回503。"""
+    request_lock = MagicMock()
+    request_lease = MagicMock()
+    request_lease.lost = False
+
+    with patch(
+        'iwork.api_views_local._claim_snapshot_request',
+        return_value=(request_lock, 'request-token', request_lease, True),
+    ), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
+        return_value=SimpleNamespace(id='task-with-unknown-completion'),
+    ), patch(
+        'iwork.api_views_local.renew_request_lock',
+        return_value=False,
+    ):
+        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'history_snapshot_queue_unavailable'
+    request_lease.stop.assert_called_once_with()
+    request_lock.release.assert_not_called()
+
+
 @patch('iwork.api_views_local._snapshot_state', return_value=None)
 @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
 def test_ensure_snapshot_renews_request_lock_during_slow_broker_submission(
