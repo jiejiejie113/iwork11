@@ -88,6 +88,10 @@ Uvicorn ASGI (4 workers)
 | `READ_MODEL_MAX_STALE_SECONDS` | 返回 503 的硬阈值，默认 600 秒 | `read_model.store` |
 | `READ_MODEL_PUBLISH_LOCK_SECONDS` | 单日期发布锁时间 | `read_model.store` |
 | `READ_MODEL_REFRESH_LOCK_SECONDS` | Celery 采集防重叠锁时间 | `tasks.py` |
+| `HISTORY_SNAPSHOT_LOCK_TIMEOUT` | 历史快照构建和执行中请求锁租约，默认 1800 秒 | `history_store.py` / `tasks.py` |
+| `HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL` | 历史快照构建锁续租间隔，默认 60 秒 | `history_store.py` |
+| `HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT` | 入队确认阶段的循环续租时长，默认 30 秒 | `api_views_local.py` |
+| `HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL` | Broker 阻塞期间请求锁续租间隔，默认 10 秒 | `api_views_local.py` |
 
 **引用规则**：各模块在顶部建立引用，使用 `VISIBLE_FLOWS` 而非 `ALLOWED_FLOWS`：
 
@@ -426,6 +430,20 @@ const workorderItems = computed(() => {
 `POST /api/history/snapshots/<date>/ensure/`。接口只提交后台任务并返回 202；前端显示构建状态并在完成后重试原 GET；构建
 失败时显示明确错误，不能把错误 JSON 或空列表当作有效历史数据。历史目标只使用后端
 按日期返回的 `target` / `wo_targets`，不得使用浏览器旧值覆盖。
+
+历史快照入队使用带唯一所有权令牌的 Redis 请求锁防止前端轮询重复提交。Web 请求取得锁后，
+必须通过 Redis 锁对象的 `locked()` 原生语义检查真实构建锁，不能使用 `cache.get()` 读取
+redis-py 写入的原始锁值。请求锁首次申请使用完整构建时长保护续租器启动窗口，申请成功后
+立即启动短租约续租器；真实构建锁检查及 Broker 调用阻塞期间每 10 秒检查一次，仅在剩余
+TTL 不足 30 秒时原子补回 30 秒，
+避免入队流程尚未返回时锁先过期。Broker 确认成功后，必须先停止并等待旧续租操作结束，再
+提升为完整构建时长；后台续租必须使用带所有权校验的原子封顶语义，晚到的 Web 续租不能
+覆盖或缩短 Celery 已提升的长租约，也不能让待确认 TTL 无界累积。提交失败且 Redis 清理
+暂时不可用时也能在短时间内
+自愈。Celery 任务
+通过随任务传递的
+令牌恢复并续租所有权，中间重试保留请求锁，成功、最终失败或遇到其他构建者时使用令牌
+比较释放。旧任务失去令牌后必须直接退出，不得构建快照或删除新一代请求锁。
 
 ### 9.3 修改规则
 

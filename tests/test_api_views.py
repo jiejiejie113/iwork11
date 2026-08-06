@@ -1,7 +1,7 @@
 import json
 import pytest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from datetime import date
 from rest_framework.test import APIRequestFactory
 
@@ -326,14 +326,16 @@ class TestEnsureHistorySnapshotAPI:
         _mock_business_date,
     ):
         """HTTP 请求只提交后台任务，不同步访问远程数据库。"""
+        from django.core.cache import cache
         from django.test import Client
 
         mock_delay.return_value.id = 'task-1'
         response = Client().post('/api/history/snapshots/2026-07-30/ensure/')
+        cache.delete('history:snapshot:request:2026-07-30')
 
         assert response.status_code == 202
         assert response.json()['code'] == 'history_snapshot_building'
-        mock_delay.assert_called_once_with('2026-07-30')
+        mock_delay.assert_called_once_with('2026-07-30', ANY)
 
     @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 31))
     @patch('iwork.api_views_local._snapshot_state', return_value=None)
@@ -348,8 +350,16 @@ class TestEnsureHistorySnapshotAPI:
         from django.core.cache import cache
         from django.test import Client
 
-        cache.set('history:snapshot:request:2026-07-30', 'queued', 60)
-        response = Client().post('/api/history/snapshots/2026-07-30/ensure/')
+        request_lock = cache.lock(
+            'history:snapshot:request:2026-07-30',
+            timeout=60,
+            thread_local=False,
+        )
+        assert request_lock.acquire(blocking=False)
+        try:
+            response = Client().post('/api/history/snapshots/2026-07-30/ensure/')
+        finally:
+            request_lock.release()
 
         assert response.status_code == 202
         mock_delay.assert_not_called()

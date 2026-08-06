@@ -1,4 +1,7 @@
 from fnmatch import fnmatch
+import pickle
+import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 from django.core.cache.backends.locmem import LocMemCache
@@ -19,19 +22,28 @@ class OwnedLocMemLock:
         self.backend = backend
         self.key = key
         self.timeout = timeout
-        self.token = uuid4().hex
+        self.local = SimpleNamespace(token=None)
 
-    def acquire(self, blocking: bool = True) -> bool:
+    def acquire(self, blocking: bool = True, token: str | None = None) -> bool:
         """尝试获取锁。
 
         Args:
             blocking: 为兼容 Redis 锁保留；测试锁始终非阻塞。
+            token: 可选的显式所有权令牌。
 
         Returns:
             成功写入所有权令牌时返回 True。
         """
         del blocking
-        return self.backend.add(self.key, self.token, timeout=self.timeout)
+        effective_token = token or uuid4().hex
+        acquired = self.backend.add(
+            self.key,
+            effective_token,
+            timeout=self.timeout,
+        )
+        if acquired:
+            self.local.token = effective_token
+        return acquired
 
     def release(self) -> None:
         """仅当当前实例仍持有令牌时释放锁。
@@ -39,13 +51,67 @@ class OwnedLocMemLock:
         Raises:
             LockNotOwnedError: 锁已过期或所有权已发生变化。
         """
-        if self.backend.get(self.key) != self.token:
-            raise LockNotOwnedError('测试锁所有权已失效')
-        self.backend.delete(self.key)
+        with self.backend._lock:
+            key = self.backend.make_and_validate_key(self.key)
+            if not self._owned_unlocked(key):
+                raise LockNotOwnedError('测试锁所有权已失效')
+            self.backend._delete(key)
+            self.local.token = None
+
+    def _owned_unlocked(self, key: str) -> bool:
+        """在已持有后端互斥锁时比较当前缓存令牌。"""
+        if self.backend._has_expired(key):
+            self.backend._delete(key)
+            return False
+        pickled_token = self.backend._cache.get(key)
+        if pickled_token is None:
+            return False
+        return (
+            self.local.token is not None
+            and pickled_token
+            == pickle.dumps(self.local.token, self.backend.pickle_protocol)
+        )
 
     def owned(self) -> bool:
         """返回当前实例是否仍持有缓存锁。"""
-        return self.backend.get(self.key) == self.token
+        return (
+            self.local.token is not None
+            and self.backend.get(self.key) == self.local.token
+        )
+
+    def locked(self) -> bool:
+        """返回当前缓存锁键是否由任意实例持有。"""
+        return self.backend.get(self.key) is not None
+
+    def restore_token(self, token: str) -> None:
+        """为 Celery 测试任务恢复 Web 请求创建的所有权令牌。"""
+        self.local.token = token
+
+    def reacquire(self) -> bool:
+        """按当前超时重新设置仍由本实例持有的锁租约。"""
+        with self.backend._lock:
+            key = self.backend.make_and_validate_key(self.key)
+            if not self._owned_unlocked(key):
+                raise LockNotOwnedError('测试锁所有权已失效')
+            self.backend._expire_info[key] = self.backend.get_backend_timeout(
+                self.timeout,
+            )
+            return True
+
+    def cap_ttl(self, timeout: float) -> bool:
+        """原子补足不足目标值的测试锁TTL，且不缩短更长租约。"""
+        with self.backend._lock:
+            key = self.backend.make_and_validate_key(self.key)
+            if not self._owned_unlocked(key):
+                raise LockNotOwnedError('测试锁所有权已失效')
+            target_expiration = time.time() + timeout
+            current_expiration = self.backend._expire_info.get(key)
+            if (
+                current_expiration is not None
+                and current_expiration < target_expiration
+            ):
+                self.backend._expire_info[key] = target_expiration
+            return True
 
     def extend(self, additional_time: int, replace_ttl: bool = False) -> bool:
         """延长当前测试锁的过期时间。
@@ -60,11 +126,27 @@ class OwnedLocMemLock:
         Raises:
             LockNotOwnedError: 当前实例已失去锁所有权。
         """
-        if not self.owned():
-            raise LockNotOwnedError('测试锁所有权已失效')
-        timeout = additional_time if replace_ttl else self.timeout + additional_time
-        self.timeout = timeout
-        return self.backend.touch(self.key, timeout=timeout)
+        with self.backend._lock:
+            key = self.backend.make_and_validate_key(self.key)
+            if not self._owned_unlocked(key):
+                raise LockNotOwnedError('测试锁所有权已失效')
+            timeout = (
+                additional_time
+                if replace_ttl
+                else None
+            )
+            if replace_ttl:
+                self.backend._expire_info[key] = self.backend.get_backend_timeout(
+                    timeout,
+                )
+            else:
+                current_expiration = self.backend._expire_info.get(key)
+                if current_expiration is None:
+                    current_expiration = time.time()
+                self.backend._expire_info[key] = (
+                    current_expiration + additional_time
+                )
+            return True
 
 
 class PatternLocMemCache(LocMemCache):

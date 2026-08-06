@@ -207,6 +207,15 @@ HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = env.int(
     'HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL',
     default=60,
 )
+# Broker 提交前的短请求锁；提交失败且 Redis 暂不可用时可快速自愈。
+HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT = env.int(
+    'HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT',
+    default=30,
+)
+HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL = env.float(
+    'HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL',
+    default=10.0,
+)
 
 # 生产订单 SQLite 快照导入配置。
 PRODUCTION_ORDERS_SQLITE_PATH = BASE_DIR / 'sqlite' / 'production_orders.db'

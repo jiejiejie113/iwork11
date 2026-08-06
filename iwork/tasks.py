@@ -4,12 +4,13 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import OperationalError, connections
 from loguru import logger
-from redis.exceptions import LockNotOwnedError
+from redis.exceptions import LockError, LockNotOwnedError
 
 from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.read_model.builder import build_snapshot
 from iwork.read_model.errors import SnapshotConsistencyError
 from iwork.read_model.store import SnapshotStore
+from iwork.snapshot_request_lock import renew_request_lock, restore_request_lock
 from iwork.statistics import get_business_date
 
 # =====
@@ -129,11 +130,16 @@ def snapshot_recent_history(self, days=3):
     task_time_limit=1800,
     task_soft_time_limit=1740,
 )
-def build_history_snapshot(self, target_date_text: str):
+def build_history_snapshot(
+    self,
+    target_date_text: str,
+    request_token: str | None = None,
+):
     """异步构建单个历史日期快照。
 
     Args:
         target_date_text: ISO 格式的曼谷业务日期。
+        request_token: Web 请求生成的分布式锁所有权令牌；旧任务缺少令牌时安全退出。
 
     Returns:
         发布成功的快照摘要。
@@ -141,9 +147,24 @@ def build_history_snapshot(self, target_date_text: str):
     from datetime import date
 
     target_date = date.fromisoformat(target_date_text)
-    request_key = f'history:snapshot:request:{target_date_text}'
-    keep_request_marker = False
+    if not request_token:
+        logger.warning('历史快照 {} 任务缺少请求所有权令牌，安全跳过', target_date)
+        return {'date': target_date_text, 'status': 'superseded'}
+
+    request_lock = restore_request_lock(target_date_text, request_token)
+    keep_request_lock = False
     try:
+        try:
+            if not renew_request_lock(
+                request_lock,
+                settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+            ):
+                logger.warning('历史快照 {} 请求所有权已失效', target_date)
+                return {'date': target_date_text, 'status': 'superseded'}
+        except LockError:
+            logger.warning('历史快照 {} 请求已被新一代任务取代', target_date)
+            return {'date': target_date_text, 'status': 'superseded'}
+
         state = snapshot_history_date(target_date)
         return {
             'date': target_date_text,
@@ -155,18 +176,36 @@ def build_history_snapshot(self, target_date_text: str):
         return {'date': target_date_text, 'status': 'building'}
     except Exception as exc:
         if _is_retryable(exc):
-            keep_request_marker = self.request.retries < self.max_retries
+            if self.request.retries < self.max_retries:
+                try:
+                    keep_request_lock = renew_request_lock(
+                        request_lock,
+                        settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+                    )
+                except Exception as renewal_error:
+                    logger.warning(
+                        '历史快照 {} 重试前无法续租请求锁: {}',
+                        target_date,
+                        renewal_error,
+                    )
+                if not keep_request_lock:
+                    return {'date': target_date_text, 'status': 'superseded'}
             raise self.retry(exc=exc) from exc
         logger.error('历史快照 {} 异步构建失败: {}', target_date, exc)
         raise
     finally:
         connections['iwork'].close()
-        if not keep_request_marker:
+        if not keep_request_lock:
             try:
-                cache.delete(request_key)
+                request_lock.release()
+            except LockError:
+                logger.warning(
+                    '历史快照 {} 请求锁已失效或已被取代',
+                    target_date,
+                )
             except Exception as cleanup_error:
                 logger.warning(
-                    '清理历史快照请求标记失败: date={} error={}',
+                    '释放历史快照请求锁失败: date={} error={}',
                     target_date,
                     cleanup_error,
                 )

@@ -5,16 +5,22 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import date
+from typing import Any
 from django.conf import settings
-from django.core.cache import cache
 from loguru import logger
+from redis.exceptions import LockError
 
 from iwork.statistics import get_business_date, get_local_date_stats
 from iwork.local_queries import get_available_dates
 from iwork.request_params import parse_stepno_filter
 from iwork.local_models import HistoricalSyncState
+from iwork.snapshot_request_lock import (
+    RequestLockLease,
+    acquire_request_lock,
+    renew_request_lock,
+    snapshot_build_in_progress,
+)
 from iwork.tasks import build_history_snapshot
-
 
 def _parse_stepno(request) -> list[int] | None:
     """从请求参数解析 StepNo 过滤列表，无参数返回 None（全工序）"""
@@ -115,6 +121,59 @@ def _snapshot_payload(state):
     }
 
 
+def _claim_snapshot_request(
+    target_date: str,
+) -> tuple[Any, str, RequestLockLease | None, bool]:
+    """申请单日期历史快照的后台任务入队资格。
+
+    请求锁使用唯一所有权令牌，避免旧任务误删新请求。取得请求锁后继续使用
+    Redis 锁原生语义检查真实构建锁；已有构建者时立即释放请求锁并等待轮询。
+
+    Args:
+        target_date (str): ISO 格式的目标日期。
+
+    Returns:
+        tuple[Any, str, RequestLockLease | None, bool]:
+            请求锁、所有权令牌、续租器和是否取得入队资格。
+    """
+    request_lock, request_token, request_claimed = acquire_request_lock(
+        target_date,
+        settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+    )
+    if not request_claimed:
+        return request_lock, request_token, None, False
+
+    request_lease = RequestLockLease(
+        request_lock,
+        settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT,
+        settings.HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL,
+    )
+    try:
+        request_lease.start()
+        if request_lease.lost:
+            raise ConnectionError('历史快照请求锁初始续租失败')
+        if snapshot_build_in_progress(target_date):
+            request_lease.stop()
+            try:
+                request_lock.release()
+            except LockError:
+                logger.warning('历史快照请求锁已失效: date={}', target_date)
+            return request_lock, request_token, None, False
+    except Exception:
+        request_lease.stop()
+        try:
+            request_lock.release()
+        except Exception as cleanup_error:
+            logger.warning(
+                '释放历史快照请求锁失败: date={} error={}',
+                target_date,
+                cleanup_error,
+            )
+        raise
+
+    return request_lock, request_token, request_lease, True
+
+
 @api_view(['POST'])
 def ensure_snapshot(request, target_date):
     """确保指定历史日期已有可读取快照，否则仅提交后台任务。"""
@@ -136,13 +195,13 @@ def ensure_snapshot(request, target_date):
             'snapshot': _snapshot_payload(existing),
         }, status=status.HTTP_200_OK)
 
-    request_key = f'history:snapshot:request:{target_date}'
     try:
-        request_added = cache.add(
-            request_key,
-            'queued',
-            timeout=settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
-        )
+        (
+            request_lock,
+            request_token,
+            request_lease,
+            request_claimed,
+        ) = _claim_snapshot_request(target_date)
     except Exception as exc:
         logger.warning('历史快照入队锁暂不可用: date={} error={}', target_date, exc)
         return Response(
@@ -153,7 +212,7 @@ def ensure_snapshot(request, target_date):
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    if not request_added:
+    if not request_claimed:
         return Response({
             'created': False,
             'code': 'history_snapshot_building',
@@ -162,7 +221,26 @@ def ensure_snapshot(request, target_date):
         }, status=status.HTTP_202_ACCEPTED)
 
     try:
-        task = build_history_snapshot.delay(target_date)
+        task = build_history_snapshot.delay(target_date, request_token)
+        request_lease.stop()
+        if request_lease.lost:
+            logger.warning(
+                'Broker提交期间历史快照请求锁已失效: date={}',
+                target_date,
+            )
+        if not request_lease.lost:
+            try:
+                if not renew_request_lock(
+                    request_lock,
+                    settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT,
+                ):
+                    logger.warning('历史快照请求锁确认失败: date={}', target_date)
+            except Exception as renewal_error:
+                logger.warning(
+                    '续租历史快照请求锁失败: date={} error={}',
+                    target_date,
+                    renewal_error,
+                )
         logger.info('历史快照 {} 已提交后台任务: {}', target_date, task.id)
         return Response({
             'created': False,
@@ -171,7 +249,15 @@ def ensure_snapshot(request, target_date):
             'retry_after': 2,
         }, status=status.HTTP_202_ACCEPTED)
     except Exception as e:
-        cache.delete(request_key)
+        request_lease.stop()
+        try:
+            request_lock.release()
+        except Exception as cleanup_error:
+            logger.warning(
+                '释放历史快照请求锁失败: date={} error={}',
+                target_date,
+                cleanup_error,
+            )
         logger.error(
             'POST /api/history/snapshots/{}/ensure 提交失败: {}',
             target_date,

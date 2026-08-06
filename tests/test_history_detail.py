@@ -1,5 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
-from unittest.mock import patch
+from threading import Event
+from time import sleep
+from types import SimpleNamespace
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -399,12 +403,20 @@ def test_ensure_snapshot_reports_build_in_progress(
     _mock_snapshot_state,
     client,
 ):
-    """同日期已经入队时，API 应返回可轮询的 202。"""
+    """同日期真实构建锁仍存在时，API 应返回202且不得重复提交任务。"""
+    from django.core.cache import cache
 
-    with patch('iwork.api_views_local.cache.add', return_value=False), patch(
-        'iwork.api_views_local.build_history_snapshot.delay',
-    ) as build_snapshot:
-        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+    build_key = 'history:snapshot:build:2026-07-15'
+    build_lock = cache.lock(build_key, timeout=60, thread_local=False)
+    assert build_lock.acquire(blocking=False)
+
+    try:
+        with patch(
+            'iwork.api_views_local.build_history_snapshot.delay',
+        ) as build_snapshot:
+            response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+    finally:
+        build_lock.release()
 
     assert response.status_code == 202
     assert response.json() == {
@@ -418,6 +430,141 @@ def test_ensure_snapshot_reports_build_in_progress(
 
 @patch('iwork.api_views_local._snapshot_state', return_value=None)
 @patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_requeues_after_existing_builder_releases_lock(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """外部构建锁释放后应清理等待标记并恢复提交，不得误报构建中30分钟。"""
+    from django.core.cache import cache
+
+    build_key = 'history:snapshot:build:2026-07-15'
+    build_lock = cache.lock(build_key, timeout=60, thread_local=False)
+    assert build_lock.acquire(blocking=False)
+    build_lock.release()
+
+    try:
+        with patch(
+            'iwork.api_views_local.build_history_snapshot.delay',
+        ) as build_snapshot:
+            build_snapshot.return_value.id = 'task-history-recovered'
+            response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+    finally:
+        cache.delete('history:snapshot:request:2026-07-15')
+
+    assert response.status_code == 202
+    assert response.json()['message'] == '本地历史快照已提交后台构建'
+    build_snapshot.assert_called_once_with('2026-07-15', ANY)
+
+
+def test_snapshot_request_allows_only_one_concurrent_claim():
+    """并发轮询只能有一个请求取得带所有权令牌的入队资格。"""
+    from django.conf import settings
+    from iwork.api_views_local import _claim_snapshot_request
+
+    target_date = '2026-07-15'
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(_claim_snapshot_request, target_date)
+            for _ in range(8)
+        ]
+        claims = [future.result() for future in futures]
+
+    winners = [claim for claim in claims if claim[3]]
+    assert len(winners) == 1
+    request_lock, request_token, request_lease, _claimed = winners[0]
+    assert request_token
+    assert request_lock.owned()
+    assert request_lock.timeout == settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT
+    request_lease.stop()
+    request_lock.release()
+
+
+def test_snapshot_request_renews_during_slow_build_lock_check(settings):
+    """真实构建锁检查超过初始租约时也不得让第二个请求获权。"""
+    from django.core.cache import cache
+    from iwork.api_views_local import _claim_snapshot_request
+
+    settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT = 1
+    settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT = 1
+    settings.HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL = 0.1
+    check_started = Event()
+
+    def slow_build_check(_target_date):
+        """模拟 Redis 构建锁检查长时间阻塞。"""
+        check_started.set()
+        sleep(1.3)
+        return False
+
+    try:
+        with patch(
+            'iwork.api_views_local.snapshot_build_in_progress',
+            side_effect=slow_build_check,
+        ) as build_check, ThreadPoolExecutor(max_workers=1) as executor:
+            first_claim_future = executor.submit(
+                _claim_snapshot_request,
+                '2026-07-15',
+            )
+            assert check_started.wait(timeout=1)
+            sleep(1.05)
+            second_claim = _claim_snapshot_request('2026-07-15')
+            first_claim = first_claim_future.result(timeout=2)
+
+        assert first_claim[3] is True
+        assert second_claim[3] is False
+        assert build_check.call_count == 1
+        first_claim[2].stop()
+        first_claim[0].release()
+    finally:
+        cache.delete('history:snapshot:request:2026-07-15')
+
+
+def test_late_web_renewal_cannot_shorten_celery_request_lease():
+    """晚到的Web续租只能增加TTL，不得覆盖Celery提升后的长租约。"""
+    from iwork.snapshot_request_lock import (
+        acquire_request_lock,
+        cap_request_lock_ttl,
+        renew_request_lock,
+    )
+
+    request_lock, _request_token, acquired = acquire_request_lock(
+        '2026-07-15',
+        timeout=1,
+    )
+    assert acquired
+    renew_request_lock(request_lock, timeout=5)
+    cap_request_lock_ttl(request_lock, timeout=1)
+
+    sleep(1.1)
+
+    assert request_lock.owned()
+    request_lock.release()
+
+
+def test_request_lease_caps_ttl_without_shortening_long_lease():
+    """后台续租应补足短TTL且不缩短已提升的长租约。"""
+    from iwork.snapshot_request_lock import RequestLockLease
+
+    request_lock = MagicMock()
+    request_lock.reacquire.return_value = True
+    request_lock.cap_ttl.return_value = True
+    lease = RequestLockLease(
+        request_lock,
+        timeout=1,
+        renew_interval=0.1,
+    ).start()
+
+    sleep(0.35)
+    lease.stop()
+
+    assert request_lock.cap_ttl.call_count >= 2
+    for call in request_lock.cap_ttl.call_args_list:
+        assert call.args == (1,)
+        assert call.kwargs == {}
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
 def test_ensure_snapshot_delegates_build_to_history_store(
     _mock_business_date,
     _mock_snapshot_state,
@@ -425,14 +572,16 @@ def test_ensure_snapshot_delegates_build_to_history_store(
 ):
     """API 应将远程构建委托给 Celery 后台任务。"""
 
-    with patch('iwork.api_views_local.cache.add', return_value=True), patch(
+    with patch(
         'iwork.api_views_local.build_history_snapshot.delay',
     ) as build_snapshot:
         build_snapshot.return_value.id = 'task-history-1'
         response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+    from django.core.cache import cache
+    cache.delete('history:snapshot:request:2026-07-15')
 
     assert response.status_code == 202
-    build_snapshot.assert_called_once_with('2026-07-15')
+    build_snapshot.assert_called_once_with('2026-07-15', ANY)
 
 
 @patch('iwork.api_views_local._snapshot_state', return_value=None)
@@ -444,7 +593,7 @@ def test_ensure_snapshot_returns_503_when_queue_lock_cache_is_unavailable(
 ):
     """Redis 无法创建入队标记时应明确返回 503，且不得重复提交任务。"""
     with patch(
-        'iwork.api_views_local.cache.add',
+        'iwork.api_views_local.acquire_request_lock',
         side_effect=ConnectionError('Redis unavailable'),
     ), patch('iwork.api_views_local.build_history_snapshot.delay') as build_snapshot:
         response = client.post('/api/history/snapshots/2026-07-15/ensure/')
@@ -452,6 +601,82 @@ def test_ensure_snapshot_returns_503_when_queue_lock_cache_is_unavailable(
     assert response.status_code == 503
     assert response.json()['code'] == 'history_snapshot_queue_unavailable'
     build_snapshot.assert_not_called()
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_broker_failure_uses_short_self_healing_lock(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+):
+    """Broker失败且锁释放异常时，请求锁也只能保留短暂待确认租约。"""
+    from django.conf import settings
+
+    request_lock = MagicMock()
+    request_lock.timeout = settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT
+    request_lock.release.side_effect = ConnectionError('Redis unavailable')
+    request_lease = MagicMock()
+    request_lease.lost = False
+
+    with patch(
+        'iwork.api_views_local._claim_snapshot_request',
+        return_value=(request_lock, 'request-token', request_lease, True),
+    ), patch(
+        'iwork.api_views_local.build_history_snapshot.delay',
+        side_effect=ConnectionError('Broker unavailable'),
+    ):
+        response = client.post('/api/history/snapshots/2026-07-15/ensure/')
+
+    assert response.status_code == 500
+    assert request_lock.timeout == settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT
+    request_lease.stop.assert_called_once_with()
+    request_lock.release.assert_called_once_with()
+
+
+@patch('iwork.api_views_local._snapshot_state', return_value=None)
+@patch('iwork.api_views_local.get_business_date', return_value=date(2026, 7, 16))
+def test_ensure_snapshot_renews_request_lock_during_slow_broker_submission(
+    _mock_business_date,
+    _mock_snapshot_state,
+    client,
+    settings,
+):
+    """Broker提交超过待确认租约时，轮询仍不得产生第二个后台任务。"""
+    from django.core.cache import cache
+    from django.test import Client
+
+    settings.HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT = 1
+    settings.HISTORY_SNAPSHOT_REQUEST_RENEW_INTERVAL = 0.1
+    delay_started = Event()
+
+    def slow_delay(_target_date, _request_token):
+        """模拟超过初始请求锁租约的 Broker 阻塞。"""
+        delay_started.set()
+        sleep(1.3)
+        return SimpleNamespace(id='slow-broker-task')
+
+    try:
+        with patch(
+            'iwork.api_views_local.build_history_snapshot.delay',
+            side_effect=slow_delay,
+        ) as build_snapshot, ThreadPoolExecutor(max_workers=1) as executor:
+            first_response_future = executor.submit(
+                Client().post,
+                '/api/history/snapshots/2026-07-15/ensure/',
+            )
+            assert delay_started.wait(timeout=1)
+            sleep(1.05)
+            second_response = client.post(
+                '/api/history/snapshots/2026-07-15/ensure/',
+            )
+            first_response = first_response_future.result(timeout=2)
+    finally:
+        cache.delete('history:snapshot:request:2026-07-15')
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+    assert build_snapshot.call_count == 1
 
 
 def test_snapshot_history_command_skips_build_in_progress():
