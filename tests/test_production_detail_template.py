@@ -423,6 +423,20 @@ def test_sse_uses_embedded_workorders_without_duplicate_request():
     assert "msg.stale ? '已连接（数据更新延迟）'" in sse_handler
 
 
+def test_sse_snapshot_unavailable_event_preserves_data_and_waits_for_recovery():
+    """命名的快照不可用事件应标记异常，但保留旧数据和长连接。"""
+    unavailable_handler = DASHBOARD_TEMPLATE.split(
+        "eventSource.addEventListener('snapshot_unavailable', () => {",
+        1,
+    )[1]
+    unavailable_handler = unavailable_handler.split("});", 1)[0]
+
+    assert "wsConnected.value = false;" in unavailable_handler
+    assert "wsStatus.value = '实时数据暂不可用，等待恢复...';" in unavailable_handler
+    assert "Object.assign(data" not in unavailable_handler
+    assert "eventSource.close" not in unavailable_handler
+
+
 def test_historical_production_detail_builds_snapshot_and_hides_update_time():
     """历史生产详情应构建快照并隐藏更新时间。"""
     assert 'api/history/snapshots/${snapshotDate}/ensure/' in TEMPLATE

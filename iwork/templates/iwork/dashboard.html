@@ -810,6 +810,11 @@ createApp({
                 }
             };
 
+            eventSource.addEventListener('snapshot_unavailable', () => {
+                wsConnected.value = false;
+                wsStatus.value = '实时数据暂不可用，等待恢复...';
+            });
+
             eventSource.onerror = () => {
                 wsConnected.value = false;
                 wsStatus.value = '连接断开，自动重连中...';
