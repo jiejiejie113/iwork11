@@ -496,8 +496,17 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 ### 10.5 累计产量源明细审计导出
 
 `scripts/export_wrkorder_cumulative_details.py` 是人工核对累计产量差异的只读审计工具，
-不属于定时同步、Redis 快照构建或应用运行依赖。使用时只修改脚本顶部的全局
-`WRKORDER`，脚本必须按完整 `WrkOrder` 精确匹配 `pytckreg3`：
+不属于定时同步、Redis 快照构建或应用运行依赖。脚本通过顶部全局配置显式选择模式：
+
+| `EXPORT_MODE` | 配置项 | 行为 | 适用场景 |
+| --- | --- | --- | --- |
+| `detail`（默认） | `WRKORDER` | 按一个完整工单号逐行导出全部源字段，不汇总、不去重 | 核对单工单累计产量差异和追溯源记录 |
+| `compact` | `WRKORDERS` | 批量输出各工单最早 `RegDate`，以及工序 1、3、6 的 `Qty` 总和 | 一次核对多个工单的起始日期和指定工序累计量 |
+
+默认使用 `detail`，避免误操作触发大批量汇总。每次执行前必须同时检查
+`EXPORT_MODE` 和对应的 `WRKORDER` / `WRKORDERS`，不能只修改工单配置而忽略当前模式。
+
+`detail` 模式必须按完整 `WrkOrder` 精确匹配 `pytckreg3`：
 
 - 查询不得添加日期、Flow 或工序白名单，不得执行 `SUM`、`GROUP BY`、去重或字段转换；
 - 导出字段只由脚本顶部 `SOURCE_FIELDS` 定义，源记录逐行写入，按工序号、登记日期时间、
@@ -509,6 +518,17 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
   `pytckreg3_<WrkOrder>_累计产量源明细_<时间戳>.xlsx`；
 - 文件先写入同目录唯一临时文件，成功关闭后再替换为正式文件；失败时清理临时文件并
   保留日志，不能留下看似完整的半成品。
+
+`compact` 模式是受控的显式例外，必须遵循以下口径：
+
+- 使用一个参数化 `WrkOrder IN (...)` 查询，并按完整 `WrkOrder` 分组；不得按工单循环查询；
+- `起始RegDate` 使用该工单全部源记录的 `MIN(RegDate)`。工序条件不能提前放入 `WHERE`，
+  否则会把起始日期错误限制为工序 1、3、6 的最早日期；
+- 只对 `COMPACT_STEP_NOS` 中的工序分别执行条件 `SUM(Qty)`，当前固定为工序 1、3、6；
+- 输出顺序必须与 `WRKORDERS` 配置一致。生产表中不存在的工单仍输出一行，起始日期为空，
+  三个工序数量为 0，不能静默删除；
+- 输出文件名为 `pytckreg3_工单累计产量精简汇总_<时间戳>.xlsx`，同样使用唯一临时文件
+  完成后替换，不得留下半成品。
 
 ## 11. 修改检查清单
 

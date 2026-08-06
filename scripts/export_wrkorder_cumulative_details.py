@@ -15,8 +15,8 @@ from pymysql.cursors import SSCursor
 
 # ======
 # 查询模式配置
-EXPORT_MODE = "compact"  # detail：单工单完整明细；compact：多工单精简汇总
-WRKORDER = "BU1211"
+EXPORT_MODE = "detail"  # detail：单工单完整明细；compact：多工单精简汇总
+WRKORDER = "BU1165"
 WRKORDERS = (
     "BU0724",
     "BU0730",
