@@ -10,6 +10,7 @@ from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_d
 from iwork.read_model.builder import build_snapshot
 from iwork.read_model.errors import SnapshotConsistencyError
 from iwork.read_model.store import SnapshotStore
+from iwork.sse_events import publish_snapshot_notification
 from iwork.snapshot_request_lock import renew_request_lock, restore_request_lock
 from iwork.statistics import get_business_date
 
@@ -64,6 +65,22 @@ def sync_dashboard_stats(self):
             return 0
 
         version = SnapshotStore().publish(snapshot)
+        try:
+            subscriber_count = publish_snapshot_notification(business_date, version)
+            logger.info(
+                '实时快照通知已发布: date={} version={} subscribers={}',
+                business_date,
+                version,
+                subscriber_count,
+            )
+        except Exception as notification_error:
+            logger.warning(
+                '实时快照已完成，但 SSE 版本通知发送失败，将由周期核对补偿: '
+                'date={} version={} error={}',
+                business_date,
+                version,
+                notification_error,
+            )
         record_count = snapshot['metadata']['record_count']
         logger.success(
             '完整实时快照发布完成: date={} version={} source_records={}',

@@ -443,6 +443,18 @@ def test_sse_uses_embedded_workorders_without_duplicate_request():
     assert "msg.stale ? '已连接（数据更新延迟）'" in sse_handler
 
 
+def test_sse_rejects_duplicate_or_older_snapshot_events():
+    """SSE 重连或并发响应不得用重复、旧快照覆盖较新数据。"""
+    assert 'let latestSnapshotVersion = null;' in DASHBOARD_TEMPLATE
+    assert 'let latestSnapshotGeneratedAt = null;' in DASHBOARD_TEMPLATE
+    assert 'function shouldApplyRealtimeSnapshot(msg)' in DASHBOARD_TEMPLATE
+    assert 'if (!shouldApplyRealtimeSnapshot(msg)) return;' in DASHBOARD_TEMPLATE
+    connect_handler = DASHBOARD_TEMPLATE.split('function connectSSE() {', 1)[1]
+    connect_handler = connect_handler.split('eventSource = new EventSource(url);', 1)[0]
+    assert 'latestSnapshotVersion = null;' in connect_handler
+    assert 'latestSnapshotGeneratedAt = null;' in connect_handler
+
+
 def test_sse_snapshot_unavailable_event_preserves_data_and_waits_for_recovery():
     """命名的快照不可用事件应标记异常，但保留旧数据和长连接。"""
     unavailable_handler = DASHBOARD_TEMPLATE.split(

@@ -762,6 +762,26 @@ createApp({
 
         // ---- SSE 实时推送 ----
         let eventSource = null;
+        let latestSnapshotVersion = null;
+        let latestSnapshotGeneratedAt = null;
+
+        function shouldApplyRealtimeSnapshot(msg) {
+            const snapshotVersion = String(msg.snapshot_version || '');
+            const generatedAt = Date.parse(msg.generated_at || '');
+            if (snapshotVersion && snapshotVersion === latestSnapshotVersion) {
+                return false;
+            }
+            if (
+                Number.isFinite(generatedAt)
+                && latestSnapshotGeneratedAt !== null
+                && generatedAt < latestSnapshotGeneratedAt
+            ) {
+                return false;
+            }
+            if (snapshotVersion) latestSnapshotVersion = snapshotVersion;
+            if (Number.isFinite(generatedAt)) latestSnapshotGeneratedAt = generatedAt;
+            return true;
+        }
 
         function connectSSE() {
             const stepno = stepnoFilter.value || '';
@@ -769,6 +789,8 @@ createApp({
                 ? `${basePath}api/dashboard/stream/?stepno=${stepno}`
                 : basePath + 'api/dashboard/stream/';
 
+            latestSnapshotVersion = null;
+            latestSnapshotGeneratedAt = null;
             eventSource = new EventSource(url);
 
             eventSource.onmessage = async (event) => {
@@ -777,6 +799,7 @@ createApp({
 
                 try {
                     const msg = JSON.parse(event.data);
+                    if (!shouldApplyRealtimeSnapshot(msg)) return;
                     if (msg.data) {
                         Object.assign(data, msg.data);
                         // SSE 已携带同版本工单，禁止再发请求造成查询放大。

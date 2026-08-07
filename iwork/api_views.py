@@ -45,11 +45,21 @@ from iwork.read_model.errors import ReadModelNotReadyError
 from iwork.read_model.queries import ReadModelQueries
 from iwork.read_model.store import SnapshotReadResult
 from iwork.request_params import parse_stepno_filter
+from iwork.sse_events import (
+    SerializedSSEEvent,
+    get_snapshot_notification_broker,
+    get_sse_payload_cache,
+)
 
 
 # ======
 # 统一实时读模型
 READ_MODEL = ReadModelQueries()
+
+# ======
+# SSE 保活配置
+SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
+SSE_NOTIFICATION_POLL_SECONDS = settings.SSE_NOTIFICATION_POLL_SECONDS
 
 
 def _parse_stepno(request) -> list[int] | None:
@@ -1057,47 +1067,117 @@ def product_overview(request):
 @csrf_exempt
 async def dashboard_stream(request):
     """
-    SSE 实时推送流（异步，每 60s 从 Redis 读缓存推送给客户端）
+    SSE 实时推送流（快照发布即时广播，周期核对仅用于丢消息补偿）
 
-    支持参数：
-        ?stepno=70    过滤工序号（可选）
+    异步实现：每个连接使用容量为 1 的最新事件队列；同一 Worker 内相同
+    日期/工序的客户端共享一次 Redis 读取和 JSON 序列化。不同负载的构建
+    进入有界并发队列，避免突发连接放大线程池和内存压力。
 
-    异步实现：每个连接仅占一个 asyncio 协程（~KB 级），不占用 worker 进程。
-    通过 sync_to_async 将同步 Redis 读取放到线程池，不阻塞事件循环。
+    Args:
+        request: Django 请求；可通过 ``stepno`` 查询参数过滤工序。
+
+    Returns:
+        StreamingHttpResponse: ``text/event-stream`` 长连接响应。
     """
     stepno_filter = _parse_stepno(request)
+    state = {'business_date': get_business_date()}
+    broker = get_snapshot_notification_broker()
+    payload_cache = get_sse_payload_cache()
 
-    @sync_to_async
-    def _get_data():
-        return READ_MODEL.stream_payload(get_business_date(), stepno_filter)
+    def _cache_key() -> tuple:
+        """返回当前连接对应的共享负载键。
+
+        Returns:
+            tuple: 业务日期和工序过滤组成的不可变键。
+        """
+        return (
+            state['business_date'].isoformat(),
+            tuple(stepno_filter or ()),
+        )
+
+    async def _get_event() -> SerializedSSEEvent:
+        """读取当前完整快照并完成一次共享序列化。
+
+        Returns:
+            SerializedSSEEvent: 可被本 Worker 多个连接复用的事件。
+        """
+        result = await sync_to_async(
+            READ_MODEL.stream_payload,
+            thread_sensitive=False,
+        )(state['business_date'], stepno_filter)
+        data = {
+            'type': 'dashboard_update',
+            'timestamp': datetime.now().isoformat(),
+            'snapshot_version': result.metadata['snapshot_version'],
+            'generated_at': result.metadata['generated_at'],
+            'stale': result.stale,
+            **result.data,
+        }
+        return SerializedSSEEvent(
+            snapshot_version=result.metadata['snapshot_version'],
+            generated_at=result.metadata['generated_at'],
+            content=f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n",
+        )
 
     async def event_stream():
-        while True:
-            try:
-                result = await _get_data()
-                data = {
-                    'type': 'dashboard_update',
-                    'timestamp': datetime.now().isoformat(),
-                    'snapshot_version': result.metadata['snapshot_version'],
-                    'generated_at': result.metadata['generated_at'],
-                    'stale': result.stale,
-                    **result.data,
-                }
-                yield f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
-            except ReadModelNotReadyError as exc:
-                logger.warning('SSE 实时快照暂不可用: {}', exc)
-                data = {
-                    'type': 'snapshot_unavailable',
-                    'timestamp': datetime.now().isoformat(),
-                    'code': 'realtime_snapshot_unavailable',
-                }
-                yield f"event: snapshot_unavailable\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                logger.error('SSE 数据获取失败: {}', e)
-            # 心跳保活：60秒内每15秒发一次SSE注释，防止Nginx/浏览器断开
-            for _ in range(4):
-                await asyncio.sleep(15)
-                yield ": heartbeat\n\n"
+        """按最新通知或周期核对结果生成 SSE 数据与心跳。
+
+        Yields:
+            str: SSE 数据事件、不可用事件或心跳注释。
+        """
+        last_version = None
+        has_attempted_payload = False
+        async with broker.subscribe() as notification_queue:
+            while True:
+                notification = None
+                if has_attempted_payload:
+                    try:
+                        notification = await asyncio.wait_for(
+                            notification_queue.get(),
+                            timeout=SSE_HEARTBEAT_SECONDS,
+                        )
+                    except TimeoutError:
+                        yield ": heartbeat\n\n"
+
+                current_business_date = get_business_date()
+                if current_business_date != state['business_date']:
+                    state['business_date'] = current_business_date
+                    last_version = None
+
+                notification_version = None
+                if isinstance(notification, dict):
+                    if notification.get('business_date') not in {
+                        None,
+                        state['business_date'].isoformat(),
+                    }:
+                        continue
+                    notification_version = notification.get('snapshot_version')
+
+                try:
+                    event = await payload_cache.get(
+                        _cache_key(),
+                        _get_event,
+                        notification_version=notification_version,
+                        max_age_seconds=SSE_NOTIFICATION_POLL_SECONDS,
+                    )
+                    if event.snapshot_version != last_version:
+                        last_version = event.snapshot_version
+                        yield event.content
+                except ReadModelNotReadyError as exc:
+                    logger.warning('SSE 实时快照暂不可用: {}', exc)
+                    data = {
+                        'type': 'snapshot_unavailable',
+                        'timestamp': datetime.now().isoformat(),
+                        'code': 'realtime_snapshot_unavailable',
+                    }
+                    yield (
+                        "event: snapshot_unavailable\n"
+                        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    )
+                except Exception as e:
+                    logger.error('SSE 数据获取失败: {}', e)
+                finally:
+                    has_attempted_payload = True
 
     return StreamingHttpResponse(
         event_stream(),

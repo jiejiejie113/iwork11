@@ -1,5 +1,7 @@
 import json
+import asyncio
 import pytest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
 from datetime import date
@@ -83,14 +85,14 @@ class TestDashboardView:
         assert response.context['stats']['total_qty'] == 0
 
 
-def _snapshot_result(data, stale=False):
+def _snapshot_result(data, stale=False, snapshot_version='v-test'):
     """构造 API 测试使用的统一快照结果。"""
     from iwork.read_model.store import SnapshotReadResult
 
     return SnapshotReadResult(
         data=data,
         metadata={
-            'snapshot_version': 'v-test',
+            'snapshot_version': snapshot_version,
             'generated_at': '2026-07-31T12:00:00+07:00',
         },
         stale=stale,
@@ -937,6 +939,111 @@ class TestDashboardStream:
             response = await dashboard_stream(request)
             await anext(response.streaming_content)
         read.assert_called_once_with(date.today(), [69])
+
+    @pytest.mark.asyncio
+    async def test_unavailable_snapshot_waits_for_heartbeat_before_retry(self):
+        """快照不可用时不得无等待循环读取 Redis 和刷屏错误事件。"""
+        from iwork.api_views import dashboard_stream
+        from iwork.read_model.errors import ReadModelNotReadyError
+        from iwork.sse_events import SharedSSEPayloadCache
+
+        factory = APIRequestFactory()
+        with (
+            patch(
+                'iwork.api_views.READ_MODEL.stream_payload',
+                side_effect=ReadModelNotReadyError('测试快照不可用'),
+            ) as read,
+            patch('iwork.api_views.SSE_HEARTBEAT_SECONDS', 0.01),
+            patch(
+                'iwork.api_views.get_sse_payload_cache',
+                return_value=SharedSSEPayloadCache(),
+            ),
+        ):
+            response = await dashboard_stream(factory.get('/api/dashboard/stream/'))
+            first_chunk = (await anext(response.streaming_content)).decode('utf-8')
+            second_chunk = (
+                await asyncio.wait_for(
+                    anext(response.streaming_content),
+                    timeout=0.2,
+                )
+            ).decode('utf-8')
+            await response.streaming_content.aclose()
+
+        assert first_chunk.startswith('event: snapshot_unavailable')
+        assert second_chunk == ': heartbeat\n\n'
+        assert read.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_published_snapshot_reaches_all_connected_clients_without_connection_delay(self):
+        """错开建立的连接应在同一次快照发布后立即收到相同版本。"""
+        from iwork.api_views import dashboard_stream
+
+        class TestSnapshotBroker:
+            """测试使用的进程内快照发布适配器。"""
+
+            def __init__(self):
+                """初始化订阅队列集合。"""
+                self.queues = set()
+
+            @asynccontextmanager
+            async def subscribe(self):
+                """注册并在退出时清理单个 SSE 订阅。"""
+                queue = asyncio.Queue(maxsize=1)
+                self.queues.add(queue)
+                try:
+                    yield queue
+                finally:
+                    self.queues.discard(queue)
+
+            async def publish(self, snapshot_version):
+                """向所有已连接客户端广播快照版本。"""
+                for queue in self.queues:
+                    queue.put_nowait({'snapshot_version': snapshot_version})
+
+        state = {'version': 'v1', 'qty': 1000}
+        broker = TestSnapshotBroker()
+
+        def current_snapshot(*_args):
+            """返回当前测试快照。"""
+            return _snapshot_result(
+                {
+                    'data': {'total_qty': state['qty']},
+                    'process_list': [70],
+                    'detail_overview': {},
+                },
+                snapshot_version=state['version'],
+            )
+
+        factory = APIRequestFactory()
+        with (
+            patch('iwork.api_views.READ_MODEL.stream_payload', side_effect=current_snapshot),
+            patch('iwork.api_views.get_snapshot_notification_broker', return_value=broker),
+        ):
+            response_a = await dashboard_stream(factory.get('/api/dashboard/stream/?stepno=70'))
+            stream_a = response_a.streaming_content
+            first_a = json.loads((await anext(stream_a)).decode('utf-8')[6:-2])
+
+            response_b = await dashboard_stream(factory.get('/api/dashboard/stream/?stepno=70'))
+            stream_b = response_b.streaming_content
+            first_b = json.loads((await anext(stream_b)).decode('utf-8')[6:-2])
+
+            assert first_a['snapshot_version'] == 'v1'
+            assert first_b['snapshot_version'] == 'v1'
+
+            state.update(version='v2', qty=2000)
+            await broker.publish('v2')
+
+            second_a, second_b = await asyncio.gather(
+                asyncio.wait_for(anext(stream_a), timeout=0.5),
+                asyncio.wait_for(anext(stream_b), timeout=0.5),
+            )
+
+        event_a = json.loads(second_a.decode('utf-8')[6:-2])
+        event_b = json.loads(second_b.decode('utf-8')[6:-2])
+        assert event_a['snapshot_version'] == 'v2'
+        assert event_b['snapshot_version'] == 'v2'
+        assert event_a['data']['total_qty'] == 2000
+        assert event_b['data']['total_qty'] == 2000
 
 
 class TestSetTargets:

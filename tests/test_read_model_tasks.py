@@ -36,15 +36,57 @@ def test_refresh_builds_and_publishes_one_complete_version(
         "views": {"processes": [70, 69]},
     }
     mock_build.return_value = snapshot
+    mock_store_class.return_value.publish.return_value = "v1"
 
-    with patch("iwork.tasks.get_business_date", return_value=business_date):
+    with (
+        patch("iwork.tasks.get_business_date", return_value=business_date),
+        patch("iwork.tasks.publish_snapshot_notification", return_value=2) as notify,
+    ):
         result = sync_dashboard_stats()
 
     mock_build.assert_called_once_with(business_date)
     mock_store_class.return_value.publish.assert_called_once_with(snapshot)
     mock_connections.__getitem__.assert_called_with("iwork")
     mock_connections.__getitem__.return_value.close.assert_called_once()
+    notify.assert_called_once_with(business_date, "v1")
     assert result == 123
+
+
+@patch("iwork.tasks.connections")
+@patch("iwork.tasks.SnapshotStore")
+@patch("iwork.tasks.build_snapshot")
+def test_notification_failure_does_not_retry_complete_remote_collection(
+    mock_build,
+    mock_store_class,
+    mock_connections,
+):
+    """通知失败不得把已完成的远程采集和快照发布整体重试。"""
+    from iwork.tasks import sync_dashboard_stats
+
+    business_date = date(2026, 8, 7)
+    mock_build.return_value = {
+        "metadata": {
+            "snapshot_version": "v2",
+            "record_count": 456,
+            "business_date": business_date.isoformat(),
+        },
+        "views": {},
+    }
+    mock_store_class.return_value.publish.return_value = "v2"
+
+    with (
+        patch("iwork.tasks.get_business_date", return_value=business_date),
+        patch(
+            "iwork.tasks.publish_snapshot_notification",
+            side_effect=ConnectionError("Redis Pub/Sub 暂不可用"),
+        ),
+    ):
+        result = sync_dashboard_stats()
+
+    assert result == 456
+    mock_build.assert_called_once_with(business_date)
+    mock_store_class.return_value.publish.assert_called_once()
+    mock_connections.__getitem__.return_value.close.assert_called_once()
 
 
 @patch("iwork.tasks.build_snapshot")

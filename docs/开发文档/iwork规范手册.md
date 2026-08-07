@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-05
+> 最后更新：2026-08-07
 
 ---
 
@@ -10,7 +10,7 @@
 ```
 Uvicorn ASGI (4 workers)
     ├── 实时数据：Celery Beat (60s) → 单次基础事实查询 → 内存派生 → 版本化 Redis 快照
-    ├── Web/SSE：read_model.queries → 当前完整快照（禁止远程回源）
+    ├── Web/SSE：Redis Pub/Sub 版本通知 → Worker 共享负载 → 最新事件队列
     ├── 历史数据：API → local_queries.py → 本地历史事实表
     ├── 历史快照：ensure API → Celery → history_store.py → 本地事务快照
     └── 远程生产库：仅 Celery/管理角色允许连接
@@ -26,6 +26,7 @@ Uvicorn ASGI (4 workers)
 | `read_model/fact_source.py` | 从同一批当前业务日事实派生实时、月趋势、详情与 Kanban 视图 |
 | `read_model/store.py` | 版本键、原子 current 切换、上一版本和陈旧策略 |
 | `read_model/queries.py` | Web/SSE 统一筛选、分页与跨接口读模型 |
+| `sse_events.py` | Redis 版本通知、Worker 级订阅、最新事件队列和共享负载单飞构建 |
 | `statistics.py` | 批量统计构建器和历史兼容入口；实时入口不允许回源 |
 | `api_views.py` | 实时看板、生产详情、Kanban 与异步 SSE；不得导入 `iwork.queries` |
 | `api_views_local.py` | 本地历史读取；缺失快照只提交 Celery 任务并返回 202 |
@@ -88,6 +89,12 @@ Uvicorn ASGI (4 workers)
 | `READ_MODEL_MAX_STALE_SECONDS` | 返回 503 的硬阈值，默认 600 秒 | `read_model.store` |
 | `READ_MODEL_PUBLISH_LOCK_SECONDS` | 单日期发布锁时间 | `read_model.store` |
 | `READ_MODEL_REFRESH_LOCK_SECONDS` | Celery 采集防重叠锁时间 | `tasks.py` |
+| `SSE_NOTIFICATION_CHANNEL` | 完整快照切换后发布轻量版本通知的 Redis 频道 | `tasks.py` / `sse_events.py` |
+| `SSE_CLIENT_QUEUE_SIZE` | 每客户端最新通知队列容量，固定为 1 | `sse_events.py` |
+| `SSE_PAYLOAD_CACHE_SIZE` | 每 Worker 共享序列化负载的最大键数量，默认 64 | `sse_events.py` |
+| `SSE_PAYLOAD_BUILD_CONCURRENCY` | 不同日期/工序负载的最大并行构建数，默认 4 | `sse_events.py` |
+| `SSE_HEARTBEAT_SECONDS` | SSE 注释心跳间隔，默认 15 秒 | `api_views.py` |
+| `SSE_NOTIFICATION_POLL_SECONDS` | Pub/Sub 丢消息时的共享版本核对间隔，默认 60 秒 | `api_views.py` / `sse_events.py` |
 | `HISTORY_SNAPSHOT_LOCK_TIMEOUT` | 历史快照构建和执行中请求锁租约，默认 1800 秒 | `history_store.py` / `tasks.py` |
 | `HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL` | 历史快照构建锁续租间隔，默认 60 秒 | `history_store.py` |
 | `HISTORY_SNAPSHOT_REQUEST_PENDING_TIMEOUT` | 入队确认阶段的循环续租时长，默认 30 秒 | `api_views_local.py` |
@@ -352,14 +359,26 @@ function stepColor(idx, stepno) {
 
 **实现要点**：
 - 使用 `StreamingHttpResponse` + 异步生成器
-- `sync_to_async` 包装同步 Redis 读取，不阻塞事件循环
+- Celery 只能在完整快照发布并原子切换 `current` 后发送 Redis 版本通知
+- 每个 Uvicorn Worker 最多一个 `redis.asyncio` 订阅任务，断线后指数退避并带随机抖动重连
+- Pub/Sub 消息只包含协议版本、业务日期和快照版本，禁止携带业务负载
+- `sync_to_async(thread_sensitive=False)` 包装同步 Redis 读取，不阻塞事件循环
 - 心跳：每 15 秒发送 SSE 注释（`: heartbeat\n\n`）
-- 数据推送：每 60 秒固定一次 `current` 指针，同时读取实时、工序和详情视图
+- 数据推送：快照通知到达后立即读取当前完整版本并广播；60 秒核对仅作丢消息补偿
+- 同 Worker 内相同 `(business_date, stepno)` 使用单飞任务，只读取和序列化一次
+- 不同负载最多并行构建 4 个，超过部分进入异步等待队列
+- 每客户端队列容量固定为 1；队列满时覆盖旧通知，只保留最新快照版本
 - 每条数据事件包含 `snapshot_version`、`generated_at` 和 `stale`
 - 快照不可用时发送 `snapshot_unavailable` 事件，仍继续发送 15 秒心跳
 - 前端直接使用 `msg.data.workorders`，禁止 SSE 事件后再次请求工单接口
+- 前端按 `snapshot_version` 去重，并用 `generated_at` 拒绝旧事件覆盖新数据
+- 通知发送失败只记录告警，禁止重新执行完整远程数据库采集
 
-**性能**：每个连接仅占一个 asyncio 协程（~KB 级），支持 300+ 并发。
+**容量基线（2026-08-07，改造前本地 4 Worker）**：100 连接成功率 100%、p99
+1.45 秒；200 连接虽全部成功但 p99 2.75 秒，超过 2 秒稳定门槛；500 连接 p99
+9.52 秒。因此改造前的稳定预算按 100 个同时建连计算，200 个起必须依赖共享负载
+和背压队列。容量结论必须以改造后的同脚本复测更新，不能把“连接成功”等同于
+“延迟稳定”。
 
 ---
 
