@@ -11,6 +11,7 @@
 Uvicorn ASGI (4 workers)
     ├── 实时数据：Celery Beat (60s) → 单次基础事实查询 → 内存派生 → 版本化 Redis 快照
     ├── Web/SSE：Redis Pub/Sub 版本通知 → Worker 共享负载 → 最新事件队列
+    ├── 今日生产详情：轻量 SSE 版本通知 → 当前视图 REST 读取 Redis 快照
     ├── 历史数据：API → local_queries.py → 本地历史事实表
     ├── 历史快照：ensure API → Celery → history_store.py → 本地事务快照
     └── 远程生产库：仅 Celery/管理角色允许连接
@@ -357,6 +358,13 @@ function stepColor(idx, stepno) {
 
 **端点**：`/api/dashboard/stream/`（`api_views.py` → `async def dashboard_stream`）
 
+该端点有两种负载模式：
+
+- 默认模式：向实时看板发送 KPI、图表、工序和第一页工单数据；
+- `mode=notification`：只发送 `snapshot_published`、业务日期、快照版本、生成时间和
+  陈旧标记，供今日生产详情在统一发布水位到达后刷新当前 REST 视图。通知模式不得
+  携带实时看板业务负载。
+
 **实现要点**：
 - 使用 `StreamingHttpResponse` + 异步生成器
 - Celery 只能在完整快照发布并原子切换 `current` 后发送 Redis 版本通知
@@ -373,6 +381,13 @@ function stepColor(idx, stepno) {
 - 前端直接使用 `msg.data.workorders`，禁止 SSE 事件后再次请求工单接口
 - 前端按 `snapshot_version` 去重，并用 `generated_at` 拒绝旧事件覆盖新数据
 - 通知发送失败只记录告警，禁止重新执行完整远程数据库采集
+- 今日生产详情禁止再建立浏览器独立的 60 秒刷新计时器；生产线、工序、产品和明细
+  视图必须由轻量快照通知触发静默刷新
+- 生产详情切换到历史日期时必须关闭 EventSource；切回今日时在初次 REST 数据加载完成
+  后重新连接，避免初始通知和首屏请求竞争
+- 同一详情页面同一时刻只允许一个静默刷新；刷新期间的新通知覆盖待处理旧通知，只保留
+  最新版本；请求失败按 5 秒到 60 秒指数退避并加入随机抖动，日期或连接代次改变后
+  丢弃晚到响应，避免多客户端同步重试形成惊群
 
 **容量基线（2026-08-07，改造前本地 4 Worker）**：100 连接成功率 100%、p99
 1.45 秒；200 连接虽全部成功但 p99 2.75 秒，超过 2 秒稳定门槛；500 连接 p99
@@ -468,6 +483,12 @@ const workorderItems = computed(() => {
 | `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
 | `source` | 历史快照标识 | `local_snapshot` 表示本地只读历史数据 |
 | `snapshot_date` / `snapshot_version` | 历史状态 | 标识快照日期和发布版本 |
+
+今日生产详情的 REST 接口仍负责返回具体业务数据，但刷新时机统一由
+`/api/dashboard/stream/?mode=notification` 驱动。服务端快照发布后，前端按当前状态只
+刷新正在显示的生产线概览、工序概览、产品概览或员工明细；不得接收并丢弃实时看板大包，
+也不得恢复每浏览器独立 60 秒计时器。`EventSource` 断线由浏览器自动重连，服务端首次
+连接和 60 秒共享核对保证重连或 Pub/Sub 丢消息后仍能发现当前版本。
 
 历史日期通过 URL 的 `date` 参数传递。Flow、工序和产品视图之间的导航必须保留日期；
 历史日期禁止目标编辑和 60 秒自动刷新。快照不存在时，前端应调用

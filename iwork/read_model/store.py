@@ -171,6 +171,31 @@ class SnapshotStore:
             stale=stale,
         )
 
+    def read_metadata(self, business_date: date) -> SnapshotReadResult:
+        """只读取当前完整版本的元数据。
+
+        Args:
+            business_date: 曼谷业务日期。
+
+        Returns:
+            空业务数据、当前版本元数据和陈旧标记。
+
+        Raises:
+            ReadModelNotReadyError: 当前版本或元数据不可用、无效或过旧。
+        """
+        version = self._safe_get(self._current_key(business_date))
+        if not version:
+            raise ReadModelNotReadyError(f"{business_date} 的实时数据尚未准备好")
+        metadata = self._safe_get(self._metadata_key(business_date, version))
+        if not isinstance(metadata, dict):
+            raise ReadModelNotReadyError(f"{business_date} 的实时快照元数据缺失")
+        stale = self._validate_read_metadata(metadata, business_date)
+        return SnapshotReadResult(
+            data={},
+            metadata=metadata,
+            stale=stale,
+        )
+
     def read_many(
         self,
         view_names: list[str] | tuple[str, ...],

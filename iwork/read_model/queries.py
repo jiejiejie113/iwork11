@@ -132,6 +132,10 @@ class ReadModelQueries:
         """读取当前版本的完整生产详情批次。"""
         return self.store.read("detail", business_date)
 
+    def snapshot_metadata(self, business_date: date) -> SnapshotReadResult:
+        """读取当前快照版本元数据，不加载任何业务视图。"""
+        return self.store.read_metadata(business_date)
+
     def stream_payload(
         self,
         business_date: date,

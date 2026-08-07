@@ -779,11 +779,13 @@ createApp({
             const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
             return `${values.year}-${values.month}-${values.day}`;
         }
-        const businessToday = businessDateString();
+        const businessToday = ref(businessDateString());
         const requestedDate = new URLSearchParams(window.location.search).get('date');
-        const initialDate = requestedDate && requestedDate <= businessToday ? requestedDate : businessToday;
+        const initialDate = requestedDate && requestedDate <= businessToday.value
+            ? requestedDate
+            : businessToday.value;
         const selectedDate = ref(initialDate);
-        const isHistoricalDate = computed(() => selectedDate.value < businessToday);
+        const isHistoricalDate = computed(() => selectedDate.value < businessToday.value);
         const overviewUrl = computed(() => (
             basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
         ));
@@ -792,6 +794,8 @@ createApp({
         const loadingProgress = ref(0);
         const historySnapshotMessage = ref('');
         const historySnapshotPromises = new Map();
+        let latestResponseSnapshotVersion = null;
+        let latestResponseGeneratedAt = null;
         let loadingTimer = null;
 
         function showLoading() {
@@ -1169,6 +1173,7 @@ createApp({
             if (!response.ok) {
                 throw new Error(payload.error || `请求失败 (${response.status})`);
             }
+            rememberRealtimeSnapshotResponse(response, snapshotDate);
             if (
                 isHistoricalResponse
                 && selectedDate.value === snapshotDate
@@ -1178,6 +1183,21 @@ createApp({
                 historySnapshotMessage.value = `已加载历史数据：${payload.snapshot_date}`;
             }
             return payload;
+        }
+
+        function rememberRealtimeSnapshotResponse(response, snapshotDate) {
+            if (snapshotDate !== businessToday.value) return;
+            const snapshotVersion = response.headers.get('X-Iwork-Snapshot-Version');
+            const generatedAt = Date.parse(response.headers.get('X-Iwork-Generated-At') || '');
+            if (
+                Number.isFinite(generatedAt)
+                && latestResponseGeneratedAt !== null
+                && generatedAt < latestResponseGeneratedAt
+            ) {
+                return;
+            }
+            if (snapshotVersion) latestResponseSnapshotVersion = snapshotVersion;
+            if (Number.isFinite(generatedAt)) latestResponseGeneratedAt = generatedAt;
         }
 
         const productChartItems = computed(() => {
@@ -2165,7 +2185,8 @@ createApp({
             finally { hideLoading(); }
         }
 
-        function changeProductionDate() {
+        async function changeProductionDate() {
+            disconnectProductionDetailSSE();
             const url = new URL(window.location.href);
             url.searchParams.set('date', selectedDate.value);
             window.history.replaceState({}, '', url);
@@ -2176,14 +2197,15 @@ createApp({
                 saveProductViewState();
             }
             if (currentView.value === 'detail') {
-                loadDetail(detailType.value, detailKey.value);
+                await loadDetail(detailType.value, detailKey.value);
             } else if (groupMode.value === 'product') {
-                loadProductOverview();
+                await loadProductOverview();
             } else if (groupMode.value === 'stepno') {
-                loadStepnoOverview();
+                await loadStepnoOverview();
             } else {
-                loadOverview();
+                await loadOverview();
             }
+            connectProductionDetailSSE();
         }
 
         async function loadStepnoOverview() {
@@ -2271,14 +2293,24 @@ createApp({
         }
 
         async function refreshDetailSilently() {
+            const refreshDate = selectedDate.value;
+            const refreshDetailType = detailType.value;
+            const refreshDetailKey = detailKey.value;
             try {
                 let resp;
-                if (detailType.value === 'flow') {
-                    resp = await fetch(`${basePath}api/dashboard/detail/flow/${detailKey.value}/?date=${selectedDate.value}`);
+                if (refreshDetailType === 'flow') {
+                    resp = await fetch(`${basePath}api/dashboard/detail/flow/${refreshDetailKey}/?date=${refreshDate}`);
                 } else {
-                    resp = await fetch(`${basePath}api/dashboard/detail/stepno/${detailKey.value}/?date=${selectedDate.value}`);
+                    resp = await fetch(`${basePath}api/dashboard/detail/stepno/${refreshDetailKey}/?date=${refreshDate}`);
                 }
                 const data = await readResponse(resp);
+                if (
+                    selectedDate.value !== refreshDate
+                    || isHistoricalDate.value
+                    || currentView.value !== 'detail'
+                    || detailType.value !== refreshDetailType
+                    || detailKey.value !== refreshDetailKey
+                ) return null;
                 groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
                 currentGroupTarget.value = detailType.value === 'flow' ? data.current_group_target : null;
                 workHours.value = detailType.value === 'flow' ? data.work_hours : null;
@@ -2299,15 +2331,27 @@ createApp({
                 });
                 targets[detailTargetScopeKey()] = responseTargets;
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
-            } catch (e) { /* 静默忽略 */ }
+                return true;
+            } catch (e) {
+                console.warn('SSE 刷新生产详情失败，将等待重试:', e);
+                return false;
+            }
         }
 
         // 概览静默刷新（不显示 loading 条）
         async function refreshOverviewSilently() {
+            const refreshDate = selectedDate.value;
+            const refreshGroupMode = groupMode.value;
             try {
-                if (groupMode.value === 'product') {
-                    const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${selectedDate.value}`);
+                if (refreshGroupMode === 'product') {
+                    const resp = await fetch(`${basePath}api/dashboard/detail/product-overview/?date=${refreshDate}`);
                     const data = await readResponse(resp);
+                    if (
+                        selectedDate.value !== refreshDate
+                        || isHistoricalDate.value
+                        || currentView.value !== 'overview'
+                        || groupMode.value !== refreshGroupMode
+                    ) return null;
                     productList.value = data.products || [];
                     productNormalFlows.value = data.normal_flows || [];
                     normalizeProductActivePath();
@@ -2315,16 +2359,43 @@ createApp({
                     await nextTick();
                     renderProductChart();
                     lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
-                    return;
+                    return true;
+                }
+                if (refreshGroupMode === 'stepno') {
+                    const resp = await fetch(`${basePath}api/dashboard/detail/stepno-overview/?date=${refreshDate}`);
+                    const data = await readResponse(resp);
+                    if (
+                        selectedDate.value !== refreshDate
+                        || isHistoricalDate.value
+                        || currentView.value !== 'overview'
+                        || groupMode.value !== refreshGroupMode
+                    ) return null;
+                    stepnoCards.value = Object.entries(data).map(([stepno, info]) => ({
+                        stepno: Number(stepno),
+                        total_qty: info.total_qty,
+                        worker_count: info.worker_count,
+                        target_total: 0,
+                        efficiency: null,
+                    })).sort((a, b) => a.stepno - b.stepno);
+                    await nextTick();
+                    renderOverviewCharts();
+                    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                    return true;
                 }
                 const [flowResp, woResp] = await Promise.all([
-                    fetch(`${basePath}api/dashboard/detail/flows/?date=${selectedDate.value}`),
-                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`)
+                    fetch(`${basePath}api/dashboard/detail/flows/?date=${refreshDate}`),
+                    fetch(`${basePath}api/dashboard/workorders/?date=${refreshDate}&page_size=100&stepno=70`)
                 ]);
                 const [flowData, woData] = await Promise.all([
                     readResponse(flowResp),
                     readResponse(woResp),
                 ]);
+                if (
+                    selectedDate.value !== refreshDate
+                    || isHistoricalDate.value
+                    || currentView.value !== 'overview'
+                    || groupMode.value !== refreshGroupMode
+                ) return null;
                 const cards = [];
                 for (const [name, info] of Object.entries(flowData)) {
                     const stepnos = info.stepnos || {};
@@ -2340,8 +2411,168 @@ createApp({
                 }
                 flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
                 workorderList.value = woData.items || [];
+                await nextTick();
+                renderMiniCharts();
+                renderOverviewCharts();
                 lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
-            } catch (e) { /* 静默忽略 */ }
+                return true;
+            } catch (e) {
+                console.warn('SSE 刷新生产详情概览失败，将等待重试:', e);
+                return false;
+            }
+        }
+
+        let detailEventSource = null;
+        let latestAppliedSnapshotVersion = null;
+        let latestAppliedSnapshotGeneratedAt = null;
+        let pendingDetailSnapshot = null;
+        let detailRefreshInFlight = false;
+        let detailRefreshRetryTimer = null;
+        let detailSSEGeneration = 0;
+        let detailRefreshRetryDelayMs = 5000;
+
+        function disconnectProductionDetailSSE() {
+            detailSSEGeneration += 1;
+            if (detailEventSource) {
+                detailEventSource.close();
+                detailEventSource = null;
+            }
+            if (detailRefreshRetryTimer) {
+                clearTimeout(detailRefreshRetryTimer);
+                detailRefreshRetryTimer = null;
+            }
+            pendingDetailSnapshot = null;
+            detailRefreshRetryDelayMs = 5000;
+            wsConnected.value = false;
+        }
+
+        function connectProductionDetailSSE() {
+            disconnectProductionDetailSSE();
+            if (isHistoricalDate.value) return;
+
+            latestAppliedSnapshotVersion = latestResponseSnapshotVersion;
+            latestAppliedSnapshotGeneratedAt = latestResponseGeneratedAt;
+            const url = basePath + 'api/dashboard/stream/?mode=notification';
+            const connectionGeneration = detailSSEGeneration;
+            detailEventSource = new EventSource(url);
+            detailEventSource.onopen = () => { wsConnected.value = true; };
+            detailEventSource.onmessage = event => {
+                if (connectionGeneration !== detailSSEGeneration) return;
+                try {
+                    handleProductionDetailSnapshot(
+                        JSON.parse(event.data),
+                        connectionGeneration,
+                    );
+                } catch (error) {
+                    console.error('生产详情 SSE 通知解析失败:', error);
+                }
+            };
+            detailEventSource.addEventListener('snapshot_unavailable', () => {
+                wsConnected.value = false;
+            });
+            detailEventSource.onerror = () => {
+                wsConnected.value = false;
+                // EventSource 会按浏览器策略自动重连。
+            };
+        }
+
+        function shouldApplyProductionDetailSnapshot(msg) {
+            const snapshotVersion = String(msg.snapshot_version || '');
+            const generatedAt = Date.parse(msg.generated_at || '');
+            if (snapshotVersion && snapshotVersion === latestAppliedSnapshotVersion) {
+                return false;
+            }
+            if (
+                Number.isFinite(generatedAt)
+                && latestAppliedSnapshotGeneratedAt !== null
+                && generatedAt <= latestAppliedSnapshotGeneratedAt
+            ) {
+                return false;
+            }
+            return true;
+        }
+
+        function adoptProductionDetailBusinessDate(msg) {
+            const notificationDate = String(msg.business_date || '');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(notificationDate)) return false;
+            if (notificationDate < businessToday.value) return false;
+            if (notificationDate === businessToday.value) return true;
+
+            const wasFollowingToday = selectedDate.value === businessToday.value;
+            businessToday.value = notificationDate;
+            if (!wasFollowingToday) return false;
+
+            selectedDate.value = notificationDate;
+            const url = new URL(window.location.href);
+            url.searchParams.set('date', notificationDate);
+            window.history.replaceState({}, '', url);
+            latestResponseSnapshotVersion = null;
+            latestResponseGeneratedAt = null;
+            latestAppliedSnapshotVersion = null;
+            latestAppliedSnapshotGeneratedAt = null;
+            return true;
+        }
+
+        async function handleProductionDetailSnapshot(
+            msg,
+            expectedGeneration = detailSSEGeneration,
+        ) {
+            if (expectedGeneration !== detailSSEGeneration) return;
+            if (msg.type !== 'snapshot_published') return;
+            if (!adoptProductionDetailBusinessDate(msg) || isHistoricalDate.value) return;
+            if (!shouldApplyProductionDetailSnapshot(msg)) return;
+            pendingDetailSnapshot = msg;
+            if (detailRefreshInFlight) return;
+
+            detailRefreshInFlight = true;
+            try {
+                while (pendingDetailSnapshot && !isHistoricalDate.value) {
+                    const nextSnapshot = pendingDetailSnapshot;
+                    pendingDetailSnapshot = null;
+                    if (!shouldApplyProductionDetailSnapshot(nextSnapshot)) continue;
+
+                    const refreshed = currentView.value === 'detail'
+                        ? await refreshDetailSilently()
+                        : await refreshOverviewSilently();
+                    if (
+                        refreshed === null
+                        || expectedGeneration !== detailSSEGeneration
+                        || isHistoricalDate.value
+                    ) {
+                        break;
+                    }
+                    if (!refreshed) {
+                        const retrySnapshot = pendingDetailSnapshot || nextSnapshot;
+                        pendingDetailSnapshot = null;
+                        const retryDelay = detailRefreshRetryDelayMs * (
+                            1 + Math.random() * 0.2
+                        );
+                        detailRefreshRetryDelayMs = Math.min(
+                            detailRefreshRetryDelayMs * 2,
+                            60000,
+                        );
+                        detailRefreshRetryTimer = setTimeout(() => {
+                            detailRefreshRetryTimer = null;
+                            handleProductionDetailSnapshot(
+                                retrySnapshot,
+                                expectedGeneration,
+                            );
+                        }, retryDelay);
+                        break;
+                    }
+
+                    detailRefreshRetryDelayMs = 5000;
+                    latestAppliedSnapshotVersion = (
+                        latestResponseSnapshotVersion
+                        || String(nextSnapshot.snapshot_version || '')
+                    );
+                    const generatedAt = Date.parse(nextSnapshot.generated_at || '');
+                    latestAppliedSnapshotGeneratedAt = latestResponseGeneratedAt
+                        ?? (Number.isFinite(generatedAt) ? generatedAt : null);
+                }
+            } finally {
+                detailRefreshInFlight = false;
+            }
         }
 
         function goDetail(type, key) {
@@ -2469,33 +2700,23 @@ createApp({
         }
 
         // 生命周期
-        let autoRefreshTimer = null;
-
-        onMounted(() => {
+        onMounted(async () => {
             loadProductViewState();
             if (initialView === 'overview') {
-                loadOverview();
+                await loadOverview();
             } else if (initialView === 'detail') {
-                loadDetail(initialDetailType, initialDetailKey);
+                await loadDetail(initialDetailType, initialDetailKey);
             }
-            // 每60秒自动刷新数据
-            autoRefreshTimer = setInterval(() => {
-                if (isHistoricalDate.value) return;
-                if (currentView.value === 'overview') {
-                    refreshOverviewSilently();
-                } else if (currentView.value === 'detail') {
-                    refreshDetailSilently();
-                }
-            }, 60000);
+            connectProductionDetailSSE();
         });
 
-        // 组件卸载时停止滚动和定时器
+        // 组件卸载时停止滚动和 SSE 连接
         onUnmounted(() => {
             stopWorkorderScroll();
             stopDetailTableDrag();
             if (activeTagDrag.value) onTagPointerCancel();
             if (activeDrag.value) onPointerUp();
-            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+            disconnectProductionDetailSSE();
         });
 
         return {

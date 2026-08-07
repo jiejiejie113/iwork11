@@ -161,6 +161,75 @@ def test_silent_refresh_validates_http_responses_before_replacing_state():
     assert '.json()' not in overview_refresh
 
 
+def test_today_production_detail_uses_lightweight_sse_notifications():
+    """今日生产详情应由统一快照通知驱动，并按当前视图执行静默刷新。"""
+    assert "api/dashboard/stream/?mode=notification" in TEMPLATE
+    assert 'function connectProductionDetailSSE()' in TEMPLATE
+    assert 'function disconnectProductionDetailSSE()' in TEMPLATE
+    assert 'async function handleProductionDetailSnapshot(' in TEMPLATE
+    assert "msg.type !== 'snapshot_published'" in TEMPLATE
+    assert '? await refreshDetailSilently()' in TEMPLATE
+    assert ': await refreshOverviewSilently();' in TEMPLATE
+    assert 'detailEventSource = new EventSource(url);' in TEMPLATE
+
+
+def test_production_detail_sse_is_disabled_for_history_and_replaces_timer():
+    """历史日期不得连接 SSE，今日也不再保留浏览器独立的 60 秒刷新计时器。"""
+    assert 'if (isHistoricalDate.value) return;' in TEMPLATE.split(
+        'function connectProductionDetailSSE()',
+        1,
+    )[1].split('async function handleProductionDetailSnapshot', 1)[0]
+    assert 'disconnectProductionDetailSSE();' in TEMPLATE.split(
+        'function changeProductionDate()',
+        1,
+    )[1].split('async function loadDetail', 1)[0]
+
+    lifecycle = TEMPLATE.split('// 生命周期', 1)[1].split('return {', 1)[0]
+    assert 'connectProductionDetailSSE();' in lifecycle
+    assert 'disconnectProductionDetailSSE();' in lifecycle
+    assert 'setInterval(() =>' not in lifecycle
+    assert '60000' not in lifecycle
+
+
+def test_production_detail_sse_discards_late_today_responses_after_date_change():
+    """切换历史日期后，晚到的今日 SSE 刷新不得覆盖历史页面。"""
+    detail_refresh = TEMPLATE.split(
+        'async function refreshDetailSilently()',
+        1,
+    )[1].split('// 概览静默刷新', 1)[0]
+    overview_refresh = TEMPLATE.split(
+        'async function refreshOverviewSilently()',
+        1,
+    )[1].split('let detailEventSource', 1)[0]
+    handler = TEMPLATE.split(
+        'async function handleProductionDetailSnapshot',
+        1,
+    )[1].split('function goDetail', 1)[0]
+
+    assert 'const refreshDate = selectedDate.value;' in detail_refresh
+    assert 'detailType.value !== refreshDetailType' in detail_refresh
+    assert 'detailKey.value !== refreshDetailKey' in detail_refresh
+    assert 'const refreshDate = selectedDate.value;' in overview_refresh
+    assert overview_refresh.count("currentView.value !== 'overview'") == 3
+    assert overview_refresh.count('groupMode.value !== refreshGroupMode') == 3
+    assert 'expectedGeneration !== detailSSEGeneration' in handler
+    assert 'const retrySnapshot = pendingDetailSnapshot || nextSnapshot;' in handler
+    assert '1 + Math.random() * 0.2' in handler
+    assert 'detailRefreshRetryDelayMs * 2' in handler
+    assert '60000' in handler
+
+
+def test_production_detail_sse_advances_to_new_business_date_at_midnight():
+    """持续打开的今日页面应随 SSE 通知切换到新的曼谷业务日期。"""
+    assert 'const businessToday = ref(businessDateString());' in TEMPLATE
+    assert 'function adoptProductionDetailBusinessDate(msg)' in TEMPLATE
+    assert 'const wasFollowingToday = selectedDate.value === businessToday.value;' in TEMPLATE
+    assert 'businessToday.value = notificationDate;' in TEMPLATE
+    assert 'selectedDate.value = notificationDate;' in TEMPLATE
+    assert "url.searchParams.set('date', notificationDate);" in TEMPLATE
+    assert '!adoptProductionDetailBusinessDate(msg)' in TEMPLATE
+
+
 def test_product_view_can_toggle_normal_line_filter_locally():
     """产品视图应默认显示普通线，并在浏览器本地切换全部 Flow。"""
     product_view = TEMPLATE.split('<!-- 产品模式：图表固定 + 表格可滚动 -->', 1)[1]
@@ -398,7 +467,8 @@ def test_detail_default_date_uses_business_timezone():
     assert 'function businessDateString()' in TEMPLATE
     assert "timeZone: 'Asia/Bangkok'" in TEMPLATE
     assert "new URLSearchParams(window.location.search).get('date')" in TEMPLATE
-    assert 'requestedDate <= businessToday ? requestedDate : businessToday' in TEMPLATE
+    assert 'requestedDate <= businessToday.value' in TEMPLATE
+    assert ': businessToday.value;' in TEMPLATE
     assert 'const selectedDate = ref(initialDate);' in TEMPLATE
 
 
@@ -475,7 +545,7 @@ def test_historical_production_detail_builds_snapshot_and_hides_update_time():
     assert 'historySnapshotMessage' in TEMPLATE
     assert 'const historySnapshotPromises = new Map();' in TEMPLATE
     assert 'v-if="!isHistoricalDate"' in TEMPLATE
-    assert 'const businessToday = businessDateString();' in TEMPLATE
+    assert 'const businessToday = ref(businessDateString());' in TEMPLATE
     assert ':max="businessToday"' in TEMPLATE
     assert '快照 v' not in TEMPLATE
     assert 'localStorage.getItem(`targets:${dateStr}`)' not in TEMPLATE

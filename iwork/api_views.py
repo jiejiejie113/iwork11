@@ -1073,13 +1073,18 @@ async def dashboard_stream(request):
     日期/工序的客户端共享一次 Redis 读取和 JSON 序列化。不同负载的构建
     进入有界并发队列，避免突发连接放大线程池和内存压力。
 
+    ``mode=notification`` 时只发送快照版本元数据，供生产详情在统一发布
+    水位到达后刷新当前视图，避免向详情客户端发送实时看板大负载。
+
     Args:
-        request: Django 请求；可通过 ``stepno`` 查询参数过滤工序。
+        request: Django 请求；可通过 ``stepno`` 过滤工序，或通过
+            ``mode=notification`` 订阅轻量快照通知。
 
     Returns:
         StreamingHttpResponse: ``text/event-stream`` 长连接响应。
     """
-    stepno_filter = _parse_stepno(request)
+    notification_only = request.GET.get('mode') == 'notification'
+    stepno_filter = None if notification_only else _parse_stepno(request)
     state = {'business_date': get_business_date()}
     broker = get_snapshot_notification_broker()
     payload_cache = get_sse_payload_cache()
@@ -1090,10 +1095,9 @@ async def dashboard_stream(request):
         Returns:
             tuple: 业务日期和工序过滤组成的不可变键。
         """
-        return (
-            state['business_date'].isoformat(),
-            tuple(stepno_filter or ()),
-        )
+        if notification_only:
+            return (state['business_date'].isoformat(), 'notification')
+        return (state['business_date'].isoformat(), tuple(stepno_filter or ()))
 
     async def _get_event() -> SerializedSSEEvent:
         """读取当前完整快照并完成一次共享序列化。
@@ -1101,18 +1105,31 @@ async def dashboard_stream(request):
         Returns:
             SerializedSSEEvent: 可被本 Worker 多个连接复用的事件。
         """
-        result = await sync_to_async(
-            READ_MODEL.stream_payload,
-            thread_sensitive=False,
-        )(state['business_date'], stepno_filter)
-        data = {
-            'type': 'dashboard_update',
-            'timestamp': datetime.now().isoformat(),
-            'snapshot_version': result.metadata['snapshot_version'],
-            'generated_at': result.metadata['generated_at'],
-            'stale': result.stale,
-            **result.data,
-        }
+        if notification_only:
+            result = await sync_to_async(
+                READ_MODEL.snapshot_metadata,
+                thread_sensitive=False,
+            )(state['business_date'])
+            data = {
+                'type': 'snapshot_published',
+                'business_date': state['business_date'].isoformat(),
+                'snapshot_version': result.metadata['snapshot_version'],
+                'generated_at': result.metadata['generated_at'],
+                'stale': result.stale,
+            }
+        else:
+            result = await sync_to_async(
+                READ_MODEL.stream_payload,
+                thread_sensitive=False,
+            )(state['business_date'], stepno_filter)
+            data = {
+                'type': 'dashboard_update',
+                'timestamp': datetime.now().isoformat(),
+                'snapshot_version': result.metadata['snapshot_version'],
+                'generated_at': result.metadata['generated_at'],
+                'stale': result.stale,
+                **result.data,
+            }
         return SerializedSSEEvent(
             snapshot_version=result.metadata['snapshot_version'],
             generated_at=result.metadata['generated_at'],

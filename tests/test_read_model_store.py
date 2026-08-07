@@ -73,6 +73,20 @@ def test_publish_switches_current_only_after_complete_snapshot():
     assert store.previous_version(BUSINESS_DATE) == first["metadata"]["snapshot_version"]
 
 
+def test_read_metadata_does_not_load_business_views():
+    """轻量通知读取应只返回当前版本元数据，不加载业务视图。"""
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)
+    store = SnapshotStore(cache_backend=cache, now=lambda: now)
+    snapshot = _snapshot_payload(now, total_qty=200)
+    store.publish(snapshot)
+
+    result = store.read_metadata(BUSINESS_DATE)
+
+    assert result.data == {}
+    assert result.metadata["snapshot_version"] == snapshot["metadata"]["snapshot_version"]
+    assert result.stale is False
+
+
 def test_failed_publish_preserves_previous_snapshot(monkeypatch):
     """新版本写入中途失败时，current 指针必须保持旧版本。"""
     now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)

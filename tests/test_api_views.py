@@ -925,6 +925,34 @@ class TestDashboardStream:
         assert data['detail_overview'] == [{'flow': 'VCO-L5', 'qty': 200}]
 
     @pytest.mark.asyncio
+    async def test_notification_mode_sends_only_snapshot_metadata(self):
+        """生产详情通知模式不得发送实时看板的大体积业务负载。"""
+        from iwork.api_views import dashboard_stream
+
+        factory = APIRequestFactory()
+        request = factory.get('/api/dashboard/stream/?mode=notification')
+        with (
+            patch(
+                'iwork.api_views.READ_MODEL.snapshot_metadata',
+                return_value=_snapshot_result({}),
+            ) as read_metadata,
+            patch('iwork.api_views.READ_MODEL.stream_payload') as read_payload,
+        ):
+            response = await dashboard_stream(request)
+            first_chunk = (await anext(response.streaming_content)).decode('utf-8')
+
+        data = json.loads(first_chunk[6:-2])
+        assert data == {
+            'type': 'snapshot_published',
+            'business_date': date.today().isoformat(),
+            'snapshot_version': 'v-test',
+            'generated_at': '2026-07-31T12:00:00+07:00',
+            'stale': False,
+        }
+        read_metadata.assert_called_once_with(date.today())
+        read_payload.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_sse_respects_stepno_filter(self):
         """SSE 视图支持 stepno 参数过滤"""
         from iwork.api_views import dashboard_stream
