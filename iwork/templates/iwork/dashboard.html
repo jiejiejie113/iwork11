@@ -106,11 +106,11 @@
     <!-- ========== 第1行：KPI 卡片 ========== -->
     <section class="grid grid-cols-3 gap-4 mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <div class="text-slate-400 text-sm mb-1">全厂普通线成衣产量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
+            <div class="text-slate-400 text-sm mb-1">全厂普通线成衣{[ dailyQtyLabel ]}（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
             <div class="text-3xl font-bold text-emerald-400 tabular-nums">{[ fmtNum(data.total_qty) ]}</div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <div class="text-slate-400 text-sm mb-1">今日本厂款号数量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
+            <div class="text-slate-400 text-sm mb-1">{[ currentView === 'history' ? '当日' : '今日' ]}本厂款号数量（{[ stepnoFilter != null ? stepnoFilter : '全部' ]}工序）</div>
             <div class="text-3xl font-bold text-blue-400 tabular-nums">{[ fmtNum(data.workorder_count) ]}</div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
@@ -122,12 +122,12 @@
     <!-- ========== 第2行：每小时趋势 + 每日工序堆积 ========== -->
     <section class="grid grid-cols-2 gap-4 mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-2 text-slate-200">每小时成衣产量趋势</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">每小时成衣{[ dailyQtyLabel ]}趋势</h3>
             <div style="height:200px;"><canvas id="hourly-chart"></canvas></div>
         </div>
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
             <h3 class="text-lg font-semibold mb-2 text-slate-200">每日工序产量（堆积）
-                <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">至 {[ currentHour + 1 ]}时产量累计</span>
+                <span v-if="currentView === 'realtime'" class="text-sm text-slate-400 font-normal ml-2">至 {[ currentHour + 1 ]}时今日产量累计</span>
             </h3>
             <div style="height:200px;"><canvas id="daily-process-chart"></canvas></div>
         </div>
@@ -136,7 +136,7 @@
     <!-- ========== 第3行：工序产量对比（全宽，Tab切换） ========== -->
     <section class="mb-3">
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <h3 class="text-lg font-semibold mb-2 text-slate-200">工序产量对比（按生产线分组）</h3>
+            <h3 class="text-lg font-semibold mb-2 text-slate-200">工序{[ dailyQtyLabel ]}对比（按生产线分组）</h3>
             <!-- Tab 菜单（多工序时显示）：单行 + 横向滚动 + 输入跳转 -->
             <div v-if="pfSteps.length > 1" class="flex items-center gap-2 mb-3">
                 <input v-model="pfJumpInput" @keyup.enter="jumpPfStep"
@@ -154,7 +154,7 @@
             <!-- 当前工序信息 -->
             <div v-if="activePfStep" class="text-sm text-slate-300 mb-1">
                 工序 {[ activePfStep ]}
-                <span class="text-xs text-slate-500 ml-2">总产量 {[ fmtNum(activePfTotal) ]}</span>
+                <span class="text-xs text-slate-500 ml-2">{[ dailyQtyLabel ]} {[ fmtNum(activePfTotal) ]}</span>
             </div>
             <!-- 图表区域 -->
             <div v-if="pfSteps.length" style="height:300px;">
@@ -207,15 +207,16 @@
     </section>
     ========== [已隐藏] ========== -->
 
-    <!-- ========== 第6行：工单列表 ========== -->
+    <!-- ========== 第6行：今日生产列表 ========== -->
     <section class="bg-slate-800 border border-slate-700 rounded-lg p-4">
-        <h3 class="text-lg font-semibold mb-2 text-slate-200">工单列表</h3>
+        <h3 class="text-lg font-semibold mb-2 text-slate-200">{[ currentView === 'history' ? '当日生产列表' : '今日生产列表' ]}</h3>
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
                     <tr class="text-left text-slate-400 border-b border-slate-700">
-                        <th class="pb-2">工单号</th>
-                        <th class="pb-2">总产量</th>
+                        <th class="pb-2">本厂款号</th>
+                        <th class="pb-2">初版款号</th>
+                        <th class="pb-2">{[ dailyQtyLabel ]}</th>
                         <th class="pb-2">产品名称</th>
                         <th class="pb-2">生产单号</th>
                         <th class="pb-2">分组</th>
@@ -224,12 +225,13 @@
                 <tbody>
                     <tr v-for="wo in workorderItems" :key="wo.wrk_order" class="border-b border-slate-700 hover:bg-slate-700/50">
                         <td class="py-2 text-slate-300">{[ wo.wrk_order ]}</td>
+                        <td class="py-2 text-cyan-300">{[ wo.initial_style_no || '-' ]}</td>
                         <td class="py-2 text-emerald-400 font-bold tabular-nums">{[ fmtNum(wo.total_qty) ]}</td>
                         <td class="py-2 text-slate-300">{[ wo.product_name || '-' ]}</td>
                         <td class="py-2 text-slate-300">{[ wo.order_no || '-' ]}</td>
                         <td class="py-2 text-slate-400 text-xs">{[ (wo.flows || []).join(', ') ]}</td>
                     </tr>
-                    <tr v-if="!workorderItems.length"><td colspan="5" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
+                    <tr v-if="!workorderItems.length"><td colspan="6" class="py-4 text-slate-500 text-center">暂无数据</td></tr>
                 </tbody>
             </table>
         </div>
@@ -317,6 +319,9 @@ createApp({
         const appEl = document.getElementById('app');
         const initialView = appEl?.dataset.initialView || 'realtime';
         const currentView = ref(initialView);
+        const dailyQtyLabel = computed(() => (
+            currentView.value === 'history' ? '当日产量' : '今日产量'
+        ));
         const isPaused = ref(false);
         const wsConnected = ref(false);
         const wsStatus = ref('未连接');
@@ -473,7 +478,7 @@ createApp({
             initChart('pf-chart', 'bar', {
                 labels: step.flows.map(f => f[0]),
                 datasets: [{
-                    label: '产量',
+                    label: dailyQtyLabel.value,
                     data: step.flows.map(f => f[1]),
                     backgroundColor: step.flows.map((_, i) => COLORS[i % COLORS.length])
                 }]
@@ -502,7 +507,7 @@ createApp({
                 // 主题2：每小时趋势
                 initChart('hourly-chart', 'line', {
                     labels: (data.hourly_stats || []).map(s => s.hour + ':00'),
-                    datasets: [{ label: '产量', data: (data.hourly_stats || []).map(s => s.qty), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3 }]
+                    datasets: [{ label: dailyQtyLabel.value, data: (data.hourly_stats || []).map(s => s.qty), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3 }]
                 }, chartDefaults());
 
                 // 主题3a：工序×Flow 纵向柱状图 + Tab 切换
@@ -567,7 +572,7 @@ createApp({
                     ...chartDefaults(),
                     scales: {
                         x: { ...chartDefaults().scales.x, stacked: true },
-                        y: { ...chartDefaults().scales.y, stacked: true, position: 'left', title: { display: true, text: '产量', color: '#94a3b8' } },
+                        y: { ...chartDefaults().scales.y, stacked: true, position: 'left', title: { display: true, text: '每日产量', color: '#94a3b8' } },
                         y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e', font: { size: 14 } }, title: { display: true, text: '累积产量', color: '#22c55e' } },
                     }
                 };
@@ -585,7 +590,7 @@ createApp({
                 const srStats = data.station_ranking || [];
                 initChart('station-rank-chart', 'bar', {
                     labels: srStats.map(s => s.station),
-                    datasets: [{ label: '产量', data: srStats.map(s => s.qty), backgroundColor: '#3b82f6' }]
+                    datasets: [{ label: dailyQtyLabel.value, data: srStats.map(s => s.qty), backgroundColor: '#3b82f6' }]
                 }, {
                     ...chartDefaults(),
                     indexAxis: 'y',
@@ -920,7 +925,7 @@ createApp({
 
         return {
             basePath,
-            currentView, isPaused, wsConnected, wsStatus, lastUpdate,
+            currentView, dailyQtyLabel, isPaused, wsConnected, wsStatus, lastUpdate,
             currentHour,
             selectedDate, historyMaxDate, showStepnoDropdown, stepnoFilter, isLoading,
             historySnapshotMessage, historySnapshotError,

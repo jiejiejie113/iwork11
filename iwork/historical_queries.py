@@ -78,7 +78,19 @@ def get_batch_flow_employees(target_date: date) -> dict:
             snapshot_date=target_date,
         ).values('wrk_order', 'step_no', 'description', 'step_time')
     }
-    return _build_flow_employees(normalized_rows, metadata)
+    workorder_metadata = {
+        row['wrk_order']: {
+            'initial_style_no': row['initial_style_no'] or '',
+        }
+        for row in HistoricalStepSnapshot.objects.using('iwork_local').filter(
+            snapshot_date=target_date,
+        ).values('wrk_order', 'initial_style_no').distinct()
+    }
+    return _build_flow_employees(
+        normalized_rows,
+        metadata,
+        workorder_metadata,
+    )
 
 
 def get_batch_flow_overview(target_date: date) -> dict:
@@ -96,6 +108,25 @@ def get_batch_flow_overview(target_date: date) -> dict:
         .annotate(qty=Sum('qty'), workers=Count('employee_id', distinct=True))
         .order_by('flow', 'step_no')
     )
+    initial_style_lookup = {
+        row['wrk_order']: row['initial_style_no'] or ''
+        for row in HistoricalStepSnapshot.objects.using('iwork_local').filter(
+            snapshot_date=target_date,
+        ).values('wrk_order', 'initial_style_no').distinct()
+    }
+    initial_style_rows = (
+        facts.filter(step_no=settings.ALLOWED_FLOWS_STEPNO)
+        .values('flow', 'wrk_order')
+        .annotate(qty=Sum('qty'))
+    )
+    initial_style_qty = {}
+    for row in initial_style_rows:
+        key = (
+            row['flow'],
+            initial_style_lookup.get(row['wrk_order'], ''),
+        )
+        initial_style_qty[key] = initial_style_qty.get(key, 0) + (row['qty'] or 0)
+
     result = {}
     for row in rows:
         item = result.setdefault(row['flow'], {'stepnos': {}, 'total_workers': 0})
@@ -106,6 +137,16 @@ def get_batch_flow_overview(target_date: date) -> dict:
     for row in facts.values('flow').annotate(total_workers=Count('employee_id', distinct=True)):
         if row['flow'] in result:
             result[row['flow']]['total_workers'] = row['total_workers'] or 0
+    for flow, item in result.items():
+        initial_styles = [
+            {'initial_style_no': initial_style_no, 'qty': qty}
+            for (style_flow, initial_style_no), qty in initial_style_qty.items()
+            if style_flow == flow
+        ]
+        initial_styles.sort(
+            key=lambda style: (-style['qty'], style['initial_style_no']),
+        )
+        item['initial_styles'] = initial_styles
     return result
 
 
@@ -209,16 +250,23 @@ def get_workorders_paginated(
     for row in (
         HistoricalStepSnapshot.objects.using('iwork_local')
         .filter(snapshot_date=target_date, wrk_order__in=wrk_orders)
-        .values('wrk_order', 'product_name', 'order_no')
+        .values('wrk_order', 'product_name', 'order_no', 'initial_style_no')
         .distinct()
     ):
         product_lookup.setdefault(
             row['wrk_order'],
-            (row['product_name'] or '', row['order_no'] or ''),
+            (
+                row['product_name'] or '',
+                row['order_no'] or '',
+                row['initial_style_no'] or '',
+            ),
         )
     items = []
     for row in rows:
-        product_name, order_no = product_lookup.get(row['wrk_order'], ('', ''))
+        product_name, order_no, initial_style_no = product_lookup.get(
+            row['wrk_order'],
+            ('', '', ''),
+        )
         items.append({
             'wrk_order': row['wrk_order'],
             'total_qty': row['total_qty'] or 0,
@@ -226,6 +274,7 @@ def get_workorders_paginated(
             'flows': sorted(flow_lookup.get(row['wrk_order'], set())),
             'product_name': product_name,
             'order_no': order_no,
+            'initial_style_no': initial_style_no,
         })
     return {
         'items': items,
@@ -256,7 +305,7 @@ def get_batch_product_overview(target_date: date) -> dict:
         .filter(snapshot_date=target_date)
         .values(
             'wrk_order', 'step_no', 'description', 'step_time',
-            'product_name', 'order_no',
+            'product_name', 'order_no', 'initial_style_no',
         )
     )
     metadata = {
@@ -267,18 +316,28 @@ def get_batch_product_overview(target_date: date) -> dict:
     for row in snapshots:
         product_info.setdefault(
             row['wrk_order'],
-            (row['product_name'] or '未分类', row['order_no'] or ''),
+            (
+                row['product_name'] or '未分类',
+                row['order_no'] or '',
+                row['initial_style_no'] or '',
+            ),
         )
 
     product_raw = {}
     for row in rows:
         wrk_order = row['wrk_order'] or ''
-        product_name, order_no = product_info.get(wrk_order, ('未分类', ''))
+        product_name, order_no, initial_style_no = product_info.get(
+            wrk_order,
+            ('未分类', '', ''),
+        )
         product = product_raw.setdefault(
             product_name,
             {'order_no': order_no, 'wrk_orders': {}},
         )
-        workorder = product['wrk_orders'].setdefault(wrk_order, {'stepnos': {}})
+        workorder = product['wrk_orders'].setdefault(
+            wrk_order,
+            {'initial_style_no': initial_style_no, 'stepnos': {}},
+        )
         step = workorder['stepnos'].setdefault(row['step_no'], {'flows': {}})
         step['flows'][row['flow']] = {
             'flow': row['flow'],
@@ -313,6 +372,7 @@ def get_batch_product_overview(target_date: date) -> dict:
             steps.sort(key=lambda item: item['stepno'])
             workorders.append({
                 'wrk_order': wrk_order,
+                'initial_style_no': workorder_data['initial_style_no'],
                 'qty': sum(item['qty'] for item in steps),
                 'stepno_count': len(steps),
                 'stepnos': steps,

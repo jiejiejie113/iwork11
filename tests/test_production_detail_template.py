@@ -313,8 +313,8 @@ def test_overview_employee_search_control_is_removed():
     """生产详情概览不应再显示无效的员工ID搜索框。"""
     assert 'v-model="searchQuery"' not in TEMPLATE
     assert "const searchQuery = ref('');" not in TEMPLATE
-    assert 'filteredFlowCards' not in TEMPLATE
     assert 'filteredStepnoCards' not in TEMPLATE
+    assert 'v-model.trim="initialStyleSearch"' in TEMPLATE
     assert 'v-model="tableSearch"' in TEMPLATE
 
 
@@ -348,8 +348,8 @@ def test_flow_table_uses_composite_key_step_rows():
     assert 'row._step.output_value' in TEMPLATE
     assert 'row._woFirst' in TEMPLATE
     assert 'row._empFirst' in TEMPLATE
-    assert "collapsed ? 'min-w-[860px]' : 'min-w-[1280px]'" in TEMPLATE
-    assert ':colspan="collapsed ? 7 : 13"' in TEMPLATE
+    assert "collapsed ? 'min-w-[860px]' : 'min-w-[1380px]'" in TEMPLATE
+    assert ':colspan="collapsed ? 7 : 14"' in TEMPLATE
     assert 'max-lg:h-[220px]' in TEMPLATE
 
 
@@ -402,12 +402,13 @@ def test_expanded_flow_table_uses_requested_column_order():
         1,
     )[0]
     expected_headers = [
+        '初版款号',
         '本厂款号',
         '工序号',
         '工序描述',
-        '产量',
+        '工序{[ dailyQtyLabel ]}',
         '累计产量',
-        '总产量',
+        '员工{[ dailyQtyLabel ]}',
         '目标',
         '目标达成率',
         '标准工时',
@@ -421,12 +422,13 @@ def test_expanded_flow_table_uses_requested_column_order():
     expanded_row = TEMPLATE.split('<!-- 展开模式：员工 + 本厂款号 + 工序组合键明细 -->', 1)[1]
     expanded_row = expanded_row.split('</tr>', 1)[0]
     expected_cells = [
-        'row._wo_name',
-        'row._step.stepno',
-        'row._step.description',
-        'fmtNum(row._step.qty)',
-        'fmtNum(row._step.cumulative_qty)',
-        'fmtNum(row._total_qty)',
+        '{[ row._step.initial_style_no',
+        '{[ row._wo_name ]}',
+        '工序{[ row._step.stepno ]}',
+        '{[ row._step.description',
+        '{[ fmtNum(row._step.qty) ]}',
+        '{[ fmtNum(row._step.cumulative_qty) ]}',
+        '{[ fmtNum(row._total_qty) ]}',
         'getStepTarget(row.emp, row._step.stepno)',
         'getStepTargetRate(row.emp, row._step.stepno)',
         'fmtStepTime(row._step.step_time)',
@@ -451,13 +453,13 @@ def test_step_sidebar_can_switch_between_today_and_cumulative_quantity():
     assert "stepQuantityMode.value === 'cumulative'" in TEMPLATE
     assert 's.cumulative_qty || 0' in TEMPLATE
 
-    toolbar = TEMPLATE.split('<div class="flex items-center gap-3">', 1)[1].split(
-        '</div>',
-        1,
-    )[0]
+    button_start = TEMPLATE.index(
+        '@click="stepQuantityMode = stepQuantityMode === \'today\''
+    )
+    toolbar = TEMPLATE[button_start - 200:button_start + 1000]
     assert 'v-if="detailType === \'flow\'"' in toolbar
     assert "@click=\"stepQuantityMode = stepQuantityMode === 'today'" in toolbar
-    assert "stepQuantityMode === 'today' ? '今日产量' : '累计产量'" in toolbar
+    assert "stepQuantityMode === 'today' ? dailyQtyLabel : '累计产量'" in toolbar
     assert toolbar.index('stepQuantityMode') < toolbar.index('collapsed = !collapsed')
     assert 'map[s.stepno].total += quantity;' in TEMPLATE
 
@@ -549,3 +551,77 @@ def test_historical_production_detail_builds_snapshot_and_hides_update_time():
     assert ':max="businessToday"' in TEMPLATE
     assert '快照 v' not in TEMPLATE
     assert 'localStorage.getItem(`targets:${dateStr}`)' not in TEMPLATE
+
+
+def test_dashboard_workorder_list_uses_business_names_and_initial_style():
+    """实时数据列表应显示初版款号，并使用今日/当日业务口径。"""
+    list_view = DASHBOARD_TEMPLATE.split('<!-- ========== 第6行：', 1)[1].split(
+        '</section>',
+        1,
+    )[0]
+
+    assert '今日生产列表' in list_view
+    assert '>本厂款号</th>' in list_view
+    assert '>初版款号</th>' in list_view
+    assert '{[ wo.initial_style_no || \'-\' ]}' in list_view
+    assert '{[ dailyQtyLabel ]}' in list_view
+    assert "const dailyQtyLabel = computed(() =>" in DASHBOARD_TEMPLATE
+    assert "currentView.value === 'history' ? '当日产量' : '今日产量'" in DASHBOARD_TEMPLATE
+
+
+def test_flow_overview_searches_and_displays_initial_styles():
+    """Flow 概览应按初版款号部分匹配并显示各款件数。"""
+    flow_view = TEMPLATE.split('<!-- Flow 卡片 -->', 1)[1].split(
+        '<!-- 工序卡片 -->',
+        1,
+    )[0]
+
+    assert 'v-model.trim="initialStyleSearch"' in flow_view
+    assert 'placeholder="搜索初版款号..."' in flow_view
+    assert 'v-for="card in filteredFlowCards"' in flow_view
+    assert 'v-for="style in card.initial_styles"' in flow_view
+    assert 'style.initial_style_no || \'未设置\'' in flow_view
+    assert 'fmtNum(style.qty)' in flow_view
+    assert 'card.stepnos' not in flow_view
+    assert 'const filteredFlowCards = computed(() =>' in TEMPLATE
+
+
+def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
+    """Flow 详情应按初版款号筛选，并在表格和卡片中显示该字段。"""
+    assert 'const initialStyleFilter = ref(\'\');' in TEMPLATE
+    assert 'const initialStyleOptions = computed(() =>' in TEMPLATE
+    assert '<option value="">全部初版款号</option>' in TEMPLATE
+    assert 'v-model="initialStyleFilter"' in TEMPLATE
+    assert 'step.initial_style_no === initialStyleFilter.value' in TEMPLATE
+    assert 'const steps = (emp.steps || []).filter' in TEMPLATE
+    assert 'qty: steps.reduce' in TEMPLATE
+    assert '>初版款号</th>' in TEMPLATE
+    assert 'row._step.initial_style_no || \'--\'' in TEMPLATE
+    assert 's.initial_style_no || \'未设置初版\'' in TEMPLATE
+
+
+def test_product_view_exposes_initial_style_as_optional_dimension():
+    """产品视图应新增初版款号备选维度，但不改变默认激活层级。"""
+    assert "const dimensionPool = ['product', 'initial_style', 'wrk_order', 'stepno', 'flow'];" in TEMPLATE
+    assert "const selectedLevels = ref(['product']);" in TEMPLATE
+    assert "initial_style: '初版款号'" in TEMPLATE
+    assert "if (dim === 'initial_style') return leaf.initial_style_no;" in TEMPLATE
+    assert 'initial_style_no: wo.initial_style_no || \'未设置\'' in TEMPLATE
+
+
+def test_flow_target_inputs_are_visible_before_editing_in_both_layouts():
+    """目标和工作时间输入应始终可见，点击编辑后才解除只读。"""
+    controls = TEMPLATE.split('<!-- 右侧：控件组 -->', 1)[1].split(
+        '</div>\n        </div>',
+        1,
+    )[0]
+
+    assert controls.count('<label v-if="detailType === \'flow\'"') == 2
+    assert '<span class="whitespace-nowrap">整组目标</span>' in controls
+    assert '<span class="whitespace-nowrap">工作时间</span>' in controls
+    assert 'v-model.number="groupTargetDraft"' in controls
+    assert 'v-model.number="workHoursDraft"' in controls
+    assert ':readonly="!isEditing"' in controls
+    assert "detailType === 'flow' && detailLayout === 'table' && !isEditing" not in controls
+    assert "detailType === 'flow' && detailLayout === 'table' && isEditing" not in controls
+    assert '!isEditing && !isHistoricalDate' in controls

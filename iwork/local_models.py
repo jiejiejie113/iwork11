@@ -215,6 +215,12 @@ class HistoricalStepSnapshot(models.Model):
     style_no = models.CharField('款号', max_length=50, blank=True, default='')
     product_name = models.CharField('产品名称', max_length=200, blank=True, default='')
     order_no = models.CharField('生产单号', max_length=50, blank=True, default='')
+    initial_style_no = models.CharField(
+        '初版款号',
+        max_length=100,
+        blank=True,
+        default='',
+    )
 
     class Meta:
         app_label = 'iwork'

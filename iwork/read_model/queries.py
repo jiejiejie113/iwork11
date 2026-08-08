@@ -94,6 +94,7 @@ class ReadModelQueries:
                 "flows": sorted(values["flows"]),
                 "product_name": product.get("product_name", ""),
                 "order_no": product.get("order_no", ""),
+                "initial_style_no": product.get("initial_style_no", ""),
             })
         items.sort(key=lambda item: (-item["total_qty"], item["wrk_order"]))
         total = len(items)
@@ -312,7 +313,12 @@ def _merge_realtime_views(views: list[dict]) -> dict:
         for item in view.get("workorders", []):
             row = workorders.setdefault(
                 item["wrk_order"],
-                {"wrk_order": item["wrk_order"], "total_qty": 0, "flows": set()},
+                {
+                    **item,
+                    "initial_style_no": item.get("initial_style_no", ""),
+                    "total_qty": 0,
+                    "flows": set(),
+                },
             )
             row["total_qty"] += int(item.get("total_qty", 0))
             row["flows"].update(item.get("flows", []))

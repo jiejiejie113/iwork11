@@ -18,7 +18,11 @@ from iwork.local_models import (
     ProductionOrder,
 )
 from iwork.models import Pytckreg3
-from iwork.queries import get_batch_step_metadata, get_date_range
+from iwork.queries import (
+    get_batch_step_metadata,
+    get_date_range,
+    get_initial_style_numbers,
+)
 from iwork.statistics import get_business_date
 
 
@@ -99,6 +103,9 @@ class RemoteHistorySource:
         })
         wrk_orders = sorted({wrk_order for wrk_order, _ in pairs})
         step_metadata = get_batch_step_metadata(wrk_orders) if wrk_orders else {}
+        initial_style_lookup = (
+            get_initial_style_numbers(wrk_orders) if wrk_orders else {}
+        )
 
         prefixes = {wrk_order[:6] for wrk_order in wrk_orders if len(wrk_order) >= 6}
         product_lookup = {}
@@ -128,6 +135,7 @@ class RemoteHistorySource:
                 'style_no': style_no,
                 'product_name': product_name,
                 'order_no': order_no,
+                'initial_style_no': initial_style_lookup.get(wrk_order, ''),
             })
         return result
 

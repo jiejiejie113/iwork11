@@ -174,16 +174,16 @@
     <div v-if="currentView === 'overview'" class="flex-1 flex flex-col overflow-hidden">
         <!-- flow/stepno 模式：全区可滚动 -->
         <div v-if="groupMode !== 'product'" class="flex-1 overflow-y-auto">
-        <!-- 可视化图表区 + 工单列表 -->
+        <!-- 可视化图表区 + 今日生产列表 -->
         <div v-if="groupMode !== 'product'" class="flex gap-4 mb-4" style="height:340px;">
-            <!-- 左侧：各生产线 产量 & 人数 -->
+            <!-- 左侧：各生产线 当日生产量与人数 -->
             <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
-                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各工序' ]} 产量 & 人数{[ groupMode === 'flow' ? ' -70工序' : '' ]}</h3>
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各工序' ]} {[ dailyQtyLabel ]} & 人数{[ groupMode === 'flow' ? ' -70工序' : '' ]}</h3>
                 <div class="flex-1"><canvas id="combo-chart"></canvas></div>
             </div>
-            <!-- 右侧：工单列表 -->
+            <!-- 右侧：今日/当日生产列表 -->
             <div class="w-80 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
-                <h3 class="text-xs font-semibold text-slate-300 mb-2">工单列表</h3>
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ isHistoricalDate ? '当日生产列表' : '今日生产列表' ]}</h3>
                 <div ref="workorderListRef" class="flex-1 overflow-y-auto hide-scrollbar"
                     @mouseenter="pauseWorkorderScroll"
                     @mouseleave="resumeWorkorderScroll">
@@ -195,6 +195,8 @@
                                 <span class="text-emerald-400 font-bold">{[ fmtNum(wo.total_qty) ]}件</span>
                             </div>
                             <div class="text-slate-400 mt-1">
+                                <span class="text-cyan-300">初版 {[ wo.initial_style_no || '-' ]}</span>
+                                <span class="mx-1">·</span>
                                 <span>{[ (wo.flows || []).join(', ') ]}</span>
                             </div>
                         </div>
@@ -207,8 +209,12 @@
         </div>
 
         <!-- Flow 卡片 -->
+        <div v-if="groupMode === 'flow'" class="mb-3 flex justify-end">
+            <input v-model.trim="initialStyleSearch" placeholder="搜索初版款号..."
+                class="w-72 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+        </div>
         <div v-if="groupMode === 'flow'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="card in flowCards" :key="card.flow"
+            <div v-for="card in filteredFlowCards" :key="card.flow"
                 @click="goDetail('flow', card.flow)"
                 class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
                 <div class="flex justify-between items-start">
@@ -218,13 +224,14 @@
                             <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
                         </h3>
                         <div class="text-xs text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                            <span v-for="(sd, sn, idx) in card.stepnos" :key="sn" class="whitespace-nowrap inline-flex items-center gap-1.5">
+                            <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold"
-                                    :style="{ border: '1.5px solid ' + stepColor(idx, sn), color: stepColor(idx, sn), backgroundColor: stepColor(idx, sn) + '1a' }">
-                                    工序{[ sn ]}
+                                    style="border:1.5px solid #22d3ee;color:#67e8f9;background-color:rgba(34,211,238,0.1)">
+                                    {[ style.initial_style_no || '未设置' ]}
                                 </span>
-                                <span>{[ fmtNum(sd.qty) ]}件<span class="text-slate-500">({[ sd.workers ]}人)</span></span>
+                                <span>{[ dailyQtyLabel ]} {[ fmtNum(style.qty) ]}件</span>
                             </span>
+                            <span v-if="!card.initial_styles.length" class="text-slate-600">暂无初版款号</span>
                         </div>
                     </div>
                     <div class="text-right flex-shrink-0 ml-2">
@@ -241,7 +248,7 @@
                     </span>
                 </div>
             </div>
-            <div v-if="flowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+            <div v-if="filteredFlowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
                 暂无生产线数据
             </div>
         </div>
@@ -286,7 +293,7 @@
                 <div class="flex bg-slate-900 rounded-md p-0.5 border border-slate-700 text-xs">
                     <button @click="setProductChartMetric('qty')"
                         :class="productChartMetric === 'qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
-                        class="px-3 py-1 rounded transition-colors">产量</button>
+                        class="px-3 py-1 rounded transition-colors">{[ dailyQtyLabel ]}</button>
                     <button v-if="!isHistoricalDate"
                         @click="setProductChartMetric('cumulative_qty')"
                         :class="productChartMetric === 'cumulative_qty' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'"
@@ -365,7 +372,7 @@
                  :style="{ display: 'grid', gridTemplateColumns: productGridColumns }">
                 <div class="py-2 px-3">{[ selectedLevels.map(l => levelLabels[l]).join(' / ') ]}</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3">工序描述</div>
-                <div class="py-2 px-3 text-right">产量</div>
+                <div class="py-2 px-3 text-right">{[ dailyQtyLabel ]}</div>
                 <div class="py-2 px-3 text-right">累计产量</div>
                 <div v-if="showStepMetadataColumns" class="py-2 px-3 text-right">标准工时</div>
                 <div class="py-2 px-3 text-right">产值</div>
@@ -462,24 +469,27 @@
                         :class="detailLayout === 'cards' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                         class="px-3 py-1 rounded-md text-xs transition-colors">卡片视图</button>
                 </div>
-                <select v-if="detailType === 'flow'" v-model="wrkOrderFilter"
-                        class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
-                    <option value="">全部工单</option>
-                    <option v-for="wo in workorderOptions" :key="wo" :value="wo">{[ wo ]}</option>
-                </select>
                 <input v-model="tableSearch" placeholder="搜索员工ID..."
                     class="max-w-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-                <input v-if="detailType === 'flow' && isEditing" v-model.number="groupTargetDraft"
-                    type="number" min="0" step="1" placeholder="整组目标"
-                    class="w-32 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm tabular-nums">
-                <input v-if="detailType === 'flow' && isEditing" v-model.number="workHoursDraft"
-                    type="number" min="0.25" max="24" step="0.25" placeholder="工作时间（小时）"
-                    class="w-40 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm tabular-nums">
-                <button v-if="detailType === 'flow' && detailLayout === 'table' && !isEditing && !isHistoricalDate" @click="startEditing"
+                <label v-if="detailType === 'flow'" class="flex items-center gap-1.5 text-xs text-slate-400">
+                    <span class="whitespace-nowrap">整组目标</span>
+                    <input v-model.number="groupTargetDraft" :readonly="!isEditing"
+                        type="number" min="0" step="1" placeholder="整组目标"
+                        :class="isEditing ? 'bg-slate-900 border-slate-600' : 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed'"
+                        class="w-28 border rounded-lg px-3 py-2 text-sm tabular-nums">
+                </label>
+                <label v-if="detailType === 'flow'" class="flex items-center gap-1.5 text-xs text-slate-400">
+                    <span class="whitespace-nowrap">工作时间</span>
+                    <input v-model.number="workHoursDraft" :readonly="!isEditing"
+                        type="number" min="0.25" max="24" step="0.25" placeholder="工作时间（小时）"
+                        :class="isEditing ? 'bg-slate-900 border-slate-600' : 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed'"
+                        class="w-32 border rounded-lg px-3 py-2 text-sm tabular-nums">
+                </label>
+                <button v-if="detailType === 'flow' && !isEditing && !isHistoricalDate" @click="startEditing"
                     class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
-                <button v-if="detailType === 'flow' && detailLayout === 'table' && isEditing" @click="cancelEditing"
+                <button v-if="detailType === 'flow' && isEditing" @click="cancelEditing"
                     class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
-                <button v-if="detailType === 'flow' && detailLayout === 'table' && isEditing" @click="saveTargets"
+                <button v-if="detailType === 'flow' && isEditing" @click="saveTargets"
                     class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
             </div>
         </div>
@@ -516,17 +526,24 @@
             <!-- 右侧：员工明细表 -->
             <div class="flex-1 min-h-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
                 <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                    <select v-if="detailType === 'flow'" v-model="initialStyleFilter"
+                            class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                        <option value="">全部初版款号</option>
+                        <option v-for="style in initialStyleOptions" :key="style" :value="style">{[ style ]}</option>
+                    </select>
                     <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
                         <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>
                         <span v-if="selectedStep === null">员工汇总</span>
                         <span v-else>工序{[ selectedStep ]} · 员工明细</span>
                     </h3>
+                    </div>
                     <div class="flex items-center gap-3">
                         <button v-if="detailType === 'flow'"
                                 @click="stepQuantityMode = stepQuantityMode === 'today' ? 'cumulative' : 'today'"
-                                :title="stepQuantityMode === 'today' ? '切换为累计产量' : '切换为今日产量'"
+                                :title="stepQuantityMode === 'today' ? '切换为累计产量' : '切换为' + dailyQtyLabel"
                                 class="text-xs text-cyan-300 hover:text-cyan-100 px-2 py-1 rounded border border-cyan-700 hover:border-cyan-500 transition-colors">
-                            {[ stepQuantityMode === 'today' ? '今日产量' : '累计产量' ]}
+                            {[ stepQuantityMode === 'today' ? dailyQtyLabel : '累计产量' ]}
                         </button>
                         <button @click="collapsed = !collapsed"
                                 class="text-xs text-slate-400 hover:text-white px-2 py-1 rounded border border-slate-600 hover:border-slate-400 transition-colors">
@@ -540,7 +557,7 @@
                 <div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"
                      :class="{ 'is-dragging': detailTableIsDragging }"
                      @pointerdown="onDetailTablePointerDown">
-                    <table class="w-full text-sm" :class="collapsed ? 'min-w-[860px]' : 'min-w-[1280px]'">
+                    <table class="w-full text-sm" :class="collapsed ? 'min-w-[860px]' : 'min-w-[1380px]'">
                         <thead>
                             <tr class="text-left text-slate-400 border-b border-slate-700">
                                 <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
@@ -548,15 +565,16 @@
                                     员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}
                                 </th>
                                 <template v-if="!collapsed">
+                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">初版款号</th>
                                     <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">本厂款号</th>
                                     <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序号</th>
                                     <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序描述</th>
                                     <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                                         @click="sortBy('qty')">
-                                        产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                        工序{[ dailyQtyLabel ]} {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                     </th>
                                     <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">累计产量</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总产量</th>
+                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">员工{[ dailyQtyLabel ]}</th>
                                     <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
                                     <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">目标达成率</th>
                                     <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">标准工时</th>
@@ -567,7 +585,7 @@
                                 <template v-else>
                                     <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
                                         @click="sortBy('qty')">
-                                        总产量 {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                        {[ dailyQtyLabel ]} {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
                                     </th>
                                     <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">累计产量</th>
                                     <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
@@ -585,6 +603,9 @@
                                     :class="{ 'border-t border-slate-600': row._empFirst && idx > 0 }">
                                     <td v-if="row._empFirst" :rowspan="row._empRowspan"
                                         class="py-2 px-3 text-slate-300 border-r border-slate-700">{[ row.emp.reg_per_sys_id ]}</td>
+                                    <td v-if="row._woFirst" :rowspan="row._woRowspan" class="py-2 px-3 text-xs text-cyan-300 border-r border-slate-700">
+                                        {[ row._step.initial_style_no || '--' ]}
+                                    </td>
                                     <td v-if="row._woFirst" :rowspan="row._woRowspan" class="py-2 px-3 text-xs border-r border-slate-700">
                                         <span class="text-blue-400">{[ row._wo_name ]}</span>
                                     </td>
@@ -665,7 +686,7 @@
                                 </tr>
                             </template>
                             <tr v-if="displayRowsEmpty">
-                                <td :colspan="collapsed ? 7 : 13" class="py-4 text-slate-500 text-center">暂无数据</td>
+                                <td :colspan="collapsed ? 7 : 14" class="py-4 text-slate-500 text-center">暂无数据</td>
                             </tr>
                         </tbody>
                     </table>
@@ -688,12 +709,13 @@
                         <div class="flex-1 text-left mr-3">
                             <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
                                 <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
                             </div>
                             <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
                             <div class="text-xs mt-1">
-                                <span class="text-slate-500">产量</span>
+                                <span class="text-slate-500">{[ dailyQtyLabel ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
                                 <template v-if="emp.target > 0">
@@ -716,12 +738,13 @@
                         <div class="flex-1 text-left ml-3">
                             <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
                                 <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
                             </div>
                             <div v-if="!emp.steps || emp.steps.length === 0" class="text-xs text-slate-600">--</div>
                             <div class="text-xs mt-1">
-                                <span class="text-slate-500">产量</span>
+                                <span class="text-slate-500">{[ dailyQtyLabel ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
                                 <template v-if="emp.target > 0">
@@ -765,7 +788,7 @@ createApp({
         const activeDrag = ref(false);       // 是否正在拖拽
         const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
         const tableSearch = ref('');
-        const wrkOrderFilter = ref('');  // '' = 全部工单
+        const initialStyleFilter = ref('');  // '' = 全部初版款号
         const selectedStep = ref(null);  // null = 全部工序
         const stepQuantityMode = ref('today');  // 'today' = 今日产量，'cumulative' = 累计产量
         const collapsed = ref(false);   // false = 展开，true = 收起
@@ -786,6 +809,9 @@ createApp({
             : businessToday.value;
         const selectedDate = ref(initialDate);
         const isHistoricalDate = computed(() => selectedDate.value < businessToday.value);
+        const dailyQtyLabel = computed(() => (
+            isHistoricalDate.value ? '当日产量' : '今日产量'
+        ));
         const overviewUrl = computed(() => (
             basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
         ));
@@ -845,10 +871,16 @@ createApp({
         const productNormalLineOnly = ref(true);
         const productNormalFlows = ref([]);
         const productNormalFlowSet = computed(() => new Set(productNormalFlows.value));
-        const dimensionPool = ['product', 'wrk_order', 'stepno', 'flow'];
+        const dimensionPool = ['product', 'initial_style', 'wrk_order', 'stepno', 'flow'];
         const selectedLevels = ref(['product']);
         const activePath = ref([]);
-        const levelLabels = { product: '产品名称', wrk_order: '本厂款号', stepno: '工序号', flow: '生产线' };
+        const levelLabels = {
+            product: '产品名称',
+            initial_style: '初版款号',
+            wrk_order: '本厂款号',
+            stepno: '工序号',
+            flow: '生产线',
+        };
         const PRODUCT_VIEW_STORAGE_KEY = 'iwork:production-detail:product-view:v1';
 
         function normalizeSelectedLevels(levels) {
@@ -905,7 +937,13 @@ createApp({
         });
 
         // 拍平 API 嵌套数据为叶子记录，按 selectedLevels 动态重分组
-        const levelShortLabels = { product: '产品', wrk_order: '款号', stepno: '工序', flow: '线体' };
+        const levelShortLabels = {
+            product: '产品',
+            initial_style: '初版款号',
+            wrk_order: '本厂款号',
+            stepno: '工序',
+            flow: '线体',
+        };
         const productMetricNodeKeys = {
             qty: 'qty',
             cumulative_qty: 'cumulativeQty',
@@ -919,6 +957,7 @@ createApp({
 
         function pickDim(leaf, dim) {
             if (dim === 'product') return leaf.product_name;
+            if (dim === 'initial_style') return leaf.initial_style_no;
             if (dim === 'wrk_order') return leaf.wrk_order;
             if (dim === 'stepno') return leaf.stepno;
             return leaf.flow;
@@ -932,6 +971,7 @@ createApp({
                         for (const fl of (st.flows || [])) {
                             leaves.push({
                                 product_name: p.product_name,
+                                initial_style_no: wo.initial_style_no || '未设置',
                                 wrk_order: wo.wrk_order,
                                 stepno: st.stepno,
                                 step_description: st.description || '',
@@ -1216,11 +1256,11 @@ createApp({
         });
         const productChartMetricLabel = computed(() => {
             const labels = {
-                qty: '产量',
+                qty: dailyQtyLabel.value,
                 cumulative_qty: '累计产量',
                 output_value: '产值',
             };
-            return labels[productChartMetric.value] || '产量';
+            return labels[productChartMetric.value] || dailyQtyLabel.value;
         });
         const productChartTitle = computed(() => {
             if (!chartFocusKey.value) {
@@ -1590,6 +1630,7 @@ createApp({
         }
 
         const flowCards = ref([]);
+        const initialStyleSearch = ref('');
         const stepnoCards = ref([]);
         const employees = ref([]);
         const targets = reactive({});
@@ -1632,10 +1673,21 @@ createApp({
         const workorderSummaryList = computed(() => {
             return workorderList.value.map(wo => ({
                 wrk_order: wo.wrk_order,
+                initial_style_no: wo.initial_style_no || '',
                 total_qty: wo.total_qty || 0,
                 flows: wo.flows || [],
                 worker_count: wo.worker_count || 0,
             })).sort((a, b) => b.total_qty - a.total_qty);
+        });
+
+        const filteredFlowCards = computed(() => {
+            const query = initialStyleSearch.value.trim().toLowerCase();
+            if (!query) return flowCards.value;
+            return flowCards.value.filter(card => (
+                (card.initial_styles || []).some(style => (
+                    String(style.initial_style_no || '').toLowerCase().includes(query)
+                ))
+            ));
         });
 
         // 工单列表自动滚动
@@ -1676,7 +1728,7 @@ createApp({
 
         // 版面2：按自定义顺序排列的员工
         const orderedEmployees = computed(() => {
-            const emps = [...employees.value];
+            const emps = [...filterByInitialStyle(employees.value)];
             const order = cardOrder.value;
             if (order.length > 0) {
                 const orderMap = {};
@@ -1726,22 +1778,37 @@ createApp({
             return (emp.steps || []).reduce((sum, s) => s.stepno === stepno ? sum + (s.qty || 0) : sum, 0);
         }
 
-        // 工单筛选下拉选项
-        const workorderOptions = computed(() => {
+        // 初版款号筛选下拉选项
+        const initialStyleOptions = computed(() => {
             const set = new Set();
             employees.value.forEach(emp => {
-                (emp.workorders || []).forEach(wo => set.add(wo));
-                (emp.steps || []).forEach(s => { if (s.workorder) set.add(s.workorder); });
+                (emp.steps || []).forEach(step => {
+                    if (step.initial_style_no) set.add(step.initial_style_no);
+                });
             });
             return [...set].sort((a, b) => naturalCompare(a, b));
         });
 
-        // 按工单筛选员工列表
-        function filterByWorkOrder(emps) {
-            if (!wrkOrderFilter.value) return emps;
-            return emps.filter(emp => {
-                if ((emp.workorders || []).includes(wrkOrderFilter.value)) return true;
-                return (emp.steps || []).some(s => s.workorder === wrkOrderFilter.value);
+        // 按初版款号筛选员工列表
+        function filterByInitialStyle(emps) {
+            if (!initialStyleFilter.value) return emps;
+            return emps.flatMap(emp => {
+                const steps = (emp.steps || []).filter(step => (
+                    step.initial_style_no === initialStyleFilter.value
+                ));
+                if (!steps.length) return [];
+                return [{
+                    ...emp,
+                    steps,
+                    qty: steps.reduce((sum, step) => sum + (step.qty || 0), 0),
+                    cumulative_qty: steps.reduce(
+                        (sum, step) => sum + (step.cumulative_qty || 0),
+                        0,
+                    ),
+                    workorders: [...new Set(
+                        steps.map(step => step.workorder).filter(Boolean),
+                    )],
+                }];
             });
         }
 
@@ -1750,7 +1817,10 @@ createApp({
             const map = {};
             (emp.steps || []).forEach(s => {
                 const wo = s.workorder || '无工单';
-                if (wrkOrderFilter.value && wo !== wrkOrderFilter.value) return;
+                if (
+                    initialStyleFilter.value
+                    && s.initial_style_no !== initialStyleFilter.value
+                ) return;
                 map[wo] = (map[wo] || 0) + (s.qty || 0);
             });
             return Object.entries(map).sort((a, b) => b[1] - a[1]);
@@ -1787,17 +1857,15 @@ createApp({
         // 工序侧边栏数据源
         const stepSummary = computed(() => {
             const map = {};
-            const emps = filterByWorkOrder(employees.value);
+            const emps = filterByInitialStyle(employees.value);
             emps.forEach(emp => {
                 (emp.steps || []).forEach(s => {
-                    if (!wrkOrderFilter.value || s.workorder === wrkOrderFilter.value) {
-                        if (!map[s.stepno]) map[s.stepno] = { total: 0, workorders: new Set() };
-                        const quantity = stepQuantityMode.value === 'cumulative'
-                            ? (s.cumulative_qty || 0)
-                            : (s.qty || 0);
-                        map[s.stepno].total += quantity;
-                        if (s.workorder) map[s.stepno].workorders.add(s.workorder);
-                    }
+                    if (!map[s.stepno]) map[s.stepno] = { total: 0, workorders: new Set() };
+                    const quantity = stepQuantityMode.value === 'cumulative'
+                        ? (s.cumulative_qty || 0)
+                        : (s.qty || 0);
+                    map[s.stepno].total += quantity;
+                    if (s.workorder) map[s.stepno].workorders.add(s.workorder);
                 });
             });
             return Object.entries(map)
@@ -1826,7 +1894,7 @@ createApp({
 
         // 员工明细行（按员工 + 本厂款号 + 工序组合键拆分，支持两级 rowspan）
         const employeeRows = computed(() => {
-            let emps = filterByWorkOrder(employees.value);
+            let emps = filterByInitialStyle(employees.value);
             if (selectedStep.value !== null) {
                 emps = emps
                     .filter(emp => (emp.steps || []).some(s => s.stepno === selectedStep.value && s.qty > 0))
@@ -1870,7 +1938,10 @@ createApp({
             const rows = [];
             emps.forEach(emp => {
                 const visibleSteps = (emp.steps || []).filter(step => {
-                    return !wrkOrderFilter.value || step.workorder === wrkOrderFilter.value;
+                    return (
+                        !initialStyleFilter.value
+                        || step.initial_style_no === initialStyleFilter.value
+                    );
                 });
                 const sortedSteps = [...visibleSteps].sort((a, b) => {
                     const stepCompare = (Number(a.stepno) || 0) - (Number(b.stepno) || 0);
@@ -2164,6 +2235,7 @@ createApp({
                     cards.push({
                         flow: name,
                         stepnos,
+                        initial_styles: info.initial_styles || [],
                         total_workers: info.total_workers || 0,
                         total_qty,
                         target_total: 0,
@@ -2257,7 +2329,7 @@ createApp({
             showLoading();
             detailType.value = type;
             detailKey.value = key;
-            wrkOrderFilter.value = '';
+            initialStyleFilter.value = '';
             selectedStep.value = null;
             try {
                 let resp;
@@ -2405,6 +2477,7 @@ createApp({
                     }
                     cards.push({
                         flow: name, stepnos,
+                        initial_styles: info.initial_styles || [],
                         total_workers: info.total_workers || 0,
                         total_qty, target_total: 0, efficiency: null, hourly: [],
                     });
@@ -2645,7 +2718,7 @@ createApp({
                         data: {
                             labels,
                             datasets: [
-                                { label: '产量', data: combined.map(x => x.qty), backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y', order: 2 },
+                                { label: dailyQtyLabel.value, data: combined.map(x => x.qty), backgroundColor: '#3b82f6', borderRadius: 2, yAxisID: 'y', order: 2 },
                                 { label: '人数', data: combined.map(x => x.workers), type: 'line', borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, yAxisID: 'y1', pointRadius: 3, order: 1 },
                             ],
                         },
@@ -2655,7 +2728,7 @@ createApp({
                             plugins: { legend: { labels: { color: '#94a3b8', font: { size: 14 } } } },
                             scales: {
                                 x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } } },
-                                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } }, title: { display: true, text: '产量', color: '#94a3b8' } },
+                                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } }, title: { display: true, text: dailyQtyLabel.value, color: '#94a3b8' } },
                                 y1: { position: 'right', grid: { display: false }, ticks: { color: '#22c55e', font: { size: 14 } }, title: { display: true, text: '人数', color: '#22c55e' } },
                             },
                         },
@@ -2724,15 +2797,15 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            tableSearch, wrkOrderFilter, workorderOptions, selectedStep, stepQuantityMode, collapsed,
+            tableSearch, initialStyleFilter, initialStyleOptions, selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
-            selectedDate, businessToday, isHistoricalDate, overviewUrl, changeProductionDate,
+            selectedDate, businessToday, isHistoricalDate, dailyQtyLabel, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
-            flowCards, stepnoCards, employees, targets,
+            flowCards, filteredFlowCards, initialStyleSearch, stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             stepSummary, stepHeatRange, getHeatColor,
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
-            filterByWorkOrder, getWorkorderItems,
+            filterByInitialStyle, getWorkorderItems,
             getStepTarget, getStepTargetRate, getDisplayedTarget, getDisplayedTargetRate,
             isEditing, groupTarget, currentGroupTarget, workHours,
             groupTargetDraft, workHoursDraft, sortKey, sortAsc,

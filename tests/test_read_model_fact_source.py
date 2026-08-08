@@ -74,6 +74,7 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
     assert snapshot["views"]["detail"]["flow_overview"]["SO3-L3A"] == {
         "stepnos": {"70": {"qty": 100, "workers": 2}},
         "total_workers": 2,
+        "initial_styles": [{"initial_style_no": "", "qty": 100}],
     }
     assert snapshot["views"]["detail"]["product_overview"]["products"][0][
         "total_qty"
@@ -111,6 +112,58 @@ def test_flow_detail_uses_same_snapshot_cumulative_quantity():
     assert employee["total_qty"] == 80
     assert employee["cumulative_qty"] == 23152
     assert employee["steps"][0]["cumulative_qty"] == 23152
+
+
+def test_initial_style_number_flows_through_realtime_and_detail_views():
+    """初版款号应进入生产列表、Flow明细、分组卡片和产品树。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 70,
+                "wrk_order": "BU1211",
+                "flow": "SO3-L3B",
+                "qty": 80,
+                "record_count": 1,
+            },
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 69,
+                "wrk_order": "BU1211",
+                "flow": "SO3-L3B",
+                "qty": 40,
+                "record_count": 1,
+            },
+        ],
+        products={
+            "BU1211": {
+                "product_name": "产品甲",
+                "order_no": "ORDER-1",
+                "initial_style_no": "SAMPLE-01",
+            },
+        },
+    )
+
+    snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
+
+    realtime_workorder = snapshot["views"]["realtime"][70]["workorders"][0]
+    flow_overview = snapshot["views"]["detail"]["flow_overview"]["SO3-L3B"]
+    flow_step = snapshot["views"]["detail"]["flow_employees"]["SO3-L3B"][0][
+        "steps"
+    ][0]
+    product_workorder = snapshot["views"]["detail"]["product_overview"][
+        "products"
+    ][0]["wrk_orders"][0]
+
+    assert realtime_workorder["initial_style_no"] == "SAMPLE-01"
+    assert flow_overview["initial_styles"] == [
+        {"initial_style_no": "SAMPLE-01", "qty": 80},
+    ]
+    assert flow_step["initial_style_no"] == "SAMPLE-01"
+    assert product_workorder["initial_style_no"] == "SAMPLE-01"
 
 
 def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
@@ -231,6 +284,7 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
         "cumulative_qty": 23152,
     }])
     remote.get_read_model_products.return_value = {}
+    remote.get_initial_style_numbers.side_effect = checked({"BU1211": "SAMPLE-01"})
     remote.get_batch_step_metadata.side_effect = checked({})
 
     source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
@@ -238,6 +292,7 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
     assert source.cumulative_qty[("SO3-L3B", 1001, 70, "BU1211")] == 23152
     remote.get_igarment_creation_dates.assert_not_called()
     remote.get_read_model_cumulative_rows.assert_called_once_with(["BU1211"])
+    remote.get_initial_style_numbers.assert_called_once_with(["BU1211"])
 
 
 @patch("iwork.read_model.builder.ReadModelFactSource.collect")
@@ -274,6 +329,7 @@ def test_collector_uses_remote_history_only_before_business_date():
         "record_count": 1,
     }]
     remote.get_read_model_products.return_value = {}
+    remote.get_initial_style_numbers.return_value = {}
     remote.get_batch_step_metadata.return_value = {}
     remote.read_model_consistent_snapshot.side_effect = nullcontext
     remote.get_read_model_cumulative_rows.return_value = []
@@ -435,6 +491,7 @@ def test_realtime_workorders_keep_products_and_current_step_flows():
         "flows": ["SO3-L3A"],
         "product_name": "产品甲",
         "order_no": "ORDER-1",
+        "initial_style_no": "",
     }
 
     all_workorder = snapshot["views"]["realtime"]["all"]["workorders"][0]
@@ -444,4 +501,5 @@ def test_realtime_workorders_keep_products_and_current_step_flows():
         "flows": ["OTHER-STEP-FLOW", "SO3-L3A"],
         "product_name": "产品甲",
         "order_no": "ORDER-1",
+        "initial_style_no": "",
     }

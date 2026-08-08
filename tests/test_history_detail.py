@@ -49,6 +49,7 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
         style_no='BU1208',
         product_name='Test product',
         order_no='SO-TEST',
+        initial_style_no='SAMPLE-01',
     )
     HistoricalSyncState.objects.using('iwork_local').create(
         snapshot_date=target_date,
@@ -99,6 +100,7 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
             'stepno': 38,
             'qty': 183,
             'workorder': 'BU1208A',
+            'initial_style_no': 'SAMPLE-01',
             'description': '翻猪肠绑绳',
             'step_time': 0.131,
             'output_value': pytest.approx(23.973),
@@ -149,6 +151,7 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
         step_time=0.131,
         style_no='BU1208',
         product_name='Sage pile jacket',
+        initial_style_no='SAMPLE-01',
         order_no='SO-TEST',
     )
     HistoricalStepSnapshot.objects.using('iwork_local').create(
@@ -159,6 +162,7 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
         step_time=0.2,
         style_no='BU1208',
         product_name='Sage pile jacket',
+        initial_style_no='SAMPLE-01',
         order_no='SO-TEST',
     )
     HistoricalSyncState.objects.using('iwork_local').create(
@@ -180,6 +184,7 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
     product = payload['products'][0]
     assert product['product_name'] == 'Sage pile jacket'
     assert product['total_qty'] == 233
+    assert product['wrk_orders'][0]['initial_style_no'] == 'SAMPLE-01'
     assert 'SO5-L5C' in payload['normal_flows']
     assert 'Finishing-QC1' not in payload['normal_flows']
     steps = product['wrk_orders'][0]['stepnos']
@@ -190,6 +195,46 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
     assert step['flows'] == [{'flow': 'SO5-L5C', 'qty': 183, 'workers': 1}]
     assert steps[1]['flows'] == [
         {'flow': 'Finishing-QC1', 'qty': 50, 'workers': 1},
+    ]
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_historical_flow_overview_counts_initial_styles_from_step_70_only(client):
+    """历史 Flow 卡片的初版款号件数只能采用普通线工序 70。"""
+    target_date = date(2026, 7, 15)
+    registered_at = timezone.make_aware(datetime(2026, 7, 15, 10))
+    for step_no, qty in ((70, 80), (80, 30)):
+        HistoricalProductionFact.objects.using('iwork_local').create(
+            production_date=target_date,
+            event_hour=10,
+            registered_date=registered_at,
+            registered_time=registered_at,
+            flow='SO5-L5C',
+            station_id='L5C',
+            employee_id=1942,
+            wrk_order='BU1208A',
+            step_no=step_no,
+            qty=qty,
+            source_record_count=1,
+        )
+        HistoricalStepSnapshot.objects.using('iwork_local').create(
+            snapshot_date=target_date,
+            wrk_order='BU1208A',
+            step_no=step_no,
+            initial_style_no='SAMPLE-01',
+        )
+    HistoricalSyncState.objects.using('iwork_local').create(
+        snapshot_date=target_date,
+        status=HistoricalSyncState.Status.SUCCESS,
+        fact_row_count=2,
+        metadata_row_count=2,
+    )
+
+    response = client.get('/api/dashboard/detail/flows/?date=2026-07-15')
+
+    assert response.status_code == 200
+    assert response.json()['SO5-L5C']['initial_styles'] == [
+        {'initial_style_no': 'SAMPLE-01', 'qty': 80},
     ]
 
 

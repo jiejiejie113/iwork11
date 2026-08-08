@@ -48,6 +48,33 @@ def get_records_queryset(target: date) -> object:
     return Pytckreg3.objects.using('iwork').filter(RegDate__gte=start, RegDate__lt=end)
 
 
+def get_initial_style_numbers(wrk_orders: list[str]) -> dict[str, str]:
+    """批量读取完整工单对应的初版款号。
+
+    Args:
+        wrk_orders: 需要补充初版款号的完整工单号。
+
+    Returns:
+        dict[str, str]: 按完整工单号组织的初版款号；缺失或空值返回空字符串。
+    """
+    normalized = sorted({str(item) for item in wrk_orders if item})
+    if not normalized:
+        return {}
+
+    from iwork.models import Pywrkord
+
+    rows = (
+        Pywrkord.objects.using('iwork')
+        .filter(WrkOrder__in=normalized)
+        .values('WrkOrder', 'ExtField01')
+    )
+    lookup = {
+        str(row['WrkOrder']): str(row['ExtField01'] or '').strip()
+        for row in rows
+    }
+    return {wrk_order: lookup.get(wrk_order, '') for wrk_order in normalized}
+
+
 def get_igarment_creation_dates(wrk_orders: list[str]) -> dict[str, date]:
     """读取每个完整 WrkOrder 对应的最早 iGarment 创建日期。
 
@@ -850,8 +877,22 @@ def get_batch_flow_hourly(target_date: date) -> dict:
     return result
 
 
-def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
-    """将 Flow 聚合行构建为带工序元数据和产值的员工明细。"""
+def _build_flow_employees(
+    rows: list[dict],
+    step_metadata: dict,
+    workorder_metadata: dict | None = None,
+) -> dict:
+    """将 Flow 聚合行构建为带工序、工单元数据和产值的员工明细。
+
+    Args:
+        rows: 按 Flow、员工、工序和完整工单聚合的产量行。
+        step_metadata: 按完整工单和工序组织的工序元数据。
+        workorder_metadata: 按完整工单组织的产品与初版款号元数据。
+
+    Returns:
+        dict: 按 Flow 组织的员工明细。
+    """
+    workorder_metadata = workorder_metadata or {}
     result: dict = {}
     for flow_name, flow_rows in _groupby(rows, 'Flow'):
         emp_map: dict[int, dict] = {}
@@ -878,6 +919,10 @@ def _build_flow_employees(rows: list[dict], step_metadata: dict) -> dict:
                 'stepno': row['StepNo'],
                 'qty': qty,
                 'workorder': workorder,
+                'initial_style_no': workorder_metadata.get(
+                    workorder,
+                    {},
+                ).get('initial_style_no', ''),
                 'description': metadata.get('description', ''),
                 'step_time': step_time,
                 'output_value': output_value,
@@ -930,8 +975,9 @@ def get_batch_flow_employees(target_date: date) -> dict:
 
     Returns:
         dict: {flow_name: [{reg_per_sys_id, total_qty, output_value,
-               steps: [{stepno, qty, workorder, description, step_time,
-                        output_value}], workorders: [str]}, ...], ...}
+               steps: [{stepno, qty, workorder, initial_style_no,
+                        description, step_time, output_value}],
+               workorders: [str]}, ...], ...}
         组内员工按 total_qty 降序排列
     """
     records = get_records_queryset(target_date).exclude(Flow='').filter(Flow__in=settings.ALLOWED_FLOWS)
@@ -942,7 +988,12 @@ def get_batch_flow_employees(target_date: date) -> dict:
     )
     wrk_orders = sorted({row['WrkOrder'] for row in rows if row['WrkOrder']})
     step_metadata = get_batch_step_metadata(wrk_orders)
-    return _build_flow_employees(rows, step_metadata)
+    initial_styles = get_initial_style_numbers(wrk_orders)
+    workorder_metadata = {
+        wrk_order: {'initial_style_no': initial_style_no}
+        for wrk_order, initial_style_no in initial_styles.items()
+    }
+    return _build_flow_employees(rows, step_metadata, workorder_metadata)
 
 
 def get_batch_stepno_employees(target_date: date) -> dict:

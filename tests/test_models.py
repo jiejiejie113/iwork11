@@ -1,5 +1,5 @@
 from datetime import datetime
-from iwork.models import Pydefstp, Pywrkstp, Pytckreg3
+from iwork.models import Pydefstp, Pywrkord, Pywrkstp, Pytckreg3
 
 
 class TestPytckreg3Model:
@@ -128,6 +128,29 @@ class TestPywrkstpModel:
         field = Pywrkstp._meta.get_field('Description')
 
         assert field.max_length == 120
+        assert field.null is True
+
+
+class TestPywrkordModel:
+    """工单扩展信息表模型测试。"""
+
+    def test_remote_table_mapping_is_read_only(self):
+        """初版款号模型必须映射远程表且禁止迁移。"""
+        assert Pywrkord._meta.db_table == 'pywrkord'
+        assert Pywrkord._meta.managed is False
+
+    def test_wrk_order_is_remote_primary_key(self):
+        """完整工单号必须直接使用远程主键。"""
+        field = Pywrkord._meta.get_field('WrkOrder')
+
+        assert field.primary_key is True
+        assert field.max_length == 14
+
+    def test_ext_field_matches_initial_style_source_column(self):
+        """初版款号来源字段必须允许远程空值并保留完整长度。"""
+        field = Pywrkord._meta.get_field('ExtField01')
+
+        assert field.max_length == 100
         assert field.null is True
 
 

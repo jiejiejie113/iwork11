@@ -330,6 +330,7 @@ class TestGetBatchFlowEmployeesLocal:
             'stepno': 15,
             'qty': 100,
             'workorder': 'BU0724',
+            'initial_style_no': '',
             'description': '',
             'step_time': None,
             'output_value': None,

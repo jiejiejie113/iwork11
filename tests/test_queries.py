@@ -25,6 +25,30 @@ class TestGetDateRange:
         assert start.hour == 0 and start.minute == 0
 
 
+@patch('iwork.models.Pywrkord')
+def test_initial_style_numbers_are_loaded_in_one_normalized_batch(mock_model):
+    """初版款号必须按完整工单批量读取，并规范化空白值。"""
+    from iwork.queries import get_initial_style_numbers
+
+    rows = mock_model.objects.using.return_value.filter.return_value.values.return_value
+    rows.__iter__.return_value = iter([
+        {'WrkOrder': 'BU1001', 'ExtField01': '  SAMPLE-01  '},
+        {'WrkOrder': 'BU1002', 'ExtField01': None},
+    ])
+
+    result = get_initial_style_numbers(['BU1002', '', 'BU1001', 'BU1001', 'MISS'])
+
+    assert result == {
+        'BU1001': 'SAMPLE-01',
+        'BU1002': '',
+        'MISS': '',
+    }
+    mock_model.objects.using.assert_called_once_with('iwork')
+    mock_model.objects.using.return_value.filter.assert_called_once_with(
+        WrkOrder__in=['BU1001', 'BU1002', 'MISS'],
+    )
+
+
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_igarment_creation_dates_use_earliest_day_per_workorder():
     """同一 WrkOrder 多个创建时间时应取最早日期，并忽略空编号。"""
@@ -641,9 +665,15 @@ class TestGetBatchFlowHourly:
 class TestGetBatchFlowEmployees:
     """get_batch_flow_employees — 每个 Flow 的员工明细，按产量降序"""
 
+    @patch('iwork.queries.get_initial_style_numbers')
     @patch('iwork.queries.get_batch_step_metadata')
     @patch('iwork.models.Pytckreg3')
-    def test_returns_employee_details_grouped_by_flow(self, mock_model, mock_metadata):
+    def test_returns_employee_details_grouped_by_flow(
+        self,
+        mock_model,
+        mock_metadata,
+        mock_initial_styles,
+    ):
         """工序组合键元数据与产值随员工明细返回。"""
         from iwork.queries import get_batch_flow_employees
 
@@ -661,6 +691,11 @@ class TestGetBatchFlowEmployees:
             ('SO001', 69): {'description': '包装', 'step_time': 0.0},
             ('SO003', 70): {'description': '车缝', 'step_time': 0.5},
         }
+        mock_initial_styles.return_value = {
+            'SO001': 'SAMPLE-01',
+            'SO002': '',
+            'SO003': 'SAMPLE-03',
+        }
 
         result = get_batch_flow_employees(date(2026, 5, 12))
 
@@ -671,10 +706,12 @@ class TestGetBatchFlowEmployees:
         assert len(result['VCO-L5'][0]['steps']) == 2
         assert {
             'stepno': 70, 'qty': 200, 'workorder': 'SO001',
+            'initial_style_no': 'SAMPLE-01',
             'description': '后整', 'step_time': 0.25, 'output_value': 50.0,
         } in result['VCO-L5'][0]['steps']
         assert {
             'stepno': 69, 'qty': 100, 'workorder': 'SO001',
+            'initial_style_no': 'SAMPLE-01',
             'description': '包装', 'step_time': 0.0, 'output_value': 0.0,
         } in result['VCO-L5'][0]['steps']
         assert result['VCO-L5'][0]['output_value'] == 50.0
@@ -691,6 +728,7 @@ class TestGetBatchFlowEmployees:
         assert result['VCO-C1'][0]['total_qty'] == 300
         assert result['VCO-C1'][0]['output_value'] == 150.0
         mock_metadata.assert_called_once_with(['SO001', 'SO002', 'SO003'])
+        mock_initial_styles.assert_called_once_with(['SO001', 'SO002', 'SO003'])
 
 
 class TestGetBatchStepnoEmployees:

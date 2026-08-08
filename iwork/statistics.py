@@ -398,6 +398,7 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
             wo_products.setdefault(k, {
                 'product_name': item.get('product_name', ''),
                 'order_no': item.get('order_no', ''),
+                'initial_style_no': item.get('initial_style_no', ''),
             })
     all_wo = [{'wrk_order': k, 'total_qty': v,
                'flows': sorted(wo_flows.get(k, set())),

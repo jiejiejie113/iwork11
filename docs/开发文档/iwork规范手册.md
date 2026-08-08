@@ -137,17 +137,21 @@ flows = list(settings.VISIBLE_FLOWS)
 
 ---
 
-## 4. 工单列表字段规范
+## 4. 今日/当日生产列表字段规范
 
-工单列表在两个页面使用：实时数据看板（dashboard）和生产详情（production_detail）。
+生产列表在两个页面使用：实时数据看板（dashboard）和生产详情（production_detail）。
+界面统一称为“今日生产列表”；历史日期称为“当日生产列表”。API 为兼容既有消费者继续
+使用 `workorders`、`wrk_order` 和 `total_qty` 字段名，前端显示名称不得再写“工单号”或
+“总产量”。
 
 ### 4.1 API 返回字段
 
 ```python
 # get_workorders_paginated / get_workorders_list 返回
 {
-    'wrk_order': str,      # 工单号
-    'total_qty': int,      # 总产量
+    'wrk_order': str,      # 本厂款号
+    'initial_style_no': str, # 初版款号，来源 pywrkord.ExtField01
+    'total_qty': int,      # 今日/当日产量
     'worker_count': int,   # 人数（仅 paginated 版本）
     'flows': list[str],    # 关联的 Flow 分组列表
     'product_name': str,   # 产品名称
@@ -159,8 +163,8 @@ flows = list(settings.VISIBLE_FLOWS)
 
 | 页面 | 显示字段 | 分组列 |
 |------|----------|--------|
-| 实时数据看板 | 工单号、总产量、分组 | 具体分组名称列表（如 "SO3-L3A, SO5-L5E"） |
-| 生产详情概览 | 工单号、总产量、工序数 | `{flows.length}道工序`（如 "3道工序"） |
+| 实时数据看板 | 本厂款号、初版款号、今日产量、产品名称、生产单号、分组 | 具体分组名称列表（如 "SO3-L3A, SO5-L5E"） |
+| 生产详情概览 | 本厂款号、初版款号、今日/当日产量、分组 | 具体分组名称列表 |
 
 两个页面的工单列表独立维护，显示逻辑不同。
 
@@ -176,12 +180,13 @@ flows = list(settings.VISIBLE_FLOWS)
     'flows': list[str],
     'product_name': str,
     'order_no': str,
+    'initial_style_no': str,
 }]}
 ```
 
 每个工序视图的 `flows` 必须按 `(StepNo, WrkOrder)` 隔离，禁止混入同一工单在其他
 工序出现的分组。SSE 内嵌工单与首次加载的分页工单 API 必须同时提供产品名称、生产
-单号和当前工序分组，避免一分钟刷新后覆盖为字段不完整的数据。
+单号、初版款号和当前工序分组，避免一分钟刷新后覆盖为字段不完整的数据。
 
 ### 4.4 Flow 员工明细
 
@@ -189,6 +194,17 @@ flows = list(settings.VISIBLE_FLOWS)
 `description`、`step_time` 和 `output_value`。员工节点汇总 `output_value`；任一工序
 缺少标准工时时汇总值为 `null`。历史详情必须读取 `HistoricalStepSnapshot`，不得在
 普通请求中回查远程元数据，避免元数据变化改写历史产值。
+
+初版款号必须按完整 `WrkOrder` 从远程只读表 `payroll.pywrkord` 一次批量读取，
+`ExtField01` 去除首尾空白后映射为 `initial_style_no`。该查询和 `pytckreg3` 当日事实必须
+位于 Celery 的同一 `REPEATABLE READ` 事务水位；Web 请求禁止远程回源。初版款号进入
+实时生产列表、Flow 员工步骤、Flow 概览和产品树。Flow 概览的初版款号件数只统计
+`ALLOWED_FLOWS_STEPNO`（当前工序 70），避免同一件产品在多工序重复累计。
+
+历史快照把 `initial_style_no` 冻结在 `HistoricalStepSnapshot`。新增字段上线后使用
+`backfill_historical_initial_styles` 幂等回填：只处理成功快照中的空字段，按日期使用
+本地事务批量更新，不删除或重建 `HistoricalProductionFact`；只有实际改变的日期才将
+`HistoricalSyncState.snapshot_version` 递增一次。远程没有映射时保留空字符串并告警。
 
 Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时效率；接口按请求时刻注入
 `work_minutes` 和 `employee_efficiency`，并通过响应头返回快照版本和陈旧状态。
@@ -259,11 +275,15 @@ Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时�
 6. 未设置整组目标的旧日期继续读取旧员工/工单目标；新页面只提供整组目标和工作时间
    编辑入口。
 7. “按工序”详情可能跨多个 Flow，因此不提供整组目标编辑，避免把单个目标错误应用到多个生产组。
+8. Flow 详情的整组目标和工作时间输入框在表格、卡片布局中始终可见；未点击“编辑”或
+   查看历史日期时必须为只读。只有今日页面点击“编辑”后才能输入、保存或取消。
 
 接口返回 `group_target`、`current_group_target`、`work_hours` 和 `step_targets`。分配结果
 仅在响应副本中注入，不得修改 Redis 版本化快照中的原始员工和工序数据。左侧工序栏
-不显示目标值；展开明细列顺序固定为：员工 ID、本厂款号、工序号、工序描述、产量、
-累计产量、总产量、目标、目标达成率、标准工时、产值、总产值、员工效率。
+不显示目标值；展开明细列顺序固定为：员工 ID、初版款号、本厂款号、工序号、工序描述、
+今日/当日产量、累计产量、员工今日/当日产量、目标、目标达成率、标准工时、产值、总产值、
+员工效率。Flow 详情的初版款号筛选控件放在“员工汇总”左侧，默认“全部初版款号”，按
+员工步骤中的 `initial_style_no` 过滤表格、卡片和左侧工序汇总。
 
 `statistics.py` 中 `get_batch_stats` 生成 `all` 视图时，`flows` 字段会跨工序合并去重，
 同时必须保留 `product_name` 和 `order_no`。
@@ -329,6 +349,8 @@ function stepColor(idx, stepno) {
 
 - “按产品名称”的激活维度及顺序、树状展开路径和图表指标保存在浏览器
   `localStorage`，存储键为 `iwork:production-detail:product-view:v1`。
+- 产品维度池顺序为“产品名称、初版款号、本厂款号、工序号、生产线”。初版款号只新增到
+  备选区，默认激活层级仍为产品名称，读取旧浏览器状态时不得自动插入该维度。
 - 恢复状态时必须校验维度和图表指标白名单；产品数据加载成功后，树状路径只保留
   当前数据中仍然有效的连续层级，避免旧缓存造成空白列表或图表。
 - Vue 的 `v-if` 会在标签切换时替换产品图 `<canvas>`。复用 Chart.js 实例前必须确认
@@ -456,7 +478,8 @@ const workorderItems = computed(() => {
 | `process_flow_stats` | `data.process_flow_stats` | 工序×Flow 对比图 |
 | `monthly_process_stats` | `data.monthly_process_stats` | 每日工序堆积图 |
 | `monthly_total_trend` | `data.monthly_total_trend` | 月度趋势 |
-| `workorders` | `data.workorders` | 工单列表 |
+| `workorders` | `data.workorders` | 今日/当日生产列表 |
+| `workorders[].initial_style_no` | `wo.initial_style_no` | 初版款号 |
 | `all_stepnos` | `data.all_stepnos` | 工序下拉列表 |
 
 ### 9.2 生产详情 API → production_detail.html
@@ -464,11 +487,14 @@ const workorderItems = computed(() => {
 | API 字段 | 前端变量 | 用途 |
 |----------|----------|------|
 | `flow_overview` | `flowCards` | Flow 概览卡片 |
+| `flow_overview.*.initial_styles` | `card.initial_styles` | 工序70口径的初版款号及件数；支持概览部分匹配搜索 |
 | `workorders.items` | `workorderList` | 工单汇总列表 |
+| `workorders.items[].initial_style_no` | `wo.initial_style_no` | 今日/当日生产列表初版款号 |
 | `employees` | `employees` | 员工明细（详情页） |
 | `employees[].steps[].description` | `row._step.description` | 组合键工序描述 |
 | `employees[].steps[].step_time` | `row._step.step_time` | 标准工时 |
 | `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
+| `employees[].steps[].initial_style_no` | `row._step.initial_style_no` | Flow 表格、卡片和初版款号筛选 |
 | `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
 | `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
 | `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
@@ -478,6 +504,7 @@ const workorderItems = computed(() => {
 | `step_targets` | 当前未直接绑定 | 顶层工序目标汇总，供接口核对和后续展示使用 |
 | `employees[].step_targets` | `emp.step_targets` | 员工各工序的全天/当前目标及达成率 |
 | `products` | `productList` | 按产品、工单、工序和 Flow 聚合的完整产品树 |
+| `products[].wrk_orders[].initial_style_no` | 产品叶子 `initial_style_no` | 产品视图可选“初版款号”层级 |
 | `normal_flows` | `productNormalFlows` | 产品视图“普通线”本地过滤白名单 |
 | `employees[].output_value` | `emp.output_value` | 员工总产值 |
 | `employees[].employee_efficiency` | `emp.employee_efficiency` | 员工效率 |
@@ -630,6 +657,8 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **Flow 语义**：按生产线继续应用白名单；按产品名称返回完整 Flow，并在浏览器本地切换普通线
 - [ ] **累计产量**：完整工单匹配、排除空 RegDate、单 SQL 聚合、同事务水位、完整产品 Flow 和历史日期限制保持一致
 - [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
+- [ ] **初版款号**：`pywrkord` 批量只读、同事务水位、工序70卡片口径、今日/历史字段、
+  产品备选维度和历史幂等回填同时覆盖测试
 - [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
   使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
   完成最终重建并验证容器状态和实际接口。用户明确要求暂不提交、暂不部署或仅修改代码时

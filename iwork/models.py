@@ -59,6 +59,34 @@ class Pytckreg3(models.Model):
     def __str__(self) -> str:
         return self.TicketNo
 
+
+class Pywrkord(models.Model):
+    """
+    工单扩展信息模型（只读）。
+
+    映射到 ``payroll.pywrkord``，其中 ``ExtField01`` 作为初版款号来源。
+    """
+
+    WrkOrder = models.CharField('完整工单号', max_length=14, primary_key=True)
+    ExtField01 = models.CharField(
+        '初版款号',
+        max_length=100,
+        null=True,
+        blank=True,
+        default='',
+    )
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'pywrkord'
+        managed = False
+        verbose_name = '工单扩展信息'
+        verbose_name_plural = '工单扩展信息'
+
+    def __str__(self) -> str:
+        """返回完整工单号。"""
+        return self.WrkOrder
+
 class Pydefstp(models.Model):
     """
     工序定义表（只读）

@@ -42,6 +42,13 @@ class ReadModelFactSource:
                 wrk_orders,
             )
             products = source.get_read_model_products(wrk_orders)
+            initial_styles = source.get_initial_style_numbers(wrk_orders)
+            for wrk_order in wrk_orders:
+                product = products.setdefault(
+                    wrk_order,
+                    {"product_name": "", "order_no": ""},
+                )
+                product["initial_style_no"] = initial_styles.get(wrk_order, "")
             step_metadata = source.get_batch_step_metadata(wrk_orders)
         return cls(
             business_date=business_date,
@@ -279,6 +286,7 @@ class ReadModelFactSource:
                 "flows": sorted(flows[(stepno, wrk_order)]),
                 "product_name": product.get("product_name", ""),
                 "order_no": product.get("order_no", ""),
+                "initial_style_no": product.get("initial_style_no", ""),
             })
         for stepno, rows in result.items():
             result[stepno] = sorted(
@@ -433,6 +441,7 @@ class ReadModelFactSource:
         qty: dict[tuple[str, int], int] = defaultdict(int)
         workers: dict[tuple[str, int], set] = defaultdict(set)
         total_workers: dict[str, set] = defaultdict(set)
+        initial_style_qty: dict[tuple[str, str], int] = defaultdict(int)
         for item in self._detail_facts():
             flow = self._flow(item)
             stepno = self._stepno(item)
@@ -441,6 +450,12 @@ class ReadModelFactSource:
             if employee_id is not None:
                 workers[(flow, stepno)].add(employee_id)
                 total_workers[flow].add(employee_id)
+            if stepno == ALLOWED_FLOWS_STEPNO:
+                wrk_order = str(item.get("wrk_order") or "")
+                initial_style_no = str(
+                    self.products.get(wrk_order, {}).get("initial_style_no") or ""
+                )
+                initial_style_qty[(flow, initial_style_no)] += self._qty(item)
         result: dict[str, dict] = {}
         for flow, stepno in sorted(qty):
             row = result.setdefault(flow, {"stepnos": {}, "total_workers": 0})
@@ -449,6 +464,16 @@ class ReadModelFactSource:
                 "workers": len(workers[(flow, stepno)]),
             }
             row["total_workers"] = len(total_workers[flow])
+        for flow, row in result.items():
+            initial_styles = [
+                {"initial_style_no": initial_style_no, "qty": qty_value}
+                for (style_flow, initial_style_no), qty_value in initial_style_qty.items()
+                if style_flow == flow
+            ]
+            initial_styles.sort(
+                key=lambda item: (-item["qty"], item["initial_style_no"]),
+            )
+            row["initial_styles"] = initial_styles
         return result
 
     def get_batch_flow_hourly(self, _target_date: date) -> dict:
@@ -506,7 +531,7 @@ class ReadModelFactSource:
                 key=lambda value: (value[0][0], str(value[0][1]), value[0][2], value[0][3]),
             )
         ]
-        return _build_flow_employees(rows, self.step_metadata)
+        return _build_flow_employees(rows, self.step_metadata, self.products)
 
     def get_batch_stepno_employees(self, _target_date: date) -> dict:
         """从事实生成每个工序的员工明细。
@@ -637,6 +662,10 @@ class ReadModelFactSource:
                 step_rows.sort(key=lambda row: row["stepno"])
                 workorder_rows.append({
                     "wrk_order": wrk_order,
+                    "initial_style_no": self.products.get(
+                        wrk_order,
+                        {},
+                    ).get("initial_style_no", ""),
                     "qty": sum(row["qty"] for row in step_rows),
                     "cumulative_qty": sum(
                         row["cumulative_qty"] for row in step_rows
