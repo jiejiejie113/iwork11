@@ -134,9 +134,15 @@ def _aggregate_initial_style_overview(flow_employees: dict) -> dict:
                     'workers': set(),
                     'workorders': set(),
                     'flows': {},
+                    'stepnos': {},
                 })
                 qty = step.get('qty') or 0
-                style['total_qty'] += qty
+                stepno = step.get('stepno')
+                step_summary = style['stepnos'].setdefault(stepno, {'qty': 0})
+                step_summary['qty'] += qty
+                is_output_step = str(stepno).strip() == '70'
+                if is_output_step:
+                    style['total_qty'] += qty
                 style['workers'].add(employee_id)
                 workorder = str(step.get('workorder') or '').strip()
                 if workorder:
@@ -145,7 +151,8 @@ def _aggregate_initial_style_overview(flow_employees: dict) -> dict:
                     'qty': 0,
                     'workers': set(),
                 })
-                flow_summary['qty'] += qty
+                if is_output_step:
+                    flow_summary['qty'] += qty
                 flow_summary['workers'].add(employee_id)
 
     items = []
@@ -166,6 +173,7 @@ def _aggregate_initial_style_overview(flow_employees: dict) -> dict:
             'worker_count': len(style['workers']),
             'workorder_count': len(style['workorders']),
             'flows': flows,
+            'stepnos': style['stepnos'],
         })
 
     items.sort(key=lambda item: (

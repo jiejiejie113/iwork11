@@ -649,6 +649,30 @@ def test_overview_replaces_stepno_grouping_with_initial_style_cards():
     assert '暂无初版款号数据' in TEMPLATE
 
 
+def test_overview_cards_show_slowest_step_against_step_average():
+    """生产线与初版款号卡片应显示低于工序平均产量的最慢工序。"""
+    flow_view = TEMPLATE.split('<!-- Flow 卡片 -->', 1)[1].split(
+        '<!-- 工序卡片 -->',
+        1,
+    )[0]
+    initial_style_view = TEMPLATE.split('<!-- 初版款号卡片', 1)[1].split(
+        '<!-- 产品模式',
+        1,
+    )[0]
+
+    for card_view in (flow_view, initial_style_view):
+        assert 'slowestStepInfo(card)' in card_view
+        assert '最慢工序：工序' in card_view
+        assert 'text-red-400' in card_view
+        assert '件 ⬇️' in card_view
+
+    assert 'function slowestStepInfo(card)' in TEMPLATE
+    assert 'Object.entries(card.stepnos || {})' in TEMPLATE
+    assert 'const averageQty = totalQty / steps.length;' in TEMPLATE
+    assert 'Math.round((averageQty - slowest.qty) / averageQty * 100)' in TEMPLATE
+    assert 'initialStyleOverviewSearch, slowestStepInfo,' in TEMPLATE
+
+
 def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
     """Flow 详情应按初版款号筛选，并在表格和卡片中显示该字段。"""
     assert 'const initialStyleFilter = ref(\'\');' in TEMPLATE

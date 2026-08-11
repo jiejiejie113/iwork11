@@ -858,7 +858,7 @@ class TestInitialStyleOverviewEndpoint:
                                 'initial_style_no': 'BU-1',
                             },
                             {
-                                'stepno': 2,
+                                'stepno': 70,
                                 'qty': 20,
                                 'workorder': 'WO-1',
                                 'initial_style_no': 'BU-1',
@@ -874,7 +874,7 @@ class TestInitialStyleOverviewEndpoint:
                     {
                         'reg_per_sys_id': 1002,
                         'steps': [{
-                            'stepno': 1,
+                            'stepno': 70,
                             'qty': 7,
                             'workorder': 'WO-S',
                             'initial_style_no': 'ST/特殊',
@@ -885,7 +885,7 @@ class TestInitialStyleOverviewEndpoint:
                     {
                         'reg_per_sys_id': 1001,
                         'steps': [{
-                            'stepno': 1,
+                            'stepno': 70,
                             'qty': 30,
                             'workorder': 'WO-2',
                             'initial_style_no': 'BU-1',
@@ -903,7 +903,7 @@ class TestInitialStyleOverviewEndpoint:
                     {
                         'reg_per_sys_id': 1004,
                         'steps': [{
-                            'stepno': 6,
+                            'stepno': 70,
                             'qty': 9,
                             'workorder': 'WO-Y',
                             'initial_style_no': '   ',
@@ -925,15 +925,20 @@ class TestInitialStyleOverviewEndpoint:
             '',
         ]
         style = response.data['items'][0]
-        assert style['total_qty'] == 100
+        assert style['total_qty'] == 50
         assert style['worker_count'] == 2
         assert style['workorder_count'] == 3
         assert style['flows'] == [
-            {'flow': 'SO5-L5B', 'qty': 70, 'worker_count': 2},
-            {'flow': 'SO3-L3A', 'qty': 30, 'worker_count': 1},
+            {'flow': 'SO5-L5B', 'qty': 30, 'worker_count': 2},
+            {'flow': 'SO3-L3A', 'qty': 20, 'worker_count': 1},
         ]
+        assert style['stepnos'] == {
+            1: {'qty': 10},
+            3: {'qty': 40},
+            70: {'qty': 50},
+        }
         assert response.data['items'][-1]['label'] == '未设置'
-        assert response.data['items'][-1]['total_qty'] == 14
+        assert response.data['items'][-1]['total_qty'] == 9
         assert response.data['source'] == 'redis_snapshot'
         read.assert_called_once()
 
@@ -949,7 +954,7 @@ class TestInitialStyleOverviewEndpoint:
             'SO3-L3A': [{
                 'reg_per_sys_id': 1001,
                 'steps': [{
-                    'stepno': 1,
+                    'stepno': 70,
                     'qty': 12,
                     'workorder': 'WO-1',
                     'initial_style_no': 'BU-1',

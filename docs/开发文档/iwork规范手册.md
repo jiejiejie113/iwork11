@@ -311,21 +311,27 @@ Flow 员工明细表提供“字段设置”面板，展开和收起视图分别
 依赖或 Redis 数据结构：
 
 1. `GET /api/dashboard/detail/initial-style-overview/?date=YYYY-MM-DD` 返回初版款号、
-   总产量、跨生产线去重员工数、本厂款号数及各生产线产量。卡片按初版款号自然顺序，
-   “未设置”固定最后；卡片内生产线按产量降序，图表按总产量降序显示产量与去重人数。
-2. `GET /api/dashboard/detail/initial-style/?initial_style_no=...&date=YYYY-MM-DD`
+   总产量、跨生产线去重员工数、本厂款号数、各生产线产量及全部工序汇总。卡片总件数、
+   分组件数和图表产量只累计工序 70，避免把同一件产品的多道工序重复相加；员工数与
+   本厂款号数仍按全部工序去重统计。卡片按初版款号自然顺序，“未设置”固定最后；卡片内
+   生产线按工序 70 产量降序，图表按总件数降序显示产量与去重人数。
+2. “按生产线”和“按初版款号”卡片都必须从完整 `stepnos` 汇总中显示最慢工序。最慢
+   工序是卡片内产量最低的已出现工序；低于平均百分比按
+   `(工序平均产量 - 最慢工序产量) / 工序平均产量 × 100%` 四舍五入为整数。并列最低时
+   按工序号升序取第一个；无工序时不显示，平均产量为 0 时显示 `0%`。
+3. `GET /api/dashboard/detail/initial-style/?initial_style_no=...&date=YYYY-MM-DD`
    返回该初版款号跨生产线的员工、工序和本厂款号明细。参数必须显式存在，空字符串表示
    “未设置”；每条工序必须保留 `flow`，同一员工跨生产线只计一人但产量完整求和。
-3. 今日接口只读 Redis 当前版本详情快照，历史接口只读本地成功快照；Web 请求不得远程
+4. 今日接口只读 Redis 当前版本详情快照，历史接口只读本地成功快照；Web 请求不得远程
    回源。今日页面随统一 SSE 快照通知静默刷新，历史日期不建立 EventSource。
-4. 初版款号详情只提供表格视图，不显示表格/卡片切换入口，也不得渲染员工卡片。表格
+5. 初版款号详情只提供表格视图，不显示表格/卡片切换入口，也不得渲染员工卡片。表格
    工具栏提供“全部分组”筛选、字段设置、今日/当日产量与累计产量切换；分组筛选必须
    同时影响工序栏、员工明细和汇总字段。
-5. 初版款号详情不提供整组目标编辑，但必须只读显示分组详情中已设置的个人目标和目标
+6. 初版款号详情不提供整组目标编辑，但必须只读显示分组详情中已设置的个人目标和目标
    达成率。后端必须先在完整 Flow 员工集合中沿用 `_distribute_group_target` 分配目标并
    计算达成率，再筛选当前初版款号；禁止按款号子集重新分配或重算。跨 Flow 的相同工序
    号按 `(Flow, StepNo)` 隔离，不能合并成同一目标单元格。
-6. 初版款号详情使用独立字段配置：展开默认为员工 ID、生产线、本厂款号、工序号、工序
+7. 初版款号详情使用独立字段配置：展开默认为员工 ID、生产线、本厂款号、工序号、工序
    描述、今日/当日产量、累计产量、员工产量、目标、目标达成率、标准工时、产值、总产值、
    员工效率；收起默认为员工 ID、生产线汇总、工序号汇总、员工产量、累计产量、目标、
    目标达成率、总产值、员工效率。
@@ -533,10 +539,11 @@ const workorderItems = computed(() => {
 
 | API 字段 | 前端变量 | 用途 |
 |----------|----------|------|
-| `flow_overview` | `flowCards` | Flow 概览卡片 |
+| `flow_overview` | `flowCards` | Flow 概览卡片；完整工序汇总用于计算最慢工序 |
 | `flow_overview.*.initial_styles` | `card.initial_styles` | 工序70口径的初版款号及件数；支持概览部分匹配搜索 |
-| `initial-style-overview.items` | `initialStyleCards` | 普通线初版款号卡片、总产量、去重人数和本厂款号数 |
-| `initial-style-overview.items[].flows` | `card.flows` | 初版款号在各生产线的产量与人数 |
+| `initial-style-overview.items` | `initialStyleCards` | 普通线初版款号卡片、工序70总件数、去重人数和本厂款号数 |
+| `initial-style-overview.items[].flows` | `card.flows` | 初版款号在各生产线的工序70件数与人数 |
+| `initial-style-overview.items[].stepnos` | `card.stepnos` | 初版款号完整工序汇总，用于计算最慢工序和低于平均百分比 |
 | `workorders.items` | `workorderList` | 工单汇总列表 |
 | `workorders.items[].initial_style_no` | `wo.initial_style_no` | 今日/当日生产列表初版款号 |
 | `employees` | `employees` | 员工明细（详情页） |
