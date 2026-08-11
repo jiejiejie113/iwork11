@@ -288,17 +288,19 @@
         <div v-if="groupMode === 'flow'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div v-for="card in filteredFlowCards" :key="card.flow"
                 @click="goDetail('flow', card.flow)"
-                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
+                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors flex flex-col">
                 <div class="flex justify-between items-start">
                     <div class="flex-1 min-w-0">
                         <h3 class="font-bold text-lg">
                             {[ card.flow ]}
                             <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
                         </h3>
-                        <div class="text-xs text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                        <p class="text-sm text-slate-400 mt-1">
+                            📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
+                        </p>
+                        <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
                             <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
-                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold"
-                                    style="border:1.5px solid #22d3ee;color:#67e8f9;background-color:rgba(34,211,238,0.1)">
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border border-cyan-400/80 text-cyan-300 bg-cyan-400/10">
                                     {[ style.initial_style_no || '未设置' ]}
                                 </span>
                                 <span>{[ dailyQtyLabel ]} {[ fmtNum(style.qty) ]}件</span>
@@ -313,16 +315,16 @@
                 <div v-if="card.hourly && card.hourly.length" style="height:60px;">
                     <canvas :id="'mini-chart-' + card.flow"></canvas>
                 </div>
-                <div v-if="card.target_total > 0" class="mt-2 text-xs">
-                    <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
-                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                        效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
-                    </span>
-                </div>
                 <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
                     <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
                     <span class="text-red-400 font-semibold">
                         （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
+                    </span>
+                </div>
+                <div v-if="card.target_total > 0" class="mt-2 text-xs">
+                    <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
+                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                        效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
                     </span>
                 </div>
             </div>
@@ -340,28 +342,36 @@
         <div v-if="groupMode === 'initial_style'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div v-for="card in filteredInitialStyleCards" :key="card.initial_style_no || '__unassigned__'"
                 @click="goDetail('initial_style', card.initial_style_no)"
-                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
+                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors flex flex-col">
                 <div class="flex justify-between items-start">
                     <div class="flex-1 min-w-0">
-                        <h3 class="font-bold text-lg text-cyan-300">{[ card.label ]}</h3>
+                        <h3 class="font-bold text-lg">
+                            {[ card.label ]}
+                            <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.worker_count || 0 ]}人</span>
+                        </h3>
                         <p class="text-sm text-slate-400 mt-1">
-                            👤 {[ card.worker_count ]}人 · 📦 {[ fmtNum(card.total_qty) ]}件 · {[ card.workorder_count ]}个本厂款号
+                            📦 {[ fmtNum(card.total_qty) ]}件 · {[ card.workorder_count ]}个本厂款号
                         </p>
-                        <div class="mt-2 flex flex-wrap gap-1.5">
+                        <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
                             <span v-for="flow in card.flows" :key="flow.flow"
-                                  class="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-700 text-xs text-slate-300">
-                                <span class="font-semibold text-blue-300">{[ flow.flow ]}</span>
-                                <span>{[ fmtNum(flow.qty) ]}件</span>
+                                  class="whitespace-nowrap inline-flex items-center gap-1.5">
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border border-cyan-400/80 text-cyan-300 bg-cyan-400/10">
+                                    {[ flow.flow ]}
+                                </span>
+                                <span>{[ dailyQtyLabel ]} {[ fmtNum(flow.qty) ]}件</span>
                             </span>
-                        </div>
-                        <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
-                            <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
-                            <span class="text-red-400 font-semibold">
-                                （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
-                            </span>
+                            <span v-if="!card.flows.length" class="text-slate-600">暂无生产线</span>
                         </div>
                     </div>
-                    <span class="text-slate-600 text-lg">→</span>
+                    <div class="text-right flex-shrink-0 ml-2">
+                        <span class="text-slate-600 text-lg">→</span>
+                    </div>
+                </div>
+                <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
+                    <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
+                    <span class="text-red-400 font-semibold">
+                        （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
+                    </span>
                 </div>
             </div>
             <div v-if="filteredInitialStyleCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
@@ -2881,6 +2891,29 @@ createApp({
             });
         }
 
+        function buildFlowOverviewCards(flowData) {
+            const cards = [];
+            for (const [name, info] of Object.entries(flowData)) {
+                const stepnos = info.stepnos || {};
+                const total_qty = Object.values(stepnos).reduce(
+                    (sum, step) => sum + (step.qty || 0),
+                    0,
+                );
+                cards.push({
+                    flow: name,
+                    stepnos,
+                    initial_styles: info.initial_styles || [],
+                    total_workers: info.total_workers || 0,
+                    total_qty,
+                    output_qty: stepnos['70'] ? (stepnos['70'].qty || 0) : 0,
+                    target_total: 0,
+                    efficiency: null,
+                    hourly: [],
+                });
+            }
+            return cards.sort((a, b) => naturalCompare(a.flow, b.flow));
+        }
+
         // API
         async function loadOverview() {
             showLoading();
@@ -2896,26 +2929,7 @@ createApp({
                     readResponse(woResp),
                 ]);
 
-                // 处理 Flow 卡片数据（全部工序）
-                const cards = [];
-                for (const [name, info] of Object.entries(flowData)) {
-                    const stepnos = info.stepnos || {};
-                    let total_qty = 0;
-                    for (const sd of Object.values(stepnos)) {
-                        total_qty += sd.qty || 0;
-                    }
-                    cards.push({
-                        flow: name,
-                        stepnos,
-                        initial_styles: info.initial_styles || [],
-                        total_workers: info.total_workers || 0,
-                        total_qty,
-                        target_total: 0,
-                        efficiency: null,
-                        hourly: [],
-                    });
-                }
-                flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
+                flowCards.value = buildFlowOverviewCards(flowData);
 
                 // 处理工单数据
                 workorderList.value = woData.items || [];
@@ -3182,21 +3196,7 @@ createApp({
                     || currentView.value !== 'overview'
                     || groupMode.value !== refreshGroupMode
                 ) return null;
-                const cards = [];
-                for (const [name, info] of Object.entries(flowData)) {
-                    const stepnos = info.stepnos || {};
-                    let total_qty = 0;
-                    for (const sd of Object.values(stepnos)) {
-                        total_qty += sd.qty || 0;
-                    }
-                    cards.push({
-                        flow: name, stepnos,
-                        initial_styles: info.initial_styles || [],
-                        total_workers: info.total_workers || 0,
-                        total_qty, target_total: 0, efficiency: null, hourly: [],
-                    });
-                }
-                flowCards.value = cards.sort((a, b) => naturalCompare(a.flow, b.flow));
+                flowCards.value = buildFlowOverviewCards(flowData);
                 workorderList.value = woData.items || [];
                 await nextTick();
                 renderMiniCharts();

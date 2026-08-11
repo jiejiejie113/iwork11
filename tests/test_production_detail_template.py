@@ -642,7 +642,7 @@ def test_overview_replaces_stepno_grouping_with_initial_style_cards():
     assert 'v-for="card in filteredInitialStyleCards"' in TEMPLATE
     assert "goDetail('initial_style', card.initial_style_no)" in TEMPLATE
     assert '{[ card.label ]}' in TEMPLATE
-    assert '{[ card.worker_count ]}人' in TEMPLATE
+    assert '{[ card.worker_count || 0 ]}人' in TEMPLATE
     assert '{[ fmtNum(card.total_qty) ]}件' in TEMPLATE
     assert '{[ card.workorder_count ]}个本厂款号' in TEMPLATE
     assert 'v-for="flow in card.flows"' in TEMPLATE
@@ -671,6 +671,56 @@ def test_overview_cards_show_slowest_step_against_step_average():
     assert 'const averageQty = totalQty / steps.length;' in TEMPLATE
     assert 'Math.round((averageQty - slowest.qty) / averageQty * 100)' in TEMPLATE
     assert 'initialStyleOverviewSearch, slowestStepInfo,' in TEMPLATE
+
+
+def test_flow_and_initial_style_cards_share_content_structure():
+    """生产线与初版款号卡片应使用一致的标题、汇总、分项和最慢工序结构。"""
+    flow_view = TEMPLATE.split('<!-- Flow 卡片 -->', 1)[1].split(
+        '<!-- 工序卡片 -->',
+        1,
+    )[0]
+    initial_style_view = TEMPLATE.split('<!-- 初版款号卡片', 1)[1].split(
+        '<!-- 产品模式',
+        1,
+    )[0]
+    common_classes = [
+        'transition-colors flex flex-col',
+        'class="font-bold text-lg"',
+        'class="text-sm text-slate-400 mt-1"',
+        'class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5"',
+        'border border-cyan-400/80 text-cyan-300 bg-cyan-400/10',
+    ]
+    for card_view in (flow_view, initial_style_view):
+        for class_text in common_classes:
+            assert class_text in card_view
+        assert '{[ dailyQtyLabel ]}' in card_view
+        assert '最慢工序：工序' in card_view
+
+    assert 'fmtNum(card.output_qty)' in flow_view
+    assert 'card.initial_styles.length' in flow_view
+    assert '个初版款号' in flow_view
+    assert 'fmtNum(card.total_qty)' in initial_style_view
+    assert 'card.workorder_count' in initial_style_view
+    assert '个本厂款号' in initial_style_view
+    assert 'card.target_total' in flow_view
+    assert 'card.target_total' not in initial_style_view
+    assert flow_view.index('slowestStepInfo(card)') < flow_view.index('card.target_total')
+
+
+def test_flow_card_builder_is_shared_by_initial_load_and_sse_refresh():
+    """生产线首次加载和SSE刷新应复用同一卡片构建口径。"""
+    assert 'function buildFlowOverviewCards(flowData)' in TEMPLATE
+    assert TEMPLATE.count(
+        'flowCards.value = buildFlowOverviewCards(flowData);',
+    ) == 2
+    builder = TEMPLATE.split('function buildFlowOverviewCards(flowData)', 1)[1].split(
+        '// API',
+        1,
+    )[0]
+    assert "output_qty: stepnos['70']" in builder
+    assert 'total_qty,' in builder
+    assert 'initial_styles: info.initial_styles || []' in builder
+    assert 'return cards.sort((a, b) => naturalCompare(a.flow, b.flow));' in builder
 
 
 def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
