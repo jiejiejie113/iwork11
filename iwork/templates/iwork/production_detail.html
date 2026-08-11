@@ -542,7 +542,7 @@
 
             <!-- 右侧：控件组 -->
             <div class="flex items-center gap-3 ml-auto flex-wrap">
-                <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                <div v-if="detailType !== 'initial_style'" class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
                     <button @click="detailLayout = 'table'"
                         :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                         class="px-3 py-1 rounded-md text-xs transition-colors">表格视图</button>
@@ -613,6 +613,11 @@
                         <option value="">全部初版款号</option>
                         <option v-for="style in initialStyleOptions" :key="style" :value="style">{[ style ]}</option>
                     </select>
+                    <select v-if="detailType === 'initial_style'" v-model="flowFilter"
+                            class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                        <option value="">全部分组</option>
+                        <option v-for="flow in flowOptions" :key="flow" :value="flow">{[ flow ]}</option>
+                    </select>
                     <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
                         <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>
                         <span v-if="selectedStep === null">员工汇总</span>
@@ -620,7 +625,7 @@
                     </h3>
                     </div>
                     <div class="flex items-center gap-3">
-                        <div v-if="detailType === 'flow'" class="relative" data-column-config>
+                        <div v-if="detailType === 'flow' || detailType === 'initial_style'" class="relative" data-column-config>
                             <button @click="detailColumnPanelOpen = !detailColumnPanelOpen"
                                     class="text-xs text-slate-300 hover:text-white px-2 py-1 rounded border border-slate-600 hover:border-slate-400 transition-colors">
                                 字段设置 · {[ visibleDetailColumns.length ]}/{[ currentDetailColumns.length ]}
@@ -661,7 +666,7 @@
                                 </transition-group>
                             </div>
                         </div>
-                        <button v-if="detailType === 'flow'"
+                        <button v-if="detailType === 'flow' || detailType === 'initial_style'"
                                 @click="stepQuantityMode = stepQuantityMode === 'today' ? 'cumulative' : 'today'"
                                 :title="stepQuantityMode === 'today' ? '切换为累计产量' : '切换为' + dailyQtyLabel"
                                 class="text-xs text-cyan-300 hover:text-cyan-100 px-2 py-1 rounded border border-cyan-700 hover:border-cyan-500 transition-colors">
@@ -720,9 +725,9 @@
                                             <template v-else-if="column.key === 'step_qty'">{[ fmtNum(row._step.qty) ]}</template>
                                             <template v-else-if="column.key === 'cumulative_qty'">{[ fmtNum(row._step.cumulative_qty) ]}</template>
                                             <template v-else-if="column.key === 'employee_qty'">{[ fmtNum(row._total_qty) ]}</template>
-                                            <template v-else-if="column.key === 'target'">{[ getStepTarget(row.emp, row._step.stepno) > 0 ? fmtNum(getStepTarget(row.emp, row._step.stepno)) : '--' ]}</template>
+                                            <template v-else-if="column.key === 'target'">{[ getRowStepTarget(row) > 0 ? fmtNum(getRowStepTarget(row)) : '--' ]}</template>
                                             <template v-else-if="column.key === 'target_rate'">
-                                                <span v-if="getStepTargetRate(row.emp, row._step.stepno) !== null" :class="getStepTargetRate(row.emp, row._step.stepno) >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ getStepTargetRate(row.emp, row._step.stepno).toFixed(1) ]}%</span>
+                                                <span v-if="getRowStepTargetRate(row) !== null" :class="getRowStepTargetRate(row) >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ getRowStepTargetRate(row).toFixed(1) ]}%</span>
                                                 <span v-else class="text-slate-500">--</span>
                                             </template>
                                             <template v-else-if="column.key === 'step_time'">{[ fmtStepTime(row._step.step_time) ]}</template>
@@ -777,7 +782,7 @@
         </div>
 
         <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
-        <div v-if="detailLayout === 'cards'" class="flex-1 overflow-y-auto">
+        <div v-if="detailType !== 'initial_style' && detailLayout === 'cards'" class="flex-1 overflow-y-auto">
         <TransitionGroup name="flip" tag="div" class="grid grid-cols-2 gap-3">
             <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" class="card-wrapper">
                 <!-- 占位符：原位置显示虚线框 -->
@@ -877,6 +882,7 @@ createApp({
         const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
         const tableSearch = ref('');
         const initialStyleFilter = ref('');  // '' = 全部初版款号
+        const flowFilter = ref('');  // '' = 全部分组
         const selectedStep = ref(null);  // null = 全部工序
         const stepQuantityMode = ref('today');  // 'today' = 今日产量，'cumulative' = 累计产量
         const collapsed = ref(false);   // false = 展开，true = 收起
@@ -940,6 +946,8 @@ createApp({
                 { key: 'step_qty', label: '工序产量', width: 130, align: 'right', sortKey: 'qty' },
                 { key: 'cumulative_qty', label: '累计产量', width: 120, align: 'right' },
                 { key: 'employee_qty', label: '员工产量', width: 130, align: 'right' },
+                { key: 'target', label: '目标', width: 100 },
+                { key: 'target_rate', label: '目标达成率', width: 120, align: 'right' },
                 { key: 'step_time', label: '标准工时', width: 110, align: 'right' },
                 { key: 'output_value', label: '产值', width: 100, align: 'right' },
                 { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
@@ -951,6 +959,8 @@ createApp({
                 { key: 'collapsed_stepnos', label: '工序号', width: 160 },
                 { key: 'employee_qty', label: '员工产量', width: 130, align: 'right', sortKey: 'qty' },
                 { key: 'employee_cumulative_qty', label: '累计产量', width: 120, align: 'right' },
+                { key: 'displayed_target', label: '目标', width: 100 },
+                { key: 'displayed_target_rate', label: '目标达成率', width: 120, align: 'right' },
                 { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
                 { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
             ],
@@ -1037,6 +1047,7 @@ createApp({
         const groupTarget = ref(null);
         const currentGroupTarget = ref(null);
         const workHours = ref(null);
+        const effectiveWorkMinutes = ref(null);
         const groupTargetDraft = ref(0);
         const workHoursDraft = ref(10);
         const sortKey = ref('stepno');
@@ -1986,14 +1997,39 @@ createApp({
             return [...set].sort((a, b) => naturalCompare(a, b));
         });
 
-        // 按初版款号筛选员工列表
+        // 初版款号详情的分组筛选下拉选项
+        const flowOptions = computed(() => {
+            const set = new Set();
+            employees.value.forEach(emp => {
+                (emp.steps || []).forEach(step => {
+                    if (step.flow) set.add(step.flow);
+                });
+            });
+            return [...set].sort((a, b) => naturalCompare(a, b));
+        });
+
+        // 按当前详情类型筛选员工步骤
         function filterByInitialStyle(emps) {
-            if (!initialStyleFilter.value) return emps;
+            const selectedInitialStyle = detailType.value === 'flow'
+                ? initialStyleFilter.value
+                : '';
+            const selectedFlow = detailType.value === 'initial_style'
+                ? flowFilter.value
+                : '';
+            if (!selectedInitialStyle && !selectedFlow) return emps;
             return emps.flatMap(emp => {
                 const steps = (emp.steps || []).filter(step => (
-                    step.initial_style_no === initialStyleFilter.value
+                    (!selectedInitialStyle || step.initial_style_no === selectedInitialStyle)
+                    && (!selectedFlow || step.flow === flowFilter.value)
                 ));
                 if (!steps.length) return [];
+                const outputComplete = steps.every(step => step.output_value != null);
+                const outputValue = outputComplete
+                    ? steps.reduce(
+                        (sum, step) => sum + (step.output_value || 0),
+                        0,
+                    )
+                    : null;
                 return [{
                     ...emp,
                     steps,
@@ -2005,6 +2041,11 @@ createApp({
                     workorders: [...new Set(
                         steps.map(step => step.workorder).filter(Boolean),
                     )],
+                    output_value: outputValue,
+                    employee_efficiency: outputValue !== null
+                        && effectiveWorkMinutes.value > 0
+                        ? outputValue / effectiveWorkMinutes.value * 100
+                        : null,
                 }];
             });
         }
@@ -2037,8 +2078,35 @@ createApp({
                 : (emp.efficiency ?? null);
         }
 
+        // 展开行目标：初版款号沿用工序上已按完整分组计算的只读目标
+        function getRowStepTarget(row) {
+            if (detailType.value === 'initial_style') {
+                return row._step.target || 0;
+            }
+            return getStepTarget(row.emp, row._step.stepno);
+        }
+
+        // 展开行达标率：初版款号不得按当前款号子集重新计算
+        function getRowStepTargetRate(row) {
+            if (detailType.value === 'initial_style') {
+                return row._step.target_rate ?? null;
+            }
+            return getStepTargetRate(row.emp, row._step.stepno);
+        }
+
+        // 初版款号跨分组时，目标合并键必须同时包含分组和工序号
+        function getTargetGroupKey(step) {
+            if (detailType.value === 'initial_style') {
+                return `${step.flow || ''}::${step.stepno}`;
+            }
+            return String(step.stepno);
+        }
+
         // 侧边栏选中工序时展示该工序目标，否则展示员工全部工序目标合计
         function getDisplayedTarget(emp) {
+            if (detailType.value === 'initial_style') {
+                return emp._displayed_target || 0;
+            }
             return selectedStep.value === null
                 ? (emp.target || 0)
                 : getStepTarget(emp, selectedStep.value);
@@ -2046,6 +2114,9 @@ createApp({
 
         // 侧边栏选中工序时展示该工序达成率，否则展示员工全部工序达成率
         function getDisplayedTargetRate(emp) {
+            if (detailType.value === 'initial_style') {
+                return emp._displayed_target_rate ?? null;
+            }
             return selectedStep.value === null
                 ? (emp.efficiency ?? null)
                 : getStepTargetRate(emp, selectedStep.value);
@@ -2163,12 +2234,12 @@ createApp({
 
                 const stepCounts = new Map();
                 sortedSteps.forEach(step => {
-                    const stepKey = String(step.stepno);
+                    const stepKey = getTargetGroupKey(step);
                     stepCounts.set(stepKey, (stepCounts.get(stepKey) || 0) + 1);
                 });
 
                 sortedSteps.forEach((step, stepIndex) => {
-                    const stepKey = String(step.stepno);
+                    const stepKey = getTargetGroupKey(step);
                     const previousStep = sortedSteps[stepIndex - 1];
                     const previousWorkorder = previousStep
                         ? (previousStep.workorder || '无工单')
@@ -2190,7 +2261,7 @@ createApp({
                         _wo_name: workorder,
                         _woFirst: workorderFirst,
                         _woRowspan: workorderRowspan,
-                        _targetFirst: !previousStep || String(previousStep.stepno) !== stepKey,
+                        _targetFirst: !previousStep || getTargetGroupKey(previousStep) !== stepKey,
                         _targetRowspan: stepCounts.get(stepKey),
                         _empFirst: stepIndex === 0,
                         _empRowspan: sortedSteps.length,
@@ -2219,6 +2290,7 @@ createApp({
                         flows: new Set(),
                         initialStyles: new Set(),
                         stepnos: new Set(),
+                        targetGroups: new Map(),
                     });
                 }
                 const summary = map.get(eid);
@@ -2231,18 +2303,49 @@ createApp({
                 if (row._step.stepno !== null && row._step.stepno !== undefined && row._step.stepno !== '--') {
                     summary.stepnos.add(row._step.stepno);
                 }
+                const targetGroupKey = getTargetGroupKey(row._step);
+                if (!summary.targetGroups.has(targetGroupKey)) {
+                    summary.targetGroups.set(targetGroupKey, {
+                        target: getRowStepTarget(row),
+                        targetRate: getRowStepTargetRate(row),
+                    });
+                }
             });
-            const emps = [...map.values()].map(summary => ({
-                ...summary.employee,
-                _collapsed_flows: [...summary.flows].sort(naturalCompare),
-                _collapsed_initial_styles: [...summary.initialStyles].sort(naturalCompare),
-                _collapsed_stepnos: [...summary.stepnos].sort((a, b) => {
-                    const numericDifference = Number(a) - Number(b);
-                    return Number.isNaN(numericDifference)
-                        ? naturalCompare(String(a), String(b))
-                        : numericDifference;
-                }),
-            }));
+            const emps = [...map.values()].map(summary => {
+                const targetGroups = [...summary.targetGroups.values()].filter(
+                    group => group.target > 0,
+                );
+                const displayedTarget = targetGroups.reduce(
+                    (sum, group) => sum + group.target,
+                    0,
+                );
+                const targetRateComplete = targetGroups.every(
+                    group => group.targetRate !== null,
+                );
+                const displayedActual = targetGroups.reduce(
+                    (sum, group) => sum + (
+                        group.targetRate === null
+                            ? 0
+                            : group.target * group.targetRate / 100
+                    ),
+                    0,
+                );
+                return {
+                    ...summary.employee,
+                    _collapsed_flows: [...summary.flows].sort(naturalCompare),
+                    _collapsed_initial_styles: [...summary.initialStyles].sort(naturalCompare),
+                    _collapsed_stepnos: [...summary.stepnos].sort((a, b) => {
+                        const numericDifference = Number(a) - Number(b);
+                        return Number.isNaN(numericDifference)
+                            ? naturalCompare(String(a), String(b))
+                            : numericDifference;
+                    }),
+                    _displayed_target: displayedTarget,
+                    _displayed_target_rate: displayedTarget > 0 && targetRateComplete
+                        ? displayedActual / displayedTarget * 100
+                        : null,
+                };
+            });
             const key = sortKey.value;
             const asc = sortAsc.value;
             return emps.sort((a, b) => {
@@ -2881,7 +2984,9 @@ createApp({
             showLoading();
             detailType.value = type;
             detailKey.value = key;
+            if (type === 'initial_style') detailLayout.value = 'table';
             initialStyleFilter.value = '';
+            flowFilter.value = '';
             selectedStep.value = null;
             try {
                 let resp;
@@ -2900,6 +3005,7 @@ createApp({
                 groupTarget.value = type === 'flow' ? data.group_target : null;
                 currentGroupTarget.value = type === 'flow' ? data.current_group_target : null;
                 workHours.value = type === 'flow' ? data.work_hours : null;
+                effectiveWorkMinutes.value = data.work_minutes ?? null;
                 groupTargetDraft.value = groupTarget.value || 0;
                 workHoursDraft.value = workHours.value || 10;
                 const responseTargets = {};
@@ -2950,6 +3056,7 @@ createApp({
                 groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
                 currentGroupTarget.value = detailType.value === 'flow' ? data.current_group_target : null;
                 workHours.value = detailType.value === 'flow' ? data.work_hours : null;
+                effectiveWorkMinutes.value = data.work_minutes ?? null;
                 if (!isEditing.value) groupTargetDraft.value = groupTarget.value || 0;
                 if (!isEditing.value) workHoursDraft.value = workHours.value || 10;
                 const responseTargets = {};
@@ -3377,7 +3484,8 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
-            tableSearch, initialStyleFilter, initialStyleOptions, selectedStep, stepQuantityMode, collapsed,
+            tableSearch, initialStyleFilter, initialStyleOptions, flowFilter, flowOptions,
+            selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
             visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
@@ -3396,7 +3504,8 @@ createApp({
             stepSummary, stepHeatRange, getHeatColor,
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
             filterByInitialStyle, getWorkorderItems,
-            getStepTarget, getStepTargetRate, getDisplayedTarget, getDisplayedTargetRate,
+            getStepTarget, getStepTargetRate, getRowStepTarget, getRowStepTargetRate,
+            getDisplayedTarget, getDisplayedTargetRate,
             isEditing, groupTarget, currentGroupTarget, workHours,
             groupTargetDraft, workHoursDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,

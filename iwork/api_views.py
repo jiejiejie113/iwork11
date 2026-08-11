@@ -882,6 +882,86 @@ def _with_employee_efficiency(employees, target_date):
     return work_minutes, enriched
 
 
+def _prepare_flow_employees_for_detail(
+    source_employees,
+    target_date,
+    flow_name,
+    work_minutes,
+):
+    """复制分组员工并注入与分组详情一致的目标和效率。
+
+    Args:
+        source_employees (list[dict]): 完整分组员工及工序快照。
+        target_date (date): 目标业务日期。
+        flow_name (str): 生产分组名称。
+        work_minutes (int | None): 当前有效工作分钟。
+
+    Returns:
+        tuple[list[dict], dict]: 员工副本及该分组的只读目标摘要。
+    """
+    employees = []
+    for source_employee in source_employees:
+        employee = dict(source_employee)
+        employee['steps'] = [
+            dict(step) for step in source_employee.get('steps', [])
+        ]
+        employee['employee_efficiency'] = calculate_employee_efficiency(
+            employee.get('output_value'),
+            work_minutes,
+        )
+        employees.append(employee)
+
+    group_target = _get_group_target_with_fallback(target_date, flow_name)
+    planned_work_minutes = _get_group_work_minutes_with_fallback(
+        target_date,
+        flow_name,
+    )
+    step_targets = {}
+    current_group_target = None
+    if group_target is not None:
+        elapsed_work_minutes = work_minutes
+        if target_date == get_business_date() and elapsed_work_minutes is None:
+            elapsed_work_minutes = 0
+        step_targets, current_group_target = _distribute_group_target(
+            employees,
+            group_target,
+            planned_work_minutes=planned_work_minutes,
+            elapsed_work_minutes=elapsed_work_minutes,
+        )
+        for employee in employees:
+            employee['wo_targets'] = {}
+    else:
+        targets_dict = _get_targets_with_fallback(target_date)
+        wo_targets_dict = _get_wo_targets_with_fallback(target_date)
+        for employee in employees:
+            employee_id = str(employee['reg_per_sys_id'])
+            employee['target'] = int(targets_dict.get(employee_id, 0))
+            employee['target_rate'] = (
+                employee['total_qty'] / employee['target'] * 100
+                if employee['target'] > 0
+                else None
+            )
+            employee['step_targets'] = {}
+            employee['wo_targets'] = {
+                key.split('@')[1]: value
+                for key, value in wo_targets_dict.items()
+                if key.startswith(employee_id + '@')
+            }
+
+    target_summary = {
+        'flow': flow_name,
+        'group_target': group_target,
+        'current_group_target': current_group_target,
+        'work_hours': (
+            planned_work_minutes / 60
+            if planned_work_minutes is not None
+            else None
+        ),
+        'step_targets': step_targets,
+    }
+    return employees, target_summary
+
+
 def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=None):
     """
     获取指定 Flow 的完整详情数据
@@ -903,52 +983,15 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         employees_data = detail_payload.get('flow_employees', {})
         hourly_data = detail_payload.get('flow_hourly', {})
 
-    employees = []
-    for source_employee in employees_data.get(flow_name, []):
-        employee = dict(source_employee)
-        employee['steps'] = [dict(step) for step in source_employee.get('steps', [])]
-        employees.append(employee)
-    total_qty = sum(e['total_qty'] for e in employees)
-    cumulative_qty = sum(int(e.get('cumulative_qty') or 0) for e in employees)
-
-    work_minutes, employees = _with_employee_efficiency(employees, target_date)
-    group_target = _get_group_target_with_fallback(target_date, flow_name)
-    planned_work_minutes = _get_group_work_minutes_with_fallback(
+    work_minutes = get_effective_work_minutes(target_date)
+    employees, target_summary = _prepare_flow_employees_for_detail(
+        employees_data.get(flow_name, []),
         target_date,
         flow_name,
+        work_minutes,
     )
-    step_targets = {}
-    current_group_target = None
-    if group_target is not None:
-        elapsed_work_minutes = work_minutes
-        if target_date == get_business_date() and elapsed_work_minutes is None:
-            elapsed_work_minutes = 0
-        step_targets, current_group_target = _distribute_group_target(
-            employees,
-            group_target,
-            planned_work_minutes=planned_work_minutes,
-            elapsed_work_minutes=elapsed_work_minutes,
-        )
-        for employee in employees:
-            employee['wo_targets'] = {}
-    else:
-        # 未设置整组目标时继续读取旧员工目标，兼容已有历史数据。
-        targets_dict = _get_targets_with_fallback(target_date)
-        wo_targets_dict = _get_wo_targets_with_fallback(target_date)
-        for employee in employees:
-            employee_id = str(employee['reg_per_sys_id'])
-            employee['target'] = int(targets_dict.get(employee_id, 0))
-            employee['target_rate'] = (
-                employee['total_qty'] / employee['target'] * 100
-                if employee['target'] > 0
-                else None
-            )
-            employee['step_targets'] = {}
-            employee['wo_targets'] = {
-                key.split('@')[1]: value
-                for key, value in wo_targets_dict.items()
-                if key.startswith(employee_id + '@')
-            }
+    total_qty = sum(e['total_qty'] for e in employees)
+    cumulative_qty = sum(int(e.get('cumulative_qty') or 0) for e in employees)
 
     result = {
         'flow': flow_name,
@@ -959,14 +1002,10 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         'work_minutes': work_minutes,
         'hourly_trend': hourly_data.get(flow_name, []),
         'employees': employees,
-        'group_target': group_target,
-        'current_group_target': current_group_target,
-        'work_hours': (
-            planned_work_minutes / 60
-            if planned_work_minutes is not None
-            else None
-        ),
-        'step_targets': step_targets,
+        'group_target': target_summary['group_target'],
+        'current_group_target': target_summary['current_group_target'],
+        'work_hours': target_summary['work_hours'],
+        'step_targets': target_summary['step_targets'],
     }
     if mode == 'local':
         state = _snapshot_state(target_date)
@@ -1138,23 +1177,54 @@ def initial_style_detail(request):
             return _snapshot_not_found_response()
 
         if mode == 'local':
-            result = _aggregate_initial_style_detail(
-                local_get_batch_flow_employees(target_date),
-                initial_style_no,
-            )
+            flow_employees = local_get_batch_flow_employees(target_date)
             snapshot_result = None
         else:
             snapshot_result = READ_MODEL.details(target_date)
-            result = _aggregate_initial_style_detail(
-                snapshot_result.data.get('flow_employees', {}),
-                initial_style_no,
+            flow_employees = snapshot_result.data.get('flow_employees', {})
+
+        work_minutes = get_effective_work_minutes(target_date)
+        targeted_flow_employees = {}
+        flow_target_summaries = {}
+        for flow_name, source_employees in flow_employees.items():
+            contains_initial_style = any(
+                str(step.get('initial_style_no') or '').strip() == initial_style_no
+                for employee in source_employees
+                for step in employee.get('steps', [])
+            )
+            if not contains_initial_style:
+                continue
+            employees, target_summary = _prepare_flow_employees_for_detail(
+                source_employees,
+                target_date,
+                flow_name,
+                work_minutes,
+            )
+            targeted_flow_employees[flow_name] = employees
+            flow_target_summaries[flow_name] = target_summary
+
+        result = _aggregate_initial_style_detail(
+            targeted_flow_employees,
+            initial_style_no,
+        )
+        for employee in result['employees']:
+            employee['employee_efficiency'] = calculate_employee_efficiency(
+                employee.get('output_value'),
+                work_minutes,
             )
 
-        work_minutes, result['employees'] = _with_employee_efficiency(
-            result['employees'],
-            target_date,
-        )
         result['work_minutes'] = work_minutes
+        result['flow_targets'] = [
+            {
+                'flow': flow_name,
+                'group_target': flow_target_summaries[flow_name]['group_target'],
+                'current_group_target': flow_target_summaries[flow_name][
+                    'current_group_target'
+                ],
+                'work_hours': flow_target_summaries[flow_name]['work_hours'],
+            }
+            for flow_name in result['flows']
+        ]
         result['date'] = target_date.isoformat()
         result['source'] = 'local_snapshot' if mode == 'local' else 'redis_snapshot'
         if mode == 'local':

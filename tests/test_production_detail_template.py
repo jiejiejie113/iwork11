@@ -497,7 +497,10 @@ def test_step_sidebar_can_switch_between_today_and_cumulative_quantity():
         '@click="stepQuantityMode = stepQuantityMode === \'today\''
     )
     toolbar = TEMPLATE[button_start - 200:button_start + 1000]
-    assert 'v-if="detailType === \'flow\'"' in toolbar
+    assert (
+        'v-if="detailType === \'flow\' || detailType === \'initial_style\'"'
+        in toolbar
+    )
     assert "@click=\"stepQuantityMode = stepQuantityMode === 'today'" in toolbar
     assert "stepQuantityMode === 'today' ? dailyQtyLabel : '累计产量'" in toolbar
     assert toolbar.index('stepQuantityMode') < toolbar.index('collapsed = !collapsed')
@@ -674,6 +677,8 @@ def test_initial_style_detail_has_dedicated_flow_columns_and_data_loading():
         'step_qty',
         'cumulative_qty',
         'employee_qty',
+        'target',
+        'target_rate',
         'step_time',
         'output_value',
         'total_output_value',
@@ -695,20 +700,50 @@ def test_initial_style_detail_has_dedicated_flow_columns_and_data_loading():
     )
     assert "initial_style_expanded: detailColumnPreferences.initial_style_expanded" in TEMPLATE
     assert "initial_style_collapsed: detailColumnPreferences.initial_style_collapsed" in TEMPLATE
-
-
-def test_initial_style_card_detail_shows_flow_without_target_status():
-    """初版款号卡片详情应标注生产线，并仅在生产线详情显示目标状态。"""
-    card_view = TEMPLATE.split(
-        '<!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->',
+    collapsed_columns = TEMPLATE.split(
+        'initial_style_collapsed: [',
         1,
-    )[1].split('</TransitionGroup>', 1)[0]
+    )[1].split('],', 1)[0]
+    assert "key: 'displayed_target'" in collapsed_columns
+    assert "key: 'displayed_target_rate'" in collapsed_columns
+    assert "function getRowStepTarget(row)" in TEMPLATE
+    assert "function getRowStepTargetRate(row)" in TEMPLATE
+    assert "function getTargetGroupKey(step)" in TEMPLATE
+    assert "`${step.flow || ''}::${step.stepno}`" in TEMPLATE
 
-    assert card_view.count(
-        '<span v-if="detailType === \'initial_style\'" class="text-blue-300 ml-1">'
+
+def test_initial_style_detail_is_table_only():
+    """初版款号详情应强制使用表格，且不呈现卡片视图入口或内容。"""
+    layout_controls = TEMPLATE.split('<!-- 右侧：控件组 -->', 1)[1].split(
+        '<input v-model="tableSearch"',
+        1,
+    )[0]
+    load_detail = TEMPLATE.split('async function loadDetail(type, key)', 1)[1].split(
+        'async function refreshDetailSilently()',
+        1,
+    )[0]
+
+    assert '<div v-if="detailType !== \'initial_style\'"' in layout_controls
+    assert 'v-if="detailType !== \'initial_style\' && detailLayout === \'cards\'"' in TEMPLATE
+    assert "if (type === 'initial_style') detailLayout.value = 'table';" in load_detail
+
+
+def test_initial_style_detail_reuses_table_controls_with_flow_filter():
+    """初版款号表格应提供分组筛选、字段设置和今日/累计产量切换。"""
+    table_toolbar = TEMPLATE.split('<!-- 右侧：员工明细表 -->', 1)[1].split(
+        '<div ref="detailTableScrollRef"',
+        1,
+    )[0]
+
+    assert 'const flowFilter = ref(\'\');' in TEMPLATE
+    assert 'const flowOptions = computed(() =>' in TEMPLATE
+    assert 'v-if="detailType === \'initial_style\'" v-model="flowFilter"' in table_toolbar
+    assert '<option value="">全部分组</option>' in table_toolbar
+    assert 'v-for="flow in flowOptions"' in table_toolbar
+    assert table_toolbar.count(
+        "detailType === 'flow' || detailType === 'initial_style'"
     ) == 2
-    assert card_view.count('<template v-if="detailType === \'flow\'">') == 2
-    assert card_view.count('未设目标') == 2
+    assert 'step.flow === flowFilter.value' in TEMPLATE
 
 
 def test_initial_style_views_join_snapshot_sse_refresh_flow():

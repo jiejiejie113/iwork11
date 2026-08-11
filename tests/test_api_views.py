@@ -1058,6 +1058,74 @@ class TestInitialStyleDetailEndpoint:
         assert response.data['source'] == 'redis_snapshot'
         read.assert_called_once()
 
+    @patch('iwork.api_views._get_group_work_minutes_with_fallback', return_value=600)
+    @patch('iwork.api_views._get_group_target_with_fallback', return_value=1000)
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=300)
+    def test_reuses_full_flow_target_allocation_before_filtering_style(
+        self,
+        _mock_minutes,
+        _mock_group_target,
+        _mock_group_work_minutes,
+    ):
+        """初版款号目标与达成率应沿用完整分组口径，而非按款号子集重算。"""
+        from iwork.api_views import initial_style_detail
+
+        bundle = {
+            'flow_employees': {
+                'SO3-L3A': [
+                    {
+                        'reg_per_sys_id': 1001,
+                        'total_qty': 100,
+                        'steps': [
+                            {
+                                'stepno': 1,
+                                'qty': 40,
+                                'workorder': 'WO-STYLE',
+                                'initial_style_no': '30405',
+                                'output_value': 40.0,
+                            },
+                            {
+                                'stepno': 1,
+                                'qty': 60,
+                                'workorder': 'WO-OTHER',
+                                'initial_style_no': 'OTHER',
+                                'output_value': 60.0,
+                            },
+                        ],
+                    },
+                    {
+                        'reg_per_sys_id': 1002,
+                        'total_qty': 20,
+                        'steps': [{
+                            'stepno': 1,
+                            'qty': 20,
+                            'workorder': 'WO-OTHER-2',
+                            'initial_style_no': 'OTHER',
+                            'output_value': 20.0,
+                        }],
+                    },
+                ],
+            },
+        }
+        request = APIRequestFactory().get('/', {'initial_style_no': '30405'})
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ):
+            response = initial_style_detail(request)
+
+        assert response.status_code == 200
+        assert response.data['total_qty'] == 40
+        step = response.data['employees'][0]['steps'][0]
+        assert step['target'] == 250
+        assert step['target_rate'] == pytest.approx(40.0)
+        assert response.data['flow_targets'] == [{
+            'flow': 'SO3-L3A',
+            'group_target': 1000,
+            'current_group_target': 500,
+            'work_hours': 10.0,
+        }]
+
     def test_missing_style_parameter_returns_400(self):
         """缺少初版款号参数时应明确拒绝请求。"""
         from iwork.api_views import initial_style_detail

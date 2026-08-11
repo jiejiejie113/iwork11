@@ -318,11 +318,17 @@ Flow 员工明细表提供“字段设置”面板，展开和收起视图分别
    “未设置”；每条工序必须保留 `flow`，同一员工跨生产线只计一人但产量完整求和。
 3. 今日接口只读 Redis 当前版本详情快照，历史接口只读本地成功快照；Web 请求不得远程
    回源。今日页面随统一 SSE 快照通知静默刷新，历史日期不建立 EventSource。
-4. 初版款号详情不提供整组目标编辑，也不显示目标、目标达成率或“未设目标”。卡片中的
-   每条工序需标注生产线，避免跨 Flow 数据无法辨识。
-5. 初版款号详情使用独立字段配置：展开默认为员工 ID、生产线、本厂款号、工序号、工序
-   描述、今日/当日产量、累计产量、员工产量、标准工时、产值、总产值、员工效率；收起
-   默认为员工 ID、生产线汇总、工序号汇总、员工产量、累计产量、总产值、员工效率。
+4. 初版款号详情只提供表格视图，不显示表格/卡片切换入口，也不得渲染员工卡片。表格
+   工具栏提供“全部分组”筛选、字段设置、今日/当日产量与累计产量切换；分组筛选必须
+   同时影响工序栏、员工明细和汇总字段。
+5. 初版款号详情不提供整组目标编辑，但必须只读显示分组详情中已设置的个人目标和目标
+   达成率。后端必须先在完整 Flow 员工集合中沿用 `_distribute_group_target` 分配目标并
+   计算达成率，再筛选当前初版款号；禁止按款号子集重新分配或重算。跨 Flow 的相同工序
+   号按 `(Flow, StepNo)` 隔离，不能合并成同一目标单元格。
+6. 初版款号详情使用独立字段配置：展开默认为员工 ID、生产线、本厂款号、工序号、工序
+   描述、今日/当日产量、累计产量、员工产量、目标、目标达成率、标准工时、产值、总产值、
+   员工效率；收起默认为员工 ID、生产线汇总、工序号汇总、员工产量、累计产量、目标、
+   目标达成率、总产值、员工效率。
    配置继续存入 `production-detail-columns:v1` 的 `initial_style_expanded` 和
    `initial_style_collapsed`，不能覆盖生产线详情的 `expanded` / `collapsed` 配置。
 
@@ -539,6 +545,9 @@ const workorderItems = computed(() => {
 | `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
 | `employees[].steps[].initial_style_no` | `row._step.initial_style_no` | Flow 表格、卡片和初版款号筛选 |
 | `initial-style.employees[].steps[].flow` | `row._step.flow` | 初版款号详情每条工序的生产线归属 |
+| `initial-style.employees[].steps[].target` | `getRowStepTarget(row)` | 完整分组口径分配的只读个人目标 |
+| `initial-style.employees[].steps[].target_rate` | `getRowStepTargetRate(row)` | 完整分组实际产量计算的只读目标达成率 |
+| `initial-style.flow_targets` | 分组目标摘要 | 各分组整组目标、当前时段目标和计划工作时间 |
 | `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
 | `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
 | `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
@@ -703,7 +712,8 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
 - [ ] **明细表列设置**：展开/收起配置隔离、显隐、顺序、宽度、默认不换行和旧配置兼容同时覆盖测试
 - [ ] **初版款号**：`pywrkord` 批量只读、同事务水位、工序70卡片口径、今日/历史字段、
-  产品备选维度、普通线初版款号概览/详情、独立列配置和历史幂等回填同时覆盖测试
+  产品备选维度、普通线初版款号概览/详情、分组筛选、完整分组口径只读目标、独立列配置
+  和历史幂等回填同时覆盖测试
 - [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
   使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
   完成最终重建并验证容器状态和实际接口。用户明确要求暂不提交、暂不部署或仅修改代码时
