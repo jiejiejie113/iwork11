@@ -664,7 +664,7 @@ def test_overview_cards_show_slowest_step_against_step_average():
         assert 'slowestStepInfo(card)' in card_view
         assert '最慢工序：工序' in card_view
         assert 'text-red-400' in card_view
-        assert '件 ⬇️' in card_view
+        assert '件 ▼' in card_view
 
     assert 'function slowestStepInfo(card)' in TEMPLATE
     assert 'Object.entries(card.stepnos || {})' in TEMPLATE

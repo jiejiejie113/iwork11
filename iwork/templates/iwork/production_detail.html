@@ -322,7 +322,7 @@
                 <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
                     <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
                     <span class="text-red-400 font-semibold">
-                        （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ⬇️{[ slowestStepInfo(card).belowAveragePct ]}%）
+                        （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
                     </span>
                 </div>
             </div>
@@ -357,7 +357,7 @@
                         <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
                             <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
                             <span class="text-red-400 font-semibold">
-                                （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ⬇️{[ slowestStepInfo(card).belowAveragePct ]}%）
+                                （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
                             </span>
                         </div>
                     </div>
