@@ -110,6 +110,51 @@
         .detail-table-scroll::-webkit-scrollbar-thumb:hover {
             background: #64748b;
         }
+        .detail-data-table {
+            table-layout: fixed;
+            width: max-content;
+            min-width: 100%;
+        }
+        .detail-table-cell {
+            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .detail-column-resizer {
+            position: absolute;
+            top: 0;
+            right: -3px;
+            bottom: 0;
+            width: 8px;
+            cursor: col-resize;
+            touch-action: none;
+            z-index: 20;
+        }
+        .detail-column-resizer::after {
+            content: '';
+            position: absolute;
+            top: 25%;
+            bottom: 25%;
+            left: 3px;
+            width: 2px;
+            border-radius: 999px;
+            background: transparent;
+        }
+        .detail-column-resizer:hover::after,
+        .detail-column-resizer.is-resizing::after {
+            background: #60a5fa;
+        }
+        .detail-column-drag-handle {
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+        }
+        .detail-column-drag-handle:active { cursor: grabbing; }
+        .detail-column-list {
+            touch-action: pan-y;
+            overscroll-behavior: contain;
+        }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
         .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
         .tree-body { position: relative; }
@@ -524,7 +569,7 @@
             </div>
 
             <!-- 右侧：员工明细表 -->
-            <div class="flex-1 min-h-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+            <div class="flex-1 min-h-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-visible">
                 <div class="px-4 py-3 border-b border-slate-700 flex-shrink-0 flex items-center justify-between">
                     <div class="flex items-center gap-3">
                     <select v-if="detailType === 'flow'" v-model="initialStyleFilter"
@@ -539,6 +584,42 @@
                     </h3>
                     </div>
                     <div class="flex items-center gap-3">
+                        <div v-if="detailType === 'flow'" class="relative" data-column-config>
+                            <button @click="detailColumnPanelOpen = !detailColumnPanelOpen"
+                                    class="text-xs text-slate-300 hover:text-white px-2 py-1 rounded border border-slate-600 hover:border-slate-400 transition-colors">
+                                字段设置 · {[ visibleDetailColumns.length ]}/{[ currentDetailColumns.length ]}
+                            </button>
+                            <div v-if="detailColumnPanelOpen"
+                                 class="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-600 bg-slate-900 shadow-2xl p-3"
+                                 @pointerdown.stop>
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm font-semibold text-slate-200">显示列</span>
+                                    <button @click="resetDetailColumnPreferences"
+                                            class="text-xs text-blue-300 hover:text-blue-100">恢复默认</button>
+                                </div>
+                                <input v-model.trim="detailColumnSearch" type="search" placeholder="搜索字段"
+                                       class="w-full mb-2 bg-slate-800 border border-slate-600 rounded px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-blue-500">
+                                <label class="flex items-center gap-2 px-2 py-2 mb-1 rounded bg-slate-800 text-xs text-slate-300 cursor-pointer">
+                                    <input type="checkbox"
+                                           :checked="visibleDetailColumns.length === currentDetailColumns.length"
+                                           :indeterminate.prop="visibleDetailColumns.length > 0 && visibleDetailColumns.length < currentDetailColumns.length"
+                                           @change="toggleAllDetailColumns">
+                                    <span>全选 {[ visibleDetailColumns.length ]}/{[ currentDetailColumns.length ]}</span>
+                                </label>
+                                <div class="max-h-80 overflow-y-auto space-y-1 pr-1 detail-column-list">
+                                    <div v-for="column in filteredDetailColumns" :key="column.key"
+                                         :data-detail-column-key="column.key"
+                                         class="flex items-center gap-2 px-2 py-2 rounded border border-slate-700 bg-slate-800 hover:border-slate-500">
+                                        <input type="checkbox" :checked="column.visible"
+                                               @change="toggleDetailColumnVisibility(column.key)">
+                                        <span class="flex-1 text-xs text-slate-200">{[ detailColumnLabel(column) ]}</span>
+                                        <button class="detail-column-drag-handle text-slate-400 hover:text-white px-1"
+                                                title="拖拽调整顺序"
+                                                @pointerdown.stop="startDetailColumnDrag($event, column.key)">⋮⋮</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <button v-if="detailType === 'flow'"
                                 @click="stepQuantityMode = stepQuantityMode === 'today' ? 'cumulative' : 'today'"
                                 :title="stepQuantityMode === 'today' ? '切换为累计产量' : '切换为' + dailyQtyLabel"
@@ -557,136 +638,91 @@
                 <div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"
                      :class="{ 'is-dragging': detailTableIsDragging }"
                      @pointerdown="onDetailTablePointerDown">
-                    <table class="w-full text-sm" :class="collapsed ? 'min-w-[860px]' : 'min-w-[1380px]'">
+                    <table class="detail-data-table text-sm" :style="detailTableStyle">
                         <thead>
                             <tr class="text-left text-slate-400 border-b border-slate-700">
-                                <th class="px-3 py-3 cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
-                                    @click="sortBy('reg_per_sys_id')">
-                                    员工ID {[ sortKey === 'reg_per_sys_id' ? (sortAsc ? '▲' : '▼') : '' ]}
+                                <th v-for="column in visibleDetailColumns" :key="column.key"
+                                    class="detail-table-cell px-3 py-3 select-none sticky top-0 bg-slate-800 z-10 relative"
+                                    :class="detailHeaderClass(column)"
+                                    :style="detailColumnStyle(column)"
+                                    :title="detailColumnLabel(column)"
+                                    @click="column.sortKey && sortBy(column.sortKey)">
+                                    {[ detailColumnLabel(column) ]}
+                                    {[ column.sortKey && sortKey === column.sortKey ? (sortAsc ? '▲' : '▼') : '' ]}
+                                    <span data-column-resize
+                                          class="detail-column-resizer"
+                                          :class="{ 'is-resizing': resizingDetailColumnKey === column.key }"
+                                          @click.stop
+                                          @pointerdown.stop="startDetailColumnResize($event, column.key)"></span>
                                 </th>
-                                <template v-if="!collapsed">
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">初版款号</th>
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">本厂款号</th>
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序号</th>
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">工序描述</th>
-                                    <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
-                                        @click="sortBy('qty')">
-                                        工序{[ dailyQtyLabel ]} {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
-                                    </th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">累计产量</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">员工{[ dailyQtyLabel ]}</th>
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">目标达成率</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">标准工时</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">产值</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总产值</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">员工效率</th>
-                                </template>
-                                <template v-else>
-                                    <th class="px-3 py-3 text-right cursor-pointer select-none hover:text-white sticky top-0 bg-slate-800 z-10"
-                                        @click="sortBy('qty')">
-                                        {[ dailyQtyLabel ]} {[ sortKey === 'qty' ? (sortAsc ? '▲' : '▼') : '' ]}
-                                    </th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">累计产量</th>
-                                    <th class="px-3 py-3 sticky top-0 bg-slate-800 z-10">目标</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">目标达成率</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">总产值</th>
-                                    <th class="px-3 py-3 text-right sticky top-0 bg-slate-800 z-10">员工效率</th>
-                                </template>
                             </tr>
                         </thead>
                         <tbody>
                             <!-- 展开模式：员工 + 本厂款号 + 工序组合键明细 -->
-                            <template v-if="!collapsed">
+                            <template v-if="!collapsed && visibleDetailColumns.length > 0">
                                 <tr v-for="(row, idx) in employeeRows" :key="row.emp.reg_per_sys_id + '-' + row._wo_name + '-' + row._step.stepno + '-' + idx"
                                     class="border-b border-slate-700 hover:bg-slate-700/50"
                                     :class="{ 'border-t border-slate-600': row._empFirst && idx > 0 }">
-                                    <td v-if="row._empFirst" :rowspan="row._empRowspan"
-                                        class="py-2 px-3 text-slate-300 border-r border-slate-700">{[ row.emp.reg_per_sys_id ]}</td>
-                                    <td v-if="row._woFirst" :rowspan="row._woRowspan" class="py-2 px-3 text-xs text-cyan-300 border-r border-slate-700">
-                                        {[ row._step.initial_style_no || '--' ]}
-                                    </td>
-                                    <td v-if="row._woFirst" :rowspan="row._woRowspan" class="py-2 px-3 text-xs border-r border-slate-700">
-                                        <span class="text-blue-400">{[ row._wo_name ]}</span>
-                                    </td>
-                                    <td class="py-2 px-3 text-slate-300 tabular-nums">工序{[ row._step.stepno ]}</td>
-                                    <td class="py-2 px-3 text-slate-300 max-w-[180px] truncate" :title="row._step.description || '--'">
-                                        {[ row._step.description || '--' ]}
-                                    </td>
-                                    <td class="py-2 px-3 text-emerald-400 font-bold tabular-nums text-right">
-                                        {[ fmtNum(row._step.qty) ]}
-                                    </td>
-                                    <td class="py-2 px-3 text-amber-300 font-semibold tabular-nums text-right">
-                                        {[ fmtNum(row._step.cumulative_qty) ]}
-                                    </td>
-                                    <td v-if="row._empFirst" :rowspan="row._empRowspan"
-                                        class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right border-r border-slate-700">
-                                        {[ fmtNum(row._total_qty) ]}
-                                    </td>
-                                    <td v-if="row._targetFirst" :rowspan="row._targetRowspan"
-                                        class="py-2 px-3 border-r border-slate-700 tabular-nums align-middle">
-                                        {[ getStepTarget(row.emp, row._step.stepno) > 0 ? fmtNum(getStepTarget(row.emp, row._step.stepno)) : '--' ]}
-                                    </td>
-                                    <td v-if="row._targetFirst" :rowspan="row._targetRowspan"
-                                        class="py-2 px-3 text-right align-middle">
-                                        <span v-if="getStepTargetRate(row.emp, row._step.stepno) !== null" :class="getStepTargetRate(row.emp, row._step.stepno) >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ getStepTargetRate(row.emp, row._step.stepno).toFixed(1) ]}%
-                                        </span>
-                                        <span v-else class="text-slate-500">--</span>
-                                    </td>
-                                    <td class="py-2 px-3 text-slate-300 tabular-nums text-right">
-                                        {[ fmtStepTime(row._step.step_time) ]}
-                                    </td>
-                                    <td class="py-2 px-3 text-cyan-300 font-semibold tabular-nums text-right">
-                                        {[ fmtOutputValue(row._step.output_value) ]}
-                                    </td>
-                                    <td v-if="row._empFirst" :rowspan="row._empRowspan"
-                                        class="py-2 px-3 text-cyan-300 font-bold tabular-nums text-right border-r border-slate-700">
-                                        {[ fmtOutputValue(row.emp.output_value) ]}
-                                    </td>
-                                    <td v-if="row._empFirst" :rowspan="row._empRowspan" class="py-2 px-3 text-right">
-                                        <span v-if="row.emp.employee_efficiency !== null && row.emp.employee_efficiency !== undefined"
-                                              :class="row.emp.employee_efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ row.emp.employee_efficiency.toFixed(1) ]}%
-                                        </span>
-                                        <span v-else class="text-slate-500">--</span>
-                                    </td>
+                                    <template v-for="column in visibleDetailColumns" :key="column.key">
+                                        <td v-if="shouldRenderExpandedCell(column, row)"
+                                            :rowspan="detailExpandedCellRowspan(column, row)"
+                                            class="detail-table-cell"
+                                            :class="detailCellClass(column)"
+                                            :style="detailColumnStyle(column)"
+                                            :title="detailCellTitle(column, row)">
+                                            <template v-if="column.key === 'employee_id'">{[ row.emp.reg_per_sys_id ]}</template>
+                                            <template v-else-if="column.key === 'initial_style'">{[ row._step.initial_style_no || '--' ]}</template>
+                                            <template v-else-if="column.key === 'wrk_order'"><span class="text-blue-400">{[ row._wo_name ]}</span></template>
+                                            <template v-else-if="column.key === 'stepno'">工序{[ row._step.stepno ]}</template>
+                                            <template v-else-if="column.key === 'description'">{[ row._step.description || '--' ]}</template>
+                                            <template v-else-if="column.key === 'step_qty'">{[ fmtNum(row._step.qty) ]}</template>
+                                            <template v-else-if="column.key === 'cumulative_qty'">{[ fmtNum(row._step.cumulative_qty) ]}</template>
+                                            <template v-else-if="column.key === 'employee_qty'">{[ fmtNum(row._total_qty) ]}</template>
+                                            <template v-else-if="column.key === 'target'">{[ getStepTarget(row.emp, row._step.stepno) > 0 ? fmtNum(getStepTarget(row.emp, row._step.stepno)) : '--' ]}</template>
+                                            <template v-else-if="column.key === 'target_rate'">
+                                                <span v-if="getStepTargetRate(row.emp, row._step.stepno) !== null" :class="getStepTargetRate(row.emp, row._step.stepno) >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ getStepTargetRate(row.emp, row._step.stepno).toFixed(1) ]}%</span>
+                                                <span v-else class="text-slate-500">--</span>
+                                            </template>
+                                            <template v-else-if="column.key === 'step_time'">{[ fmtStepTime(row._step.step_time) ]}</template>
+                                            <template v-else-if="column.key === 'output_value'">{[ fmtOutputValue(row._step.output_value) ]}</template>
+                                            <template v-else-if="column.key === 'total_output_value'">{[ fmtOutputValue(row.emp.output_value) ]}</template>
+                                            <template v-else-if="column.key === 'employee_efficiency'">
+                                                <span v-if="row.emp.employee_efficiency !== null && row.emp.employee_efficiency !== undefined" :class="row.emp.employee_efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ row.emp.employee_efficiency.toFixed(1) ]}%</span>
+                                                <span v-else class="text-slate-500">--</span>
+                                            </template>
+                                        </td>
+                                    </template>
                                 </tr>
                             </template>
                             <!-- 收起模式：仅保留可聚合的员工级字段 -->
-                            <template v-else>
+                            <template v-else-if="visibleDetailColumns.length > 0">
                                 <tr v-for="emp in employeeRowsCollapsed" :key="emp.reg_per_sys_id"
                                     class="border-b border-slate-700 hover:bg-slate-700/50">
-                                    <td class="py-2 px-3 text-slate-300">{[ emp.reg_per_sys_id ]}</td>
-                                    <td class="py-2 px-3 text-slate-300 font-bold tabular-nums text-right">
-                                        {[ fmtNum(emp.qty) ]}
-                                    </td>
-                                    <td class="py-2 px-3 text-amber-300 font-semibold tabular-nums text-right">
-                                        {[ fmtNum(emp.cumulative_qty) ]}
-                                    </td>
-                                    <td class="py-2 px-3">
-                                        <span class="tabular-nums">{[ getDisplayedTarget(emp) > 0 ? fmtNum(getDisplayedTarget(emp)) : '--' ]}</span>
-                                    </td>
-                                    <td class="py-2 px-3 text-right">
-                                        <span v-if="getDisplayedTargetRate(emp) !== null" :class="getDisplayedTargetRate(emp) >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ getDisplayedTargetRate(emp).toFixed(1) ]}%
-                                        </span>
-                                        <span v-else class="text-slate-500">--</span>
-                                    </td>
-                                    <td class="py-2 px-3 text-cyan-300 font-bold tabular-nums text-right">
-                                        {[ fmtOutputValue(emp.output_value) ]}
-                                    </td>
-                                    <td class="py-2 px-3 text-right">
-                                        <span v-if="emp.employee_efficiency !== null && emp.employee_efficiency !== undefined"
-                                              :class="emp.employee_efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                                            {[ emp.employee_efficiency.toFixed(1) ]}%
-                                        </span>
-                                        <span v-else class="text-slate-500">--</span>
+                                    <td v-for="column in visibleDetailColumns" :key="column.key"
+                                        class="detail-table-cell"
+                                        :class="detailCellClass(column)"
+                                        :style="detailColumnStyle(column)">
+                                        <template v-if="column.key === 'employee_id'">{[ emp.reg_per_sys_id ]}</template>
+                                        <template v-else-if="column.key === 'employee_qty'">{[ fmtNum(emp.qty) ]}</template>
+                                        <template v-else-if="column.key === 'employee_cumulative_qty'">{[ fmtNum(emp.cumulative_qty) ]}</template>
+                                        <template v-else-if="column.key === 'displayed_target'">{[ getDisplayedTarget(emp) > 0 ? fmtNum(getDisplayedTarget(emp)) : '--' ]}</template>
+                                        <template v-else-if="column.key === 'displayed_target_rate'">
+                                            <span v-if="getDisplayedTargetRate(emp) !== null" :class="getDisplayedTargetRate(emp) >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ getDisplayedTargetRate(emp).toFixed(1) ]}%</span>
+                                            <span v-else class="text-slate-500">--</span>
+                                        </template>
+                                        <template v-else-if="column.key === 'total_output_value'">{[ fmtOutputValue(emp.output_value) ]}</template>
+                                        <template v-else-if="column.key === 'employee_efficiency'">
+                                            <span v-if="emp.employee_efficiency !== null && emp.employee_efficiency !== undefined" :class="emp.employee_efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">{[ emp.employee_efficiency.toFixed(1) ]}%</span>
+                                            <span v-else class="text-slate-500">--</span>
+                                        </template>
                                     </td>
                                 </tr>
                             </template>
-                            <tr v-if="displayRowsEmpty">
-                                <td :colspan="collapsed ? 7 : 14" class="py-4 text-slate-500 text-center">暂无数据</td>
+                            <tr v-if="visibleDetailColumns.length === 0">
+                                <td class="py-4 text-slate-500 text-center">请在字段设置中至少选择一列</td>
+                            </tr>
+                            <tr v-if="displayRowsEmpty && visibleDetailColumns.length > 0">
+                                <td :colspan="Math.max(visibleDetailColumns.length, 1)" class="py-4 text-slate-500 text-center">暂无数据</td>
                             </tr>
                         </tbody>
                     </table>
@@ -812,6 +848,72 @@ createApp({
         const dailyQtyLabel = computed(() => (
             isHistoricalDate.value ? '当日产量' : '今日产量'
         ));
+        const DETAIL_COLUMN_STORAGE_KEY = 'production-detail-columns:v1';
+        const DETAIL_COLUMN_MIN_WIDTH = 72;
+        const DETAIL_COLUMN_MAX_WIDTH = 480;
+        const DETAIL_COLUMN_DEFINITIONS = {
+            expanded: [
+                { key: 'employee_id', label: '员工ID', width: 110, sortKey: 'reg_per_sys_id' },
+                { key: 'initial_style', label: '初版款号', width: 120 },
+                { key: 'wrk_order', label: '本厂款号', width: 120 },
+                { key: 'stepno', label: '工序号', width: 100 },
+                { key: 'description', label: '工序描述', width: 180 },
+                { key: 'step_qty', label: '工序产量', width: 130, align: 'right', sortKey: 'qty' },
+                { key: 'cumulative_qty', label: '累计产量', width: 120, align: 'right' },
+                { key: 'employee_qty', label: '员工产量', width: 130, align: 'right' },
+                { key: 'target', label: '目标', width: 100 },
+                { key: 'target_rate', label: '目标达成率', width: 120, align: 'right' },
+                { key: 'step_time', label: '标准工时', width: 110, align: 'right' },
+                { key: 'output_value', label: '产值', width: 100, align: 'right' },
+                { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
+                { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
+            ],
+            collapsed: [
+                { key: 'employee_id', label: '员工ID', width: 110, sortKey: 'reg_per_sys_id' },
+                { key: 'employee_qty', label: '员工产量', width: 130, align: 'right', sortKey: 'qty' },
+                { key: 'employee_cumulative_qty', label: '累计产量', width: 120, align: 'right' },
+                { key: 'displayed_target', label: '目标', width: 100 },
+                { key: 'displayed_target_rate', label: '目标达成率', width: 120, align: 'right' },
+                { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
+                { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
+            ],
+        };
+
+        function createDefaultDetailColumnPreferences() {
+            return Object.fromEntries(
+                Object.entries(DETAIL_COLUMN_DEFINITIONS).map(([mode, columns]) => [
+                    mode,
+                    columns.map(column => ({ ...column, visible: true })),
+                ]),
+            );
+        }
+
+        const detailColumnPreferences = reactive(createDefaultDetailColumnPreferences());
+        const detailColumnPanelOpen = ref(false);
+        const detailColumnSearch = ref('');
+        const resizingDetailColumnKey = ref(null);
+        const currentDetailColumnMode = computed(() => (
+            collapsed.value ? 'collapsed' : 'expanded'
+        ));
+        const currentDetailColumns = computed(() => (
+            detailColumnPreferences[currentDetailColumnMode.value]
+        ));
+        const visibleDetailColumns = computed(() => (
+            currentDetailColumns.value.filter(column => column.visible)
+        ));
+        const filteredDetailColumns = computed(() => {
+            const query = detailColumnSearch.value.toLowerCase();
+            if (!query) return currentDetailColumns.value;
+            return currentDetailColumns.value.filter(column => (
+                detailColumnLabel(column).toLowerCase().includes(query)
+            ));
+        });
+        const detailTableStyle = computed(() => ({
+            width: `${Math.max(
+                visibleDetailColumns.value.reduce((sum, column) => sum + column.width, 0),
+                1,
+            )}px`,
+        }));
         const overviewUrl = computed(() => (
             basePath + 'production/detail-data/?date=' + encodeURIComponent(selectedDate.value)
         ));
@@ -2064,8 +2166,256 @@ createApp({
             }
         }
 
+        function detailColumnLabel(column) {
+            if (column.key === 'step_qty') return `工序${dailyQtyLabel.value}`;
+            if (column.key === 'employee_qty') return `员工${dailyQtyLabel.value}`;
+            return column.label;
+        }
+
+        function detailColumnStyle(column) {
+            const width = `${column.width}px`;
+            return { width, minWidth: width, maxWidth: width };
+        }
+
+        function detailHeaderClass(column) {
+            return {
+                'text-right': column.align === 'right',
+                'cursor-pointer hover:text-white': Boolean(column.sortKey),
+            };
+        }
+
+        function detailCellClass(column) {
+            const classes = ['py-2', 'px-3', 'text-slate-300'];
+            if (column.align === 'right') classes.push('text-right');
+            if ([
+                'step_qty', 'cumulative_qty', 'employee_qty',
+                'employee_cumulative_qty', 'step_time', 'target',
+                'displayed_target', 'output_value', 'total_output_value',
+            ].includes(column.key)) {
+                classes.push('tabular-nums');
+            }
+            if (['step_qty', 'employee_qty'].includes(column.key)) {
+                classes.push('text-emerald-400', 'font-bold');
+            }
+            if (['cumulative_qty', 'employee_cumulative_qty'].includes(column.key)) {
+                classes.push('text-amber-300', 'font-semibold');
+            }
+            if (['output_value', 'total_output_value'].includes(column.key)) {
+                classes.push('text-cyan-300', 'font-semibold');
+            }
+            if ([
+                'employee_id', 'initial_style', 'wrk_order', 'employee_qty',
+                'target', 'total_output_value',
+            ].includes(column.key)) {
+                classes.push('border-r', 'border-slate-700');
+            }
+            return classes;
+        }
+
+        function shouldRenderExpandedCell(column, row) {
+            if (['employee_id', 'employee_qty', 'total_output_value', 'employee_efficiency'].includes(column.key)) {
+                return row._empFirst;
+            }
+            if (['initial_style', 'wrk_order'].includes(column.key)) {
+                return row._woFirst;
+            }
+            if (['target', 'target_rate'].includes(column.key)) {
+                return row._targetFirst;
+            }
+            return true;
+        }
+
+        function detailExpandedCellRowspan(column, row) {
+            if (['employee_id', 'employee_qty', 'total_output_value', 'employee_efficiency'].includes(column.key)) {
+                return row._empRowspan;
+            }
+            if (['initial_style', 'wrk_order'].includes(column.key)) {
+                return row._woRowspan;
+            }
+            if (['target', 'target_rate'].includes(column.key)) {
+                return row._targetRowspan;
+            }
+            return 1;
+        }
+
+        function detailCellTitle(column, row) {
+            if (column.key === 'description') return row._step.description || '--';
+            if (column.key === 'initial_style') return row._step.initial_style_no || '--';
+            if (column.key === 'wrk_order') return row._wo_name;
+            return '';
+        }
+
+        function saveDetailColumnPreferences() {
+            try {
+                localStorage.setItem(DETAIL_COLUMN_STORAGE_KEY, JSON.stringify({
+                    expanded: detailColumnPreferences.expanded.map(column => ({
+                        key: column.key,
+                        visible: column.visible,
+                        width: column.width,
+                    })),
+                    collapsed: detailColumnPreferences.collapsed.map(column => ({
+                        key: column.key,
+                        visible: column.visible,
+                        width: column.width,
+                    })),
+                }));
+            } catch (error) {
+                console.warn('保存字段设置失败:', error);
+            }
+        }
+
+        function normalizedDetailColumns(mode, savedColumns) {
+            const defaults = DETAIL_COLUMN_DEFINITIONS[mode];
+            const defaultByKey = new Map(defaults.map(column => [column.key, column]));
+            const normalized = [];
+            const seen = new Set();
+            if (Array.isArray(savedColumns)) {
+                savedColumns.forEach(saved => {
+                    const base = defaultByKey.get(saved?.key);
+                    if (!base || seen.has(base.key)) return;
+                    seen.add(base.key);
+                    normalized.push({
+                        ...base,
+                        visible: saved.visible !== false,
+                        width: Math.min(
+                            DETAIL_COLUMN_MAX_WIDTH,
+                            Math.max(DETAIL_COLUMN_MIN_WIDTH, Number(saved.width) || base.width),
+                        ),
+                    });
+                });
+            }
+            defaults.forEach(column => {
+                if (!seen.has(column.key)) normalized.push({ ...column, visible: true });
+            });
+            return normalized;
+        }
+
+        function loadDetailColumnPreferences() {
+            try {
+                const raw = localStorage.getItem(DETAIL_COLUMN_STORAGE_KEY);
+                if (!raw) return;
+                const saved = JSON.parse(raw);
+                detailColumnPreferences.expanded.splice(
+                    0,
+                    detailColumnPreferences.expanded.length,
+                    ...normalizedDetailColumns('expanded', saved.expanded),
+                );
+                detailColumnPreferences.collapsed.splice(
+                    0,
+                    detailColumnPreferences.collapsed.length,
+                    ...normalizedDetailColumns('collapsed', saved.collapsed),
+                );
+            } catch (error) {
+                console.warn('读取字段设置失败，已使用默认值:', error);
+            }
+        }
+
+        function toggleDetailColumnVisibility(key) {
+            const column = currentDetailColumns.value.find(item => item.key === key);
+            if (!column) return;
+            column.visible = !column.visible;
+            saveDetailColumnPreferences();
+        }
+
+        function toggleAllDetailColumns() {
+            const shouldShowAll = visibleDetailColumns.value.length !== currentDetailColumns.value.length;
+            currentDetailColumns.value.forEach(column => {
+                column.visible = shouldShowAll;
+            });
+            saveDetailColumnPreferences();
+        }
+
+        function resetDetailColumnPreferences() {
+            const mode = currentDetailColumnMode.value;
+            detailColumnPreferences[mode].splice(
+                0,
+                detailColumnPreferences[mode].length,
+                ...normalizedDetailColumns(mode, []),
+            );
+            detailColumnSearch.value = '';
+            saveDetailColumnPreferences();
+        }
+
+        let draggedDetailColumnKey = null;
+
+        function onDetailColumnDragMove(event) {
+            if (!draggedDetailColumnKey) return;
+            const target = document.elementFromPoint(event.clientX, event.clientY)
+                ?.closest('[data-detail-column-key]');
+            const targetKey = target?.dataset.detailColumnKey;
+            if (!targetKey || targetKey === draggedDetailColumnKey) return;
+            const columns = currentDetailColumns.value;
+            const fromIndex = columns.findIndex(column => column.key === draggedDetailColumnKey);
+            const toIndex = columns.findIndex(column => column.key === targetKey);
+            if (fromIndex < 0 || toIndex < 0) return;
+            const [moved] = columns.splice(fromIndex, 1);
+            columns.splice(toIndex, 0, moved);
+        }
+
+        function stopDetailColumnDrag() {
+            if (!draggedDetailColumnKey) return;
+            draggedDetailColumnKey = null;
+            window.removeEventListener('pointermove', onDetailColumnDragMove);
+            window.removeEventListener('pointerup', stopDetailColumnDrag);
+            window.removeEventListener('pointercancel', stopDetailColumnDrag);
+            saveDetailColumnPreferences();
+        }
+
+        function startDetailColumnDrag(event, key) {
+            if (event.button !== undefined && event.button !== 0) return;
+            draggedDetailColumnKey = key;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            window.addEventListener('pointermove', onDetailColumnDragMove);
+            window.addEventListener('pointerup', stopDetailColumnDrag);
+            window.addEventListener('pointercancel', stopDetailColumnDrag);
+        }
+
+        let detailColumnResizeState = null;
+
+        function onDetailColumnResizeMove(event) {
+            if (!detailColumnResizeState) return;
+            const delta = event.clientX - detailColumnResizeState.startX;
+            detailColumnResizeState.column.width = Math.min(
+                DETAIL_COLUMN_MAX_WIDTH,
+                Math.max(DETAIL_COLUMN_MIN_WIDTH, detailColumnResizeState.startWidth + delta),
+            );
+            event.preventDefault();
+        }
+
+        function stopDetailColumnResize() {
+            if (!detailColumnResizeState) return;
+            detailColumnResizeState = null;
+            resizingDetailColumnKey.value = null;
+            window.removeEventListener('pointermove', onDetailColumnResizeMove);
+            window.removeEventListener('pointerup', stopDetailColumnResize);
+            window.removeEventListener('pointercancel', stopDetailColumnResize);
+            saveDetailColumnPreferences();
+        }
+
+        function startDetailColumnResize(event, key) {
+            if (event.button !== undefined && event.button !== 0) return;
+            const column = currentDetailColumns.value.find(item => item.key === key);
+            if (!column) return;
+            resizingDetailColumnKey.value = key;
+            detailColumnResizeState = {
+                column,
+                startX: event.clientX,
+                startWidth: column.width,
+            };
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            window.addEventListener('pointermove', onDetailColumnResizeMove);
+            window.addEventListener('pointerup', stopDetailColumnResize);
+            window.addEventListener('pointercancel', stopDetailColumnResize);
+        }
+
+        function onDetailColumnOutsidePointerDown(event) {
+            if (!event.target.closest('[data-column-config]')) {
+                detailColumnPanelOpen.value = false;
+            }
+        }
+
         function canStartDetailTableDrag(target) {
-            return !target.closest('button,input,select,textarea,a,[contenteditable="true"]');
+            return !target.closest('button,input,select,textarea,a,[contenteditable="true"],[data-column-resize],[data-column-config]');
         }
 
         function stopDetailTableDrag() {
@@ -2774,6 +3124,8 @@ createApp({
 
         // 生命周期
         onMounted(async () => {
+            loadDetailColumnPreferences();
+            document.addEventListener('pointerdown', onDetailColumnOutsidePointerDown);
             loadProductViewState();
             if (initialView === 'overview') {
                 await loadOverview();
@@ -2787,6 +3139,9 @@ createApp({
         onUnmounted(() => {
             stopWorkorderScroll();
             stopDetailTableDrag();
+            stopDetailColumnDrag();
+            stopDetailColumnResize();
+            document.removeEventListener('pointerdown', onDetailColumnOutsidePointerDown);
             if (activeTagDrag.value) onTagPointerCancel();
             if (activeDrag.value) onPointerUp();
             disconnectProductionDetailSSE();
@@ -2799,6 +3154,12 @@ createApp({
             onPointerDown,
             tableSearch, initialStyleFilter, initialStyleOptions, selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
+            detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
+            visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
+            detailTableStyle, detailColumnLabel, detailColumnStyle, detailHeaderClass,
+            detailCellClass, shouldRenderExpandedCell, detailExpandedCellRowspan,
+            detailCellTitle, toggleDetailColumnVisibility, toggleAllDetailColumns,
+            resetDetailColumnPreferences, startDetailColumnDrag, startDetailColumnResize,
             selectedDate, businessToday, isHistoricalDate, dailyQtyLabel, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
             flowCards, filteredFlowCards, initialStyleSearch, stepnoCards, employees, targets,

@@ -341,15 +341,15 @@ def test_worker_card_drag_owns_touch_gesture_and_handles_cancel():
 
 def test_flow_table_uses_composite_key_step_rows():
     """Flow 表格应使用复合键工序行。"""
-    assert '>本厂款号</th>' in TEMPLATE
-    assert '>工序号</th>' in TEMPLATE
+    assert "{ key: 'wrk_order', label: '本厂款号'" in TEMPLATE
+    assert "{ key: 'stepno', label: '工序号'" in TEMPLATE
     assert 'row._step.description' in TEMPLATE
     assert 'row._step.step_time' in TEMPLATE
     assert 'row._step.output_value' in TEMPLATE
     assert 'row._woFirst' in TEMPLATE
     assert 'row._empFirst' in TEMPLATE
-    assert "collapsed ? 'min-w-[860px]' : 'min-w-[1380px]'" in TEMPLATE
-    assert ':colspan="collapsed ? 7 : 14"' in TEMPLATE
+    assert ':style="detailTableStyle"' in TEMPLATE
+    assert ':colspan="Math.max(visibleDetailColumns.length, 1)"' in TEMPLATE
     assert 'max-lg:h-[220px]' in TEMPLATE
 
 
@@ -363,10 +363,29 @@ def test_flow_table_has_visible_themed_horizontal_scroll_and_drag():
     assert 'hide-scrollbar' not in TEMPLATE.split('ref="detailTableScrollRef"', 1)[1].split('<table', 1)[0]
 
 
+def test_flow_table_supports_persistent_column_configuration():
+    """Flow 表格应支持按视图保存列显隐、顺序和宽度。"""
+    assert '字段设置' in TEMPLATE
+    assert 'detailColumnPanelOpen' in TEMPLATE
+    assert 'visibleDetailColumns' in TEMPLATE
+    assert 'toggleDetailColumnVisibility' in TEMPLATE
+    assert 'startDetailColumnDrag' in TEMPLATE
+    assert 'startDetailColumnResize' in TEMPLATE
+    assert 'resetDetailColumnPreferences' in TEMPLATE
+    assert 'production-detail-columns:v1' in TEMPLATE
+    assert 'localStorage.setItem(DETAIL_COLUMN_STORAGE_KEY' in TEMPLATE
+    assert 'class="detail-data-table text-sm"' in TEMPLATE
+    assert 'class="detail-table-cell"' in TEMPLATE
+    assert 'white-space: nowrap;' in TEMPLATE
+    assert '.detail-column-list {' in TEMPLATE
+    assert 'touch-action: pan-y;' in TEMPLATE
+    assert 'displayRowsEmpty && visibleDetailColumns.length > 0' in TEMPLATE
+
+
 def test_flow_table_separates_target_rate_and_employee_efficiency():
     """Flow 表格应区分目标达成率和员工效率。"""
-    assert '>目标达成率</th>' in TEMPLATE
-    assert '>员工效率</th>' in TEMPLATE
+    assert "{ key: 'target_rate', label: '目标达成率'" in TEMPLATE
+    assert "{ key: 'employee_efficiency', label: '员工效率'" in TEMPLATE
     assert 'row.emp.employee_efficiency' in TEMPLATE
     assert '· 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}' in TEMPLATE
     assert '· 产值 {[ fmtNum(detailSummary.targeted_qty) ]}' not in TEMPLATE
@@ -391,52 +410,37 @@ def test_flow_target_uses_work_hours_and_merges_same_employee_step_cells():
     assert 'placeholder="工作时间（小时）"' in TEMPLATE
     assert 'v-model.number="workHoursDraft"' in TEMPLATE
     assert 'work_hours: Number(workHoursDraft.value)' in TEMPLATE
-    assert 'v-if="row._targetFirst" :rowspan="row._targetRowspan"' in TEMPLATE
+    assert "if (['target', 'target_rate'].includes(column.key))" in TEMPLATE
+    assert 'return row._targetFirst;' in TEMPLATE
+    assert 'return row._targetRowspan;' in TEMPLATE
     assert 'current_group_target' in TEMPLATE
 
 
 def test_expanded_flow_table_uses_requested_column_order():
     """展开表格的表头和数据单元格应使用指定业务顺序。"""
-    expanded_header = TEMPLATE.split('<template v-if="!collapsed">', 1)[1].split(
-        '</template>',
-        1,
-    )[0]
-    expected_headers = [
-        '初版款号',
-        '本厂款号',
-        '工序号',
-        '工序描述',
-        '工序{[ dailyQtyLabel ]}',
-        '累计产量',
-        '员工{[ dailyQtyLabel ]}',
-        '目标',
-        '目标达成率',
-        '标准工时',
-        '产值',
-        '总产值',
-        '员工效率',
+    expanded_columns = TEMPLATE.split('expanded: [', 1)[1].split('],', 1)[0]
+    expected_keys = [
+        'employee_id',
+        'initial_style',
+        'wrk_order',
+        'stepno',
+        'description',
+        'step_qty',
+        'cumulative_qty',
+        'employee_qty',
+        'target',
+        'target_rate',
+        'step_time',
+        'output_value',
+        'total_output_value',
+        'employee_efficiency',
     ]
-    positions = [expanded_header.index(header) for header in expected_headers]
+    positions = [expanded_columns.index(f"key: '{key}'") for key in expected_keys]
     assert positions == sorted(positions)
 
     expanded_row = TEMPLATE.split('<!-- 展开模式：员工 + 本厂款号 + 工序组合键明细 -->', 1)[1]
     expanded_row = expanded_row.split('</tr>', 1)[0]
-    expected_cells = [
-        '{[ row._step.initial_style_no',
-        '{[ row._wo_name ]}',
-        '工序{[ row._step.stepno ]}',
-        '{[ row._step.description',
-        '{[ fmtNum(row._step.qty) ]}',
-        '{[ fmtNum(row._step.cumulative_qty) ]}',
-        '{[ fmtNum(row._total_qty) ]}',
-        'getStepTarget(row.emp, row._step.stepno)',
-        'getStepTargetRate(row.emp, row._step.stepno)',
-        'fmtStepTime(row._step.step_time)',
-        'fmtOutputValue(row._step.output_value)',
-        'fmtOutputValue(row.emp.output_value)',
-        'row.emp.employee_efficiency',
-    ]
-    positions = [expanded_row.index(cell) for cell in expected_cells]
+    positions = [expanded_row.index(f"column.key === '{key}'") for key in expected_keys]
     assert positions == sorted(positions)
 
 
@@ -595,7 +599,7 @@ def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
     assert 'step.initial_style_no === initialStyleFilter.value' in TEMPLATE
     assert 'const steps = (emp.steps || []).filter' in TEMPLATE
     assert 'qty: steps.reduce' in TEMPLATE
-    assert '>初版款号</th>' in TEMPLATE
+    assert "{ key: 'initial_style', label: '初版款号'" in TEMPLATE
     assert 'row._step.initial_style_no || \'--\'' in TEMPLATE
     assert 's.initial_style_no || \'未设置初版\'' in TEMPLATE
 
