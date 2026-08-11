@@ -387,6 +387,37 @@ def test_flow_table_supports_persistent_column_configuration():
     assert 'displayRowsEmpty && visibleDetailColumns.length > 0' in TEMPLATE
 
 
+def test_collapsed_flow_table_displays_initial_styles_and_step_numbers():
+    """收起视图应按员工汇总去重后的初版款号和工序号。"""
+    collapsed_columns = TEMPLATE.split('collapsed: [', 1)[1].split('],', 1)[0]
+    expected_keys = [
+        'employee_id',
+        'collapsed_initial_styles',
+        'collapsed_stepnos',
+        'employee_qty',
+    ]
+    positions = [collapsed_columns.index(f"key: '{key}'") for key in expected_keys]
+    assert positions == sorted(positions)
+    assert "column.key === 'collapsed_initial_styles'" in TEMPLATE
+    assert "column.key === 'collapsed_stepnos'" in TEMPLATE
+    assert 'emp._collapsed_initial_styles.join' in TEMPLATE
+    assert 'emp._collapsed_stepnos.map' in TEMPLATE
+    assert 'new Set()' in TEMPLATE
+
+
+def test_detail_column_cards_animate_hover_drag_and_exchange():
+    """字段设置卡片应提供悬停、拖动目标和交换位移动画。"""
+    assert '<transition-group name="detail-column"' in TEMPLATE
+    assert 'class="detail-column-item' in TEMPLATE
+    assert "'is-dragging': draggingDetailColumnKey === column.key" in TEMPLATE
+    assert "'is-drop-target': detailColumnHoverKey === column.key" in TEMPLATE
+    assert '.detail-column-item:hover {' in TEMPLATE
+    assert '.detail-column-item.is-dragging {' in TEMPLATE
+    assert '.detail-column-item.is-drop-target {' in TEMPLATE
+    assert '.detail-column-move {' in TEMPLATE
+    assert 'transition: transform' in TEMPLATE
+
+
 def test_flow_table_separates_target_rate_and_employee_efficiency():
     """Flow 表格应区分目标达成率和员工效率。"""
     assert "{ key: 'target_rate', label: '目标达成率'" in TEMPLATE

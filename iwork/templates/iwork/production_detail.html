@@ -155,6 +155,33 @@
             touch-action: pan-y;
             overscroll-behavior: contain;
         }
+        .detail-column-item {
+            transition:
+                border-color 0.18s ease,
+                background-color 0.18s ease,
+                box-shadow 0.18s ease,
+                opacity 0.18s ease;
+            will-change: transform;
+        }
+        .detail-column-item:hover {
+            border-color: #64748b;
+            background: #334155;
+            box-shadow: 0 6px 16px rgb(15 23 42 / 35%);
+        }
+        .detail-column-item.is-dragging {
+            border-color: #60a5fa;
+            background: #1e3a5f;
+            box-shadow: 0 10px 24px rgb(37 99 235 / 30%);
+            opacity: 0.68;
+        }
+        .detail-column-item.is-drop-target {
+            border-color: #22d3ee;
+            background: #164e63;
+            box-shadow: 0 0 0 2px rgb(34 211 238 / 24%) inset;
+        }
+        .detail-column-move {
+            transition: transform 0.24s cubic-bezier(.2,.8,.2,1);
+        }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
         .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
         .tree-body { position: relative; }
@@ -606,10 +633,15 @@
                                            @change="toggleAllDetailColumns">
                                     <span>全选 {[ visibleDetailColumns.length ]}/{[ currentDetailColumns.length ]}</span>
                                 </label>
-                                <div class="max-h-80 overflow-y-auto space-y-1 pr-1 detail-column-list">
+                                <transition-group name="detail-column" tag="div"
+                                                  class="max-h-80 overflow-y-auto space-y-1 pr-1 detail-column-list">
                                     <div v-for="column in filteredDetailColumns" :key="column.key"
                                          :data-detail-column-key="column.key"
-                                         class="flex items-center gap-2 px-2 py-2 rounded border border-slate-700 bg-slate-800 hover:border-slate-500">
+                                         class="detail-column-item flex items-center gap-2 px-2 py-2 rounded border border-slate-700 bg-slate-800"
+                                         :class="{
+                                             'is-dragging': draggingDetailColumnKey === column.key,
+                                             'is-drop-target': detailColumnHoverKey === column.key,
+                                         }">
                                         <input type="checkbox" :checked="column.visible"
                                                @change="toggleDetailColumnVisibility(column.key)">
                                         <span class="flex-1 text-xs text-slate-200">{[ detailColumnLabel(column) ]}</span>
@@ -617,7 +649,7 @@
                                                 title="拖拽调整顺序"
                                                 @pointerdown.stop="startDetailColumnDrag($event, column.key)">⋮⋮</button>
                                     </div>
-                                </div>
+                                </transition-group>
                             </div>
                         </div>
                         <button v-if="detailType === 'flow'"
@@ -699,10 +731,13 @@
                                 <tr v-for="emp in employeeRowsCollapsed" :key="emp.reg_per_sys_id"
                                     class="border-b border-slate-700 hover:bg-slate-700/50">
                                     <td v-for="column in visibleDetailColumns" :key="column.key"
-                                        class="detail-table-cell"
-                                        :class="detailCellClass(column)"
-                                        :style="detailColumnStyle(column)">
+                                         class="detail-table-cell"
+                                         :class="detailCellClass(column)"
+                                         :style="detailColumnStyle(column)"
+                                         :title="detailCollapsedCellTitle(column, emp)">
                                         <template v-if="column.key === 'employee_id'">{[ emp.reg_per_sys_id ]}</template>
+                                        <template v-else-if="column.key === 'collapsed_initial_styles'">{[ emp._collapsed_initial_styles.length ? emp._collapsed_initial_styles.join('、') : '--' ]}</template>
+                                        <template v-else-if="column.key === 'collapsed_stepnos'">{[ emp._collapsed_stepnos.length ? emp._collapsed_stepnos.map(stepno => `工序${stepno}`).join('、') : '--' ]}</template>
                                         <template v-else-if="column.key === 'employee_qty'">{[ fmtNum(emp.qty) ]}</template>
                                         <template v-else-if="column.key === 'employee_cumulative_qty'">{[ fmtNum(emp.cumulative_qty) ]}</template>
                                         <template v-else-if="column.key === 'displayed_target'">{[ getDisplayedTarget(emp) > 0 ? fmtNum(getDisplayedTarget(emp)) : '--' ]}</template>
@@ -870,6 +905,8 @@ createApp({
             ],
             collapsed: [
                 { key: 'employee_id', label: '员工ID', width: 110, sortKey: 'reg_per_sys_id' },
+                { key: 'collapsed_initial_styles', label: '初版款号', width: 180 },
+                { key: 'collapsed_stepnos', label: '工序号', width: 160 },
                 { key: 'employee_qty', label: '员工产量', width: 130, align: 'right', sortKey: 'qty' },
                 { key: 'employee_cumulative_qty', label: '累计产量', width: 120, align: 'right' },
                 { key: 'displayed_target', label: '目标', width: 100 },
@@ -2109,14 +2146,36 @@ createApp({
             return ids.size;
         });
 
-        // 收起模式：每员工一行，工单合并在一个单元格
+        // 收起模式：每员工一行，汇总当前筛选结果中的初版款号和工序号
         const employeeRowsCollapsed = computed(() => {
             const map = new Map();
             employeeRows.value.forEach(row => {
                 const eid = row.emp.reg_per_sys_id;
-                if (!map.has(eid)) map.set(eid, row.emp);
+                if (!map.has(eid)) {
+                    map.set(eid, {
+                        employee: row.emp,
+                        initialStyles: new Set(),
+                        stepnos: new Set(),
+                    });
+                }
+                const summary = map.get(eid);
+                if (row._step.initial_style_no) {
+                    summary.initialStyles.add(String(row._step.initial_style_no));
+                }
+                if (row._step.stepno !== null && row._step.stepno !== undefined && row._step.stepno !== '--') {
+                    summary.stepnos.add(row._step.stepno);
+                }
             });
-            const emps = [...map.values()];
+            const emps = [...map.values()].map(summary => ({
+                ...summary.employee,
+                _collapsed_initial_styles: [...summary.initialStyles].sort(naturalCompare),
+                _collapsed_stepnos: [...summary.stepnos].sort((a, b) => {
+                    const numericDifference = Number(a) - Number(b);
+                    return Number.isNaN(numericDifference)
+                        ? naturalCompare(String(a), String(b))
+                        : numericDifference;
+                }),
+            }));
             const key = sortKey.value;
             const asc = sortAsc.value;
             return emps.sort((a, b) => {
@@ -2144,6 +2203,16 @@ createApp({
         }
         function fmtStepTime(n) {
             return n != null ? String(Number(n)) : '--';
+        }
+
+        function detailCollapsedCellTitle(column, employee) {
+            if (column.key === 'collapsed_initial_styles') {
+                return employee._collapsed_initial_styles.join('、') || '--';
+            }
+            if (column.key === 'collapsed_stepnos') {
+                return employee._collapsed_stepnos.map(stepno => `工序${stepno}`).join('、') || '--';
+            }
+            return null;
         }
 
         // 工序色板
@@ -2336,25 +2405,35 @@ createApp({
             saveDetailColumnPreferences();
         }
 
-        let draggedDetailColumnKey = null;
+        const draggingDetailColumnKey = ref(null);
+        const detailColumnHoverKey = ref(null);
 
         function onDetailColumnDragMove(event) {
-            if (!draggedDetailColumnKey) return;
+            if (!draggingDetailColumnKey.value) return;
             const target = document.elementFromPoint(event.clientX, event.clientY)
                 ?.closest('[data-detail-column-key]');
             const targetKey = target?.dataset.detailColumnKey;
-            if (!targetKey || targetKey === draggedDetailColumnKey) return;
+            if (!targetKey || targetKey === draggingDetailColumnKey.value) {
+                detailColumnHoverKey.value = null;
+                return;
+            }
+            if (detailColumnHoverKey.value === targetKey) return;
+            detailColumnHoverKey.value = targetKey;
             const columns = currentDetailColumns.value;
-            const fromIndex = columns.findIndex(column => column.key === draggedDetailColumnKey);
+            const fromIndex = columns.findIndex(
+                column => column.key === draggingDetailColumnKey.value,
+            );
             const toIndex = columns.findIndex(column => column.key === targetKey);
             if (fromIndex < 0 || toIndex < 0) return;
             const [moved] = columns.splice(fromIndex, 1);
             columns.splice(toIndex, 0, moved);
+            event.preventDefault();
         }
 
         function stopDetailColumnDrag() {
-            if (!draggedDetailColumnKey) return;
-            draggedDetailColumnKey = null;
+            if (!draggingDetailColumnKey.value) return;
+            draggingDetailColumnKey.value = null;
+            detailColumnHoverKey.value = null;
             window.removeEventListener('pointermove', onDetailColumnDragMove);
             window.removeEventListener('pointerup', stopDetailColumnDrag);
             window.removeEventListener('pointercancel', stopDetailColumnDrag);
@@ -2363,7 +2442,8 @@ createApp({
 
         function startDetailColumnDrag(event, key) {
             if (event.button !== undefined && event.button !== 0) return;
-            draggedDetailColumnKey = key;
+            draggingDetailColumnKey.value = key;
+            detailColumnHoverKey.value = null;
             event.currentTarget.setPointerCapture?.(event.pointerId);
             window.addEventListener('pointermove', onDetailColumnDragMove);
             window.addEventListener('pointerup', stopDetailColumnDrag);
@@ -3156,9 +3236,11 @@ createApp({
             detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
             detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
             visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
+            draggingDetailColumnKey, detailColumnHoverKey,
             detailTableStyle, detailColumnLabel, detailColumnStyle, detailHeaderClass,
             detailCellClass, shouldRenderExpandedCell, detailExpandedCellRowspan,
-            detailCellTitle, toggleDetailColumnVisibility, toggleAllDetailColumns,
+            detailCellTitle, detailCollapsedCellTitle,
+            toggleDetailColumnVisibility, toggleAllDetailColumns,
             resetDetailColumnPreferences, startDetailColumnDrag, startDetailColumnResize,
             selectedDate, businessToday, isHistoricalDate, dailyQtyLabel, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
