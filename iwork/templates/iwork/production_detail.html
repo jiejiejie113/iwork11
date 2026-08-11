@@ -213,9 +213,9 @@
             <button @click="groupMode = 'flow'; loadOverview()"
                 :class="groupMode === 'flow' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按生产线</button>
-            <button @click="groupMode = 'stepno'; loadStepnoOverview()"
-                :class="groupMode === 'stepno' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                class="px-3 py-1.5 rounded-md text-xs transition-colors">按工序</button>
+            <button @click="groupMode = 'initial_style'; loadInitialStyleOverview()"
+                :class="groupMode === 'initial_style' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                class="px-3 py-1.5 rounded-md text-xs transition-colors">按初版款号</button>
             <button @click="groupMode = 'product'; loadProductOverview()"
                 :class="groupMode === 'product' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按产品名称</button>
@@ -250,7 +250,7 @@
         <div v-if="groupMode !== 'product'" class="flex gap-4 mb-4" style="height:340px;">
             <!-- 左侧：各生产线 当日生产量与人数 -->
             <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col">
-                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各工序' ]} {[ dailyQtyLabel ]} & 人数{[ groupMode === 'flow' ? ' -70工序' : '' ]}</h3>
+                <h3 class="text-xs font-semibold text-slate-300 mb-2">{[ groupMode === 'flow' ? '各生产线' : '各初版款号' ]} {[ dailyQtyLabel ]} & 人数{[ groupMode === 'flow' ? ' -70工序' : '' ]}</h3>
                 <div class="flex-1"><canvas id="combo-chart"></canvas></div>
             </div>
             <!-- 右侧：今日/当日生产列表 -->
@@ -326,25 +326,34 @@
         </div>
 
         <!-- 工序卡片 -->
-        <div v-if="groupMode === 'stepno'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="card in stepnoCards" :key="card.stepno"
-                @click="goDetail('stepno', card.stepno)"
+        <!-- 初版款号卡片（旧工序接口和详情路由继续保留） -->
+        <div v-if="groupMode === 'initial_style'" class="mb-3 flex justify-end">
+            <input v-model.trim="initialStyleOverviewSearch" placeholder="搜索初版款号..."
+                class="w-72 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div v-if="groupMode === 'initial_style'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div v-for="card in filteredInitialStyleCards" :key="card.initial_style_no || '__unassigned__'"
+                @click="goDetail('initial_style', card.initial_style_no)"
                 class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors">
                 <div class="flex justify-between items-start">
-                    <div>
-                        <h3 class="font-bold text-lg">工序 {[ card.stepno ]}</h3>
-                        <p class="text-sm text-slate-400">👤 {[ card.worker_count ]}人 · 📦 {[ fmtNum(card.total_qty) ]}件</p>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-bold text-lg text-cyan-300">{[ card.label ]}</h3>
+                        <p class="text-sm text-slate-400 mt-1">
+                            👤 {[ card.worker_count ]}人 · 📦 {[ fmtNum(card.total_qty) ]}件 · {[ card.workorder_count ]}个本厂款号
+                        </p>
+                        <div class="mt-2 flex flex-wrap gap-1.5">
+                            <span v-for="flow in card.flows" :key="flow.flow"
+                                  class="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-700 text-xs text-slate-300">
+                                <span class="font-semibold text-blue-300">{[ flow.flow ]}</span>
+                                <span>{[ fmtNum(flow.qty) ]}件</span>
+                            </span>
+                        </div>
                     </div>
                     <span class="text-slate-600 text-lg">→</span>
                 </div>
-                <div v-if="card.target_total > 0" class="mt-2 text-xs">
-                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                        {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
-                    </span>
-                </div>
             </div>
-            <div v-if="stepnoCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
-                暂无工序数据
+            <div v-if="filteredInitialStyleCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
+                暂无初版款号数据
             </div>
         </div>
         </div>
@@ -508,7 +517,7 @@
             <span class="text-slate-400">
                 👤 {[ detailSummary.worker_count ]}人
                 · 累计产量 {[ fmtNum(detailSummary.cumulative_qty) ]}
-                <span v-if="detailSummary.group_target !== null || detailSummary.target_total > 0">
+                <span v-if="detailType === 'flow' && (detailSummary.group_target !== null || detailSummary.target_total > 0)">
                     · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
                     <template v-if="detailSummary.group_target !== null">
                         · 🎯 总目标 {[ fmtNum(detailSummary.group_target) ]}
@@ -703,6 +712,7 @@
                                             :style="detailColumnStyle(column)"
                                             :title="detailCellTitle(column, row)">
                                             <template v-if="column.key === 'employee_id'">{[ row.emp.reg_per_sys_id ]}</template>
+                                            <template v-else-if="column.key === 'flow'">{[ row._step.flow || '--' ]}</template>
                                             <template v-else-if="column.key === 'initial_style'">{[ row._step.initial_style_no || '--' ]}</template>
                                             <template v-else-if="column.key === 'wrk_order'"><span class="text-blue-400">{[ row._wo_name ]}</span></template>
                                             <template v-else-if="column.key === 'stepno'">工序{[ row._step.stepno ]}</template>
@@ -733,9 +743,10 @@
                                     <td v-for="column in visibleDetailColumns" :key="column.key"
                                          class="detail-table-cell"
                                          :class="detailCellClass(column)"
-                                         :style="detailColumnStyle(column)"
+                                        :style="detailColumnStyle(column)"
                                          :title="detailCollapsedCellTitle(column, emp)">
                                         <template v-if="column.key === 'employee_id'">{[ emp.reg_per_sys_id ]}</template>
+                                        <template v-else-if="column.key === 'collapsed_flows'">{[ emp._collapsed_flows.length ? emp._collapsed_flows.join('、') : '--' ]}</template>
                                         <template v-else-if="column.key === 'collapsed_initial_styles'">{[ emp._collapsed_initial_styles.length ? emp._collapsed_initial_styles.join('、') : '--' ]}</template>
                                         <template v-else-if="column.key === 'collapsed_stepnos'">{[ emp._collapsed_stepnos.length ? emp._collapsed_stepnos.map(stepno => `工序${stepno}`).join('、') : '--' ]}</template>
                                         <template v-else-if="column.key === 'employee_qty'">{[ fmtNum(emp.qty) ]}</template>
@@ -780,6 +791,7 @@
                         <div class="flex-1 text-left mr-3">
                             <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span v-if="detailType === 'initial_style'" class="text-blue-300 ml-1">{[ s.flow || '--' ]}</span>
                                 <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
                                 <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
@@ -789,11 +801,13 @@
                                 <span class="text-slate-500">{[ dailyQtyLabel ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
-                                <template v-if="emp.target > 0">
-                                    <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
-                                    <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                <template v-if="detailType === 'flow'">
+                                    <template v-if="emp.target > 0">
+                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                        <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                    </template>
+                                    <span v-else class="text-slate-600 ml-1">未设目标</span>
                                 </template>
-                                <span v-else class="text-slate-600 ml-1">未设目标</span>
                             </div>
                         </div>
                         <div class="w-24 h-24 rounded-lg flex items-center justify-center text-white font-extrabold text-base flex-shrink-0"
@@ -809,6 +823,7 @@
                         <div class="flex-1 text-left ml-3">
                             <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
+                                <span v-if="detailType === 'initial_style'" class="text-blue-300 ml-1">{[ s.flow || '--' ]}</span>
                                 <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
                                 <span v-if="s.workorder" class="text-slate-500 ml-1">{[ s.workorder ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ s.qty ]}件</span>
@@ -818,11 +833,13 @@
                                 <span class="text-slate-500">{[ dailyQtyLabel ]}</span>
                                 <span class="text-slate-200 font-semibold ml-1">{[ emp.qty ]}件</span>
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
-                                <template v-if="emp.target > 0">
-                                    <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
-                                    <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                <template v-if="detailType === 'flow'">
+                                    <template v-if="emp.target > 0">
+                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                        <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
+                                    </template>
+                                    <span v-else class="text-slate-600 ml-1">未设目标</span>
                                 </template>
-                                <span v-else class="text-slate-600 ml-1">未设目标</span>
                             </div>
                         </div>
                     </template>
@@ -914,6 +931,29 @@ createApp({
                 { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
                 { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
             ],
+            initial_style_expanded: [
+                { key: 'employee_id', label: '员工ID', width: 110, sortKey: 'reg_per_sys_id' },
+                { key: 'flow', label: '生产线', width: 120 },
+                { key: 'wrk_order', label: '本厂款号', width: 120 },
+                { key: 'stepno', label: '工序号', width: 100 },
+                { key: 'description', label: '工序描述', width: 180 },
+                { key: 'step_qty', label: '工序产量', width: 130, align: 'right', sortKey: 'qty' },
+                { key: 'cumulative_qty', label: '累计产量', width: 120, align: 'right' },
+                { key: 'employee_qty', label: '员工产量', width: 130, align: 'right' },
+                { key: 'step_time', label: '标准工时', width: 110, align: 'right' },
+                { key: 'output_value', label: '产值', width: 100, align: 'right' },
+                { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
+                { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
+            ],
+            initial_style_collapsed: [
+                { key: 'employee_id', label: '员工ID', width: 110, sortKey: 'reg_per_sys_id' },
+                { key: 'collapsed_flows', label: '生产线', width: 200 },
+                { key: 'collapsed_stepnos', label: '工序号', width: 160 },
+                { key: 'employee_qty', label: '员工产量', width: 130, align: 'right', sortKey: 'qty' },
+                { key: 'employee_cumulative_qty', label: '累计产量', width: 120, align: 'right' },
+                { key: 'total_output_value', label: '总产值', width: 110, align: 'right' },
+                { key: 'employee_efficiency', label: '员工效率', width: 120, align: 'right' },
+            ],
         };
 
         function createDefaultDetailColumnPreferences() {
@@ -929,9 +969,14 @@ createApp({
         const detailColumnPanelOpen = ref(false);
         const detailColumnSearch = ref('');
         const resizingDetailColumnKey = ref(null);
-        const currentDetailColumnMode = computed(() => (
-            collapsed.value ? 'collapsed' : 'expanded'
-        ));
+        const currentDetailColumnMode = computed(() => {
+            if (detailType.value === 'initial_style') {
+                return collapsed.value
+                    ? 'initial_style_collapsed'
+                    : 'initial_style_expanded';
+            }
+            return collapsed.value ? 'collapsed' : 'expanded';
+        });
         const currentDetailColumns = computed(() => (
             detailColumnPreferences[currentDetailColumnMode.value]
         ));
@@ -1770,6 +1815,8 @@ createApp({
 
         const flowCards = ref([]);
         const initialStyleSearch = ref('');
+        const initialStyleCards = ref([]);
+        const initialStyleOverviewSearch = ref('');
         const stepnoCards = ref([]);
         const employees = ref([]);
         const targets = reactive({});
@@ -1786,6 +1833,9 @@ createApp({
         // 计算属性
         const detailTitle = computed(() => {
             if (detailType.value === 'flow') return detailKey.value;
+            if (detailType.value === 'initial_style') {
+                return `初版款号 ${detailKey.value || '未设置'}`;
+            }
             return '工序 ' + detailKey.value;
         });
 
@@ -1826,6 +1876,14 @@ createApp({
                 (card.initial_styles || []).some(style => (
                     String(style.initial_style_no || '').toLowerCase().includes(query)
                 ))
+            ));
+        });
+
+        const filteredInitialStyleCards = computed(() => {
+            const query = initialStyleOverviewSearch.value.trim().toLowerCase();
+            if (!query) return initialStyleCards.value;
+            return initialStyleCards.value.filter(card => (
+                String(card.label || '').toLowerCase().includes(query)
             ));
         });
 
@@ -2083,6 +2141,10 @@ createApp({
                     );
                 });
                 const sortedSteps = [...visibleSteps].sort((a, b) => {
+                    if (detailType.value === 'initial_style') {
+                        const flowCompare = naturalCompare(a.flow || '', b.flow || '');
+                        if (flowCompare !== 0) return flowCompare;
+                    }
                     const stepCompare = (Number(a.stepno) || 0) - (Number(b.stepno) || 0);
                     if (stepCompare !== 0) return stepCompare;
                     return naturalCompare(a.workorder || '无工单', b.workorder || '无工单');
@@ -2154,11 +2216,15 @@ createApp({
                 if (!map.has(eid)) {
                     map.set(eid, {
                         employee: row.emp,
+                        flows: new Set(),
                         initialStyles: new Set(),
                         stepnos: new Set(),
                     });
                 }
                 const summary = map.get(eid);
+                if (row._step.flow) {
+                    summary.flows.add(String(row._step.flow));
+                }
                 if (row._step.initial_style_no) {
                     summary.initialStyles.add(String(row._step.initial_style_no));
                 }
@@ -2168,6 +2234,7 @@ createApp({
             });
             const emps = [...map.values()].map(summary => ({
                 ...summary.employee,
+                _collapsed_flows: [...summary.flows].sort(naturalCompare),
                 _collapsed_initial_styles: [...summary.initialStyles].sort(naturalCompare),
                 _collapsed_stepnos: [...summary.stepnos].sort((a, b) => {
                     const numericDifference = Number(a) - Number(b);
@@ -2206,6 +2273,9 @@ createApp({
         }
 
         function detailCollapsedCellTitle(column, employee) {
+            if (column.key === 'collapsed_flows') {
+                return employee._collapsed_flows.join('、') || '--';
+            }
             if (column.key === 'collapsed_initial_styles') {
                 return employee._collapsed_initial_styles.join('、') || '--';
             }
@@ -2309,6 +2379,7 @@ createApp({
 
         function detailCellTitle(column, row) {
             if (column.key === 'description') return row._step.description || '--';
+            if (column.key === 'flow') return row._step.flow || '--';
             if (column.key === 'initial_style') return row._step.initial_style_no || '--';
             if (column.key === 'wrk_order') return row._wo_name;
             return '';
@@ -2323,6 +2394,16 @@ createApp({
                         width: column.width,
                     })),
                     collapsed: detailColumnPreferences.collapsed.map(column => ({
+                        key: column.key,
+                        visible: column.visible,
+                        width: column.width,
+                    })),
+                    initial_style_expanded: detailColumnPreferences.initial_style_expanded.map(column => ({
+                        key: column.key,
+                        visible: column.visible,
+                        width: column.width,
+                    })),
+                    initial_style_collapsed: detailColumnPreferences.initial_style_collapsed.map(column => ({
                         key: column.key,
                         visible: column.visible,
                         width: column.width,
@@ -2373,6 +2454,22 @@ createApp({
                     0,
                     detailColumnPreferences.collapsed.length,
                     ...normalizedDetailColumns('collapsed', saved.collapsed),
+                );
+                detailColumnPreferences.initial_style_expanded.splice(
+                    0,
+                    detailColumnPreferences.initial_style_expanded.length,
+                    ...normalizedDetailColumns(
+                        'initial_style_expanded',
+                        saved.initial_style_expanded,
+                    ),
+                );
+                detailColumnPreferences.initial_style_collapsed.splice(
+                    0,
+                    detailColumnPreferences.initial_style_collapsed.length,
+                    ...normalizedDetailColumns(
+                        'initial_style_collapsed',
+                        saved.initial_style_collapsed,
+                    ),
                 );
             } catch (error) {
                 console.warn('读取字段设置失败，已使用默认值:', error);
@@ -2702,8 +2799,8 @@ createApp({
                 await loadDetail(detailType.value, detailKey.value);
             } else if (groupMode.value === 'product') {
                 await loadProductOverview();
-            } else if (groupMode.value === 'stepno') {
-                await loadStepnoOverview();
+            } else if (groupMode.value === 'initial_style') {
+                await loadInitialStyleOverview();
             } else {
                 await loadOverview();
             }
@@ -2737,6 +2834,31 @@ createApp({
             }
         }
 
+        async function loadInitialStyleOverview() {
+            showLoading();
+            groupMode.value = 'initial_style';
+            try {
+                const [styleResp, woResp] = await Promise.all([
+                    fetch(`${basePath}api/dashboard/detail/initial-style-overview/?date=${selectedDate.value}`),
+                    fetch(`${basePath}api/dashboard/workorders/?date=${selectedDate.value}&page_size=100&stepno=70`),
+                ]);
+                const [styleData, woData] = await Promise.all([
+                    readResponse(styleResp),
+                    readResponse(woResp),
+                ]);
+                initialStyleCards.value = styleData.items || [];
+                workorderList.value = woData.items || [];
+                await nextTick();
+                renderOverviewCharts();
+                startWorkorderScroll();
+            } catch (e) {
+                loadError.value = e.message;
+                console.error('加载初版款号概览失败:', e);
+            } finally {
+                hideLoading();
+            }
+        }
+
         async function loadProductOverview() {
             showLoading();
             try {
@@ -2765,6 +2887,12 @@ createApp({
                 let resp;
                 if (type === 'flow') {
                     resp = await fetch(`${basePath}api/dashboard/detail/flow/${key}/?date=${selectedDate.value}`);
+                } else if (type === 'initial_style') {
+                    const params = new URLSearchParams({
+                        initial_style_no: key || '',
+                        date: selectedDate.value,
+                    });
+                    resp = await fetch(`${basePath}api/dashboard/detail/initial-style/?${params.toString()}`);
                 } else {
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${key}/?date=${selectedDate.value}`);
                 }
@@ -2802,6 +2930,12 @@ createApp({
                 let resp;
                 if (refreshDetailType === 'flow') {
                     resp = await fetch(`${basePath}api/dashboard/detail/flow/${refreshDetailKey}/?date=${refreshDate}`);
+                } else if (refreshDetailType === 'initial_style') {
+                    const params = new URLSearchParams({
+                        initial_style_no: refreshDetailKey || '',
+                        date: refreshDate,
+                    });
+                    resp = await fetch(`${basePath}api/dashboard/detail/initial-style/?${params.toString()}`);
                 } else {
                     resp = await fetch(`${basePath}api/dashboard/detail/stepno/${refreshDetailKey}/?date=${refreshDate}`);
                 }
@@ -2863,22 +2997,23 @@ createApp({
                     lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
                     return true;
                 }
-                if (refreshGroupMode === 'stepno') {
-                    const resp = await fetch(`${basePath}api/dashboard/detail/stepno-overview/?date=${refreshDate}`);
-                    const data = await readResponse(resp);
+                if (refreshGroupMode === 'initial_style') {
+                    const [styleResp, woResp] = await Promise.all([
+                        fetch(`${basePath}api/dashboard/detail/initial-style-overview/?date=${refreshDate}`),
+                        fetch(`${basePath}api/dashboard/workorders/?date=${refreshDate}&page_size=100&stepno=70`),
+                    ]);
+                    const [styleData, woData] = await Promise.all([
+                        readResponse(styleResp),
+                        readResponse(woResp),
+                    ]);
                     if (
                         selectedDate.value !== refreshDate
                         || isHistoricalDate.value
                         || currentView.value !== 'overview'
                         || groupMode.value !== refreshGroupMode
                     ) return null;
-                    stepnoCards.value = Object.entries(data).map(([stepno, info]) => ({
-                        stepno: Number(stepno),
-                        total_qty: info.total_qty,
-                        worker_count: info.worker_count,
-                        target_total: 0,
-                        efficiency: null,
-                    })).sort((a, b) => a.stepno - b.stepno);
+                    initialStyleCards.value = styleData.items || [];
+                    workorderList.value = woData.items || [];
                     await nextTick();
                     renderOverviewCharts();
                     lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
@@ -3082,6 +3217,12 @@ createApp({
             const query = '?date=' + encodeURIComponent(selectedDate.value);
             if (type === 'flow') {
                 window.location.href = basePath + 'production/detail-data/flow/' + encodeURIComponent(key) + '/' + query;
+            } else if (type === 'initial_style') {
+                const params = new URLSearchParams({
+                    initial_style_no: key || '',
+                    date: selectedDate.value,
+                });
+                window.location.href = basePath + 'production/detail-data/initial-style/?' + params.toString();
             } else {
                 window.location.href = basePath + 'production/detail-data/stepno/' + key + '/' + query;
             }
@@ -3126,17 +3267,21 @@ createApp({
         function renderOverviewCharts() {
             nextTick(() => {
                 const isFlow = groupMode.value === 'flow';
-                const cards = isFlow ? flowCards.value : stepnoCards.value;
-                // Flow 视图：70工序产量；工序视图：直接用 total_qty
+                const cards = isFlow ? flowCards.value : initialStyleCards.value;
+                // Flow 视图使用70工序口径；初版款号视图使用全部工序产量。
                 const qtyData = isFlow
                     ? cards.map(c => (c.stepnos && c.stepnos['70'] ? c.stepnos['70'].qty : 0))
                     : cards.map(c => c.total_qty || 0);
-                // 人数：Flow 视图用 total_workers（卡片已有的总人数），工序视图用 worker_count
+                // 人数：Flow 使用总人数；初版款号使用跨生产线去重人数。
                 const workerData = isFlow
                     ? cards.map(c => c.total_workers || 0)
                     : cards.map(c => c.worker_count || 0);
                 // 合并、按产量降序排列
-                const combined = cards.map((c, i) => ({ label: isFlow ? c.flow : '工序 ' + c.stepno, qty: qtyData[i], workers: workerData[i] }));
+                const combined = cards.map((c, i) => ({
+                    label: isFlow ? c.flow : c.label,
+                    qty: qtyData[i],
+                    workers: workerData[i],
+                }));
                 combined.sort((a, b) => b.qty - a.qty);
                 const labels = combined.map(x => x.label);
                 // 柱状折线组合图
@@ -3244,7 +3389,9 @@ createApp({
             resetDetailColumnPreferences, startDetailColumnDrag, startDetailColumnResize,
             selectedDate, businessToday, isHistoricalDate, dailyQtyLabel, overviewUrl, changeProductionDate,
             isLoading, loadError, loadingProgress, wsConnected, lastUpdateTime, historySnapshotMessage,
-            flowCards, filteredFlowCards, initialStyleSearch, stepnoCards, employees, targets,
+            flowCards, filteredFlowCards, initialStyleSearch,
+            initialStyleCards, filteredInitialStyleCards, initialStyleOverviewSearch,
+            stepnoCards, employees, targets,
             detailTitle, detailSummary, detailStepnos,
             stepSummary, stepHeatRange, getHeatColor,
             employeeRows, employeeRowsCollapsed, employeeCount, displayRowsEmpty,
@@ -3253,7 +3400,9 @@ createApp({
             isEditing, groupTarget, currentGroupTarget, workHours,
             groupTargetDraft, workHoursDraft, sortKey, sortAsc,
             sortBy, startEditing, cancelEditing,
-            fmtNum, fmtOutputValue, fmtStepTime, stepColor, loadOverview, loadStepnoOverview, loadProductOverview, goDetail, saveTargets,
+            fmtNum, fmtOutputValue, fmtStepTime, stepColor,
+            loadOverview, loadStepnoOverview, loadInitialStyleOverview,
+            loadProductOverview, goDetail, saveTargets,
             productList, selectedLevels, availableLevels, levelLabels,
             showStepMetadataColumns, productGridColumns,
             productRows, productChartMetric, productChartPinned, productChartTitle,

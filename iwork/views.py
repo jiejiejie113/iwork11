@@ -1,6 +1,6 @@
 import json
 
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.core.serializers.json import DjangoJSONEncoder
 from django.views.decorators.http import require_http_methods
 from loguru import logger
@@ -78,6 +78,29 @@ def production_detail_stepno(request, stepno):
         'initial_view': 'detail',
         'detail_type': 'stepno',
         'detail_key': stepno,
+    }
+    return render(request, 'iwork/production_detail.html', context)
+
+
+@require_http_methods(['GET'])
+def production_detail_initial_style(request):
+    """生产详情 — 初版款号跨生产线员工明细。
+
+    Args:
+        request: 必须显式提供 ``initial_style_no`` 查询参数的请求。
+
+    Returns:
+        HttpResponse: 初版款号详情页；缺少参数时返回生产详情概览。
+    """
+    if 'initial_style_no' not in request.GET:
+        return redirect('production-detail')
+    initial_style_no = str(request.GET.get('initial_style_no') or '').strip()
+    label = initial_style_no or '未设置'
+    context = {
+        'page_title': f'Eastex生产看板 - 生产详情 - 初版款号 {label}',
+        'initial_view': 'detail',
+        'detail_type': 'initial_style',
+        'detail_key': initial_style_no,
     }
     return render(request, 'iwork/production_detail.html', context)
 

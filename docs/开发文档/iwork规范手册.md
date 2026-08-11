@@ -124,6 +124,9 @@ flows = list(settings.VISIBLE_FLOWS)
 2. “按产品名称”是受控例外：后端按 `(WrkOrder, StepNo, Flow)` 聚合并返回全部
    Flow，同时通过 `normal_flows` 返回普通线白名单；前端默认仅显示普通线，可用
    “普通线”按钮在浏览器本地切换全部 Flow，不得为切换重复查询远程数据库。
+3. “按初版款号”与“按生产线”使用同一普通线口径，只允许聚合
+   `ALLOWED_FLOWS` 内的 `flow_employees`；空初版款号统一归入“未设置”，不得把
+   产品视图的全 Flow 例外扩展到该视图。
 
 **当前隐藏分组**（21 个）：
 
@@ -298,6 +301,31 @@ Flow 员工明细表提供“字段设置”面板，展开和收起视图分别
 横向溢出；不得仅使用 `overflow: visible`，否则卡片会被表格撑宽并同时破坏横向滚动条
 和按住表格拖拽查看功能。
 
+### 4.6 按初版款号生产详情
+
+生产详情概览入口固定为“按生产线 / 按初版款号 / 按产品名称”。“按初版款号”替换原
+“按工序”概览按钮，但旧工序 API 与 `/production/detail-data/stepno/<stepno>/` 页面继续
+保留兼容，不得因导航移除而删除路由。
+
+初版款号视图只对既有普通线 `flow_employees` 快照做内存聚合，不新增远程 SQL、iGarment
+依赖或 Redis 数据结构：
+
+1. `GET /api/dashboard/detail/initial-style-overview/?date=YYYY-MM-DD` 返回初版款号、
+   总产量、跨生产线去重员工数、本厂款号数及各生产线产量。卡片按初版款号自然顺序，
+   “未设置”固定最后；卡片内生产线按产量降序，图表按总产量降序显示产量与去重人数。
+2. `GET /api/dashboard/detail/initial-style/?initial_style_no=...&date=YYYY-MM-DD`
+   返回该初版款号跨生产线的员工、工序和本厂款号明细。参数必须显式存在，空字符串表示
+   “未设置”；每条工序必须保留 `flow`，同一员工跨生产线只计一人但产量完整求和。
+3. 今日接口只读 Redis 当前版本详情快照，历史接口只读本地成功快照；Web 请求不得远程
+   回源。今日页面随统一 SSE 快照通知静默刷新，历史日期不建立 EventSource。
+4. 初版款号详情不提供整组目标编辑，也不显示目标、目标达成率或“未设目标”。卡片中的
+   每条工序需标注生产线，避免跨 Flow 数据无法辨识。
+5. 初版款号详情使用独立字段配置：展开默认为员工 ID、生产线、本厂款号、工序号、工序
+   描述、今日/当日产量、累计产量、员工产量、标准工时、产值、总产值、员工效率；收起
+   默认为员工 ID、生产线汇总、工序号汇总、员工产量、累计产量、总产值、员工效率。
+   配置继续存入 `production-detail-columns:v1` 的 `initial_style_expanded` 和
+   `initial_style_collapsed`，不能覆盖生产线详情的 `expanded` / `collapsed` 配置。
+
 `statistics.py` 中 `get_batch_stats` 生成 `all` 视图时，`flows` 字段会跨工序合并去重，
 同时必须保留 `product_name` 和 `order_no`。
 
@@ -416,7 +444,7 @@ function stepColor(idx, stepno) {
 - 前端直接使用 `msg.data.workorders`，禁止 SSE 事件后再次请求工单接口
 - 前端按 `snapshot_version` 去重，并用 `generated_at` 拒绝旧事件覆盖新数据
 - 通知发送失败只记录告警，禁止重新执行完整远程数据库采集
-- 今日生产详情禁止再建立浏览器独立的 60 秒刷新计时器；生产线、工序、产品和明细
+- 今日生产详情禁止再建立浏览器独立的 60 秒刷新计时器；生产线、初版款号、工序、产品和明细
   视图必须由轻量快照通知触发静默刷新
 - 生产详情切换到历史日期时必须关闭 EventSource；切回今日时在初次 REST 数据加载完成
   后重新连接，避免初始通知和首屏请求竞争
@@ -501,6 +529,8 @@ const workorderItems = computed(() => {
 |----------|----------|------|
 | `flow_overview` | `flowCards` | Flow 概览卡片 |
 | `flow_overview.*.initial_styles` | `card.initial_styles` | 工序70口径的初版款号及件数；支持概览部分匹配搜索 |
+| `initial-style-overview.items` | `initialStyleCards` | 普通线初版款号卡片、总产量、去重人数和本厂款号数 |
+| `initial-style-overview.items[].flows` | `card.flows` | 初版款号在各生产线的产量与人数 |
 | `workorders.items` | `workorderList` | 工单汇总列表 |
 | `workorders.items[].initial_style_no` | `wo.initial_style_no` | 今日/当日生产列表初版款号 |
 | `employees` | `employees` | 员工明细（详情页） |
@@ -508,6 +538,7 @@ const workorderItems = computed(() => {
 | `employees[].steps[].step_time` | `row._step.step_time` | 标准工时 |
 | `employees[].steps[].output_value` | `row._step.output_value` | 工序产值 |
 | `employees[].steps[].initial_style_no` | `row._step.initial_style_no` | Flow 表格、卡片和初版款号筛选 |
+| `initial-style.employees[].steps[].flow` | `row._step.flow` | 初版款号详情每条工序的生产线归属 |
 | `employees[].steps[].cumulative_qty` | `row._step.cumulative_qty` | 员工/工序/工单累计产量 |
 | `employees[].cumulative_qty` | `emp.cumulative_qty` | 员工累计产量 |
 | `cumulative_qty` | `detailSummary.cumulative_qty` | 当前 Flow 累计产量汇总 |
@@ -526,7 +557,7 @@ const workorderItems = computed(() => {
 
 今日生产详情的 REST 接口仍负责返回具体业务数据，但刷新时机统一由
 `/api/dashboard/stream/?mode=notification` 驱动。服务端快照发布后，前端按当前状态只
-刷新正在显示的生产线概览、工序概览、产品概览或员工明细；不得接收并丢弃实时看板大包，
+刷新正在显示的生产线概览、初版款号概览、工序概览、产品概览或员工明细；不得接收并丢弃实时看板大包，
 也不得恢复每浏览器独立 60 秒计时器。`EventSource` 断线由浏览器自动重连，服务端首次
 连接和 60 秒共享核对保证重连或 Pub/Sub 丢消息后仍能发现当前版本。
 
@@ -672,7 +703,7 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
 - [ ] **明细表列设置**：展开/收起配置隔离、显隐、顺序、宽度、默认不换行和旧配置兼容同时覆盖测试
 - [ ] **初版款号**：`pywrkord` 批量只读、同事务水位、工序70卡片口径、今日/历史字段、
-  产品备选维度和历史幂等回填同时覆盖测试
+  产品备选维度、普通线初版款号概览/详情、独立列配置和历史幂等回填同时覆盖测试
 - [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
   使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
   完成最终重建并验证容器状态和实际接口。用户明确要求暂不提交、暂不部署或仅修改代码时

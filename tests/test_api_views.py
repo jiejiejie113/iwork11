@@ -838,6 +838,324 @@ class TestStepnoDetailEndpoint:
         assert response.data['total_qty'] == 300
 
 
+class TestInitialStyleOverviewEndpoint:
+    """GET /api/dashboard/detail/initial-style-overview/。"""
+
+    def test_aggregates_styles_across_flows_from_one_snapshot(self):
+        """初版款号概览应跨普通线汇总并对员工、本厂款号去重。"""
+        from iwork.api_views import initial_style_overview
+
+        bundle = {
+            'flow_employees': {
+                'SO3-L3A': [
+                    {
+                        'reg_per_sys_id': 1001,
+                        'steps': [
+                            {
+                                'stepno': 1,
+                                'qty': 10,
+                                'workorder': 'WO-1',
+                                'initial_style_no': 'BU-1',
+                            },
+                            {
+                                'stepno': 2,
+                                'qty': 20,
+                                'workorder': 'WO-1',
+                                'initial_style_no': 'BU-1',
+                            },
+                            {
+                                'stepno': 3,
+                                'qty': 5,
+                                'workorder': 'WO-X',
+                                'initial_style_no': '',
+                            },
+                        ],
+                    },
+                    {
+                        'reg_per_sys_id': 1002,
+                        'steps': [{
+                            'stepno': 1,
+                            'qty': 7,
+                            'workorder': 'WO-S',
+                            'initial_style_no': 'ST/特殊',
+                        }],
+                    },
+                ],
+                'SO5-L5B': [
+                    {
+                        'reg_per_sys_id': 1001,
+                        'steps': [{
+                            'stepno': 1,
+                            'qty': 30,
+                            'workorder': 'WO-2',
+                            'initial_style_no': 'BU-1',
+                        }],
+                    },
+                    {
+                        'reg_per_sys_id': 1003,
+                        'steps': [{
+                            'stepno': 3,
+                            'qty': 40,
+                            'workorder': 'WO-3',
+                            'initial_style_no': 'BU-1',
+                        }],
+                    },
+                    {
+                        'reg_per_sys_id': 1004,
+                        'steps': [{
+                            'stepno': 6,
+                            'qty': 9,
+                            'workorder': 'WO-Y',
+                            'initial_style_no': '   ',
+                        }],
+                    },
+                ],
+            },
+        }
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ) as read:
+            response = initial_style_overview(APIRequestFactory().get('/'))
+
+        assert response.status_code == 200
+        assert [item['initial_style_no'] for item in response.data['items']] == [
+            'BU-1',
+            'ST/特殊',
+            '',
+        ]
+        style = response.data['items'][0]
+        assert style['total_qty'] == 100
+        assert style['worker_count'] == 2
+        assert style['workorder_count'] == 3
+        assert style['flows'] == [
+            {'flow': 'SO5-L5B', 'qty': 70, 'worker_count': 2},
+            {'flow': 'SO3-L3A', 'qty': 30, 'worker_count': 1},
+        ]
+        assert response.data['items'][-1]['label'] == '未设置'
+        assert response.data['items'][-1]['total_qty'] == 14
+        assert response.data['source'] == 'redis_snapshot'
+        read.assert_called_once()
+
+    @patch(
+        'iwork.api_views._snapshot_state',
+        return_value=SimpleNamespace(snapshot_version='history-v1'),
+    )
+    def test_historical_overview_reads_local_snapshot(self, _mock_state):
+        """历史初版款号概览只能读取本地历史快照。"""
+        from iwork.api_views import initial_style_overview
+
+        local_data = {
+            'SO3-L3A': [{
+                'reg_per_sys_id': 1001,
+                'steps': [{
+                    'stepno': 1,
+                    'qty': 12,
+                    'workorder': 'WO-1',
+                    'initial_style_no': 'BU-1',
+                }],
+            }],
+        }
+        request = APIRequestFactory().get('/', {'date': '2026-08-10'})
+        with patch(
+            'iwork.api_views.local_get_batch_flow_employees',
+            return_value=local_data,
+        ) as read_local, patch(
+            'iwork.api_views.READ_MODEL.details',
+        ) as read_realtime:
+            response = initial_style_overview(request)
+
+        assert response.status_code == 200
+        assert response.data['items'][0]['total_qty'] == 12
+        assert response.data['source'] == 'local_snapshot'
+        read_local.assert_called_once_with(date(2026, 8, 10))
+        read_realtime.assert_not_called()
+
+
+class TestInitialStyleDetailEndpoint:
+    """GET /api/dashboard/detail/initial-style/。"""
+
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    def test_merges_employee_steps_across_flows(self, _mock_minutes):
+        """款号详情应合并员工并在每条工序中保留生产线。"""
+        from iwork.api_views import initial_style_detail
+
+        bundle = {
+            'flow_employees': {
+                'SO3-L3A': [{
+                    'reg_per_sys_id': 1001,
+                    'steps': [
+                        {
+                            'stepno': 1,
+                            'qty': 10,
+                            'cumulative_qty': 100,
+                            'workorder': 'WO-1',
+                            'initial_style_no': 'BU-1',
+                            'output_value': 10.0,
+                        },
+                        {
+                            'stepno': 2,
+                            'qty': 99,
+                            'workorder': 'WO-X',
+                            'initial_style_no': 'OTHER',
+                            'output_value': 99.0,
+                        },
+                    ],
+                }],
+                'SO5-L5B': [
+                    {
+                        'reg_per_sys_id': 1001,
+                        'steps': [{
+                            'stepno': 3,
+                            'qty': 30,
+                            'cumulative_qty': 300,
+                            'workorder': 'WO-2',
+                            'initial_style_no': 'BU-1',
+                            'output_value': 30.0,
+                        }],
+                    },
+                    {
+                        'reg_per_sys_id': 1002,
+                        'steps': [{
+                            'stepno': 6,
+                            'qty': 40,
+                            'cumulative_qty': 400,
+                            'workorder': 'WO-3',
+                            'initial_style_no': 'BU-1',
+                            'output_value': 40.0,
+                        }],
+                    },
+                ],
+            },
+        }
+        request = APIRequestFactory().get('/', {'initial_style_no': 'BU-1'})
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ) as read:
+            response = initial_style_detail(request)
+
+        assert response.status_code == 200
+        assert response.data['initial_style_no'] == 'BU-1'
+        assert response.data['total_qty'] == 80
+        assert response.data['cumulative_qty'] == 800
+        assert response.data['worker_count'] == 2
+        assert response.data['flows'] == ['SO3-L3A', 'SO5-L5B']
+        first_employee = response.data['employees'][0]
+        assert first_employee['reg_per_sys_id'] == 1001
+        assert first_employee['total_qty'] == 40
+        assert first_employee['cumulative_qty'] == 400
+        assert first_employee['workorders'] == ['WO-1', 'WO-2']
+        assert [step['flow'] for step in first_employee['steps']] == [
+            'SO3-L3A',
+            'SO5-L5B',
+        ]
+        assert all(
+            step['initial_style_no'] == 'BU-1'
+            for employee in response.data['employees']
+            for step in employee['steps']
+        )
+        assert response.data['source'] == 'redis_snapshot'
+        read.assert_called_once()
+
+    def test_missing_style_parameter_returns_400(self):
+        """缺少初版款号参数时应明确拒绝请求。"""
+        from iwork.api_views import initial_style_detail
+
+        response = initial_style_detail(APIRequestFactory().get('/'))
+
+        assert response.status_code == 400
+        assert response.data['error'] == '缺少 initial_style_no 参数'
+
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    def test_explicit_blank_style_returns_unassigned_detail(self, _mock_minutes):
+        """显式空初版款号应返回“未设置”组而不是漏数。"""
+        from iwork.api_views import initial_style_detail
+
+        bundle = {
+            'flow_employees': {
+                'SO3-L3A': [{
+                    'reg_per_sys_id': 1001,
+                    'steps': [{
+                        'stepno': 1,
+                        'qty': 12,
+                        'workorder': 'WO-1',
+                        'initial_style_no': '   ',
+                        'output_value': 3.0,
+                    }],
+                }],
+            },
+        }
+        request = APIRequestFactory().get('/', {'initial_style_no': ''})
+        with patch(
+            'iwork.api_views.READ_MODEL.details',
+            return_value=_snapshot_result(bundle),
+        ):
+            response = initial_style_detail(request)
+
+        assert response.status_code == 200
+        assert response.data['initial_style_no'] == ''
+        assert response.data['label'] == '未设置'
+        assert response.data['total_qty'] == 12
+
+    @patch('iwork.api_views.get_effective_work_minutes', return_value=210)
+    @patch(
+        'iwork.api_views._snapshot_state',
+        return_value=SimpleNamespace(snapshot_version='history-v1'),
+    )
+    def test_historical_detail_reads_local_snapshot(
+        self,
+        _mock_state,
+        _mock_minutes,
+    ):
+        """历史初版款号详情只能读取本地历史快照。"""
+        from iwork.api_views import initial_style_detail
+
+        local_data = {
+            'SO3-L3A': [{
+                'reg_per_sys_id': 1001,
+                'steps': [{
+                    'stepno': 1,
+                    'qty': 15,
+                    'workorder': 'WO-1',
+                    'initial_style_no': 'BU-1',
+                    'output_value': 3.0,
+                }],
+            }],
+        }
+        request = APIRequestFactory().get('/', {
+            'initial_style_no': 'BU-1',
+            'date': '2026-08-10',
+        })
+        with patch(
+            'iwork.api_views.local_get_batch_flow_employees',
+            return_value=local_data,
+        ) as read_local, patch(
+            'iwork.api_views.READ_MODEL.details',
+        ) as read_realtime:
+            response = initial_style_detail(request)
+
+        assert response.status_code == 200
+        assert response.data['total_qty'] == 15
+        assert response.data['source'] == 'local_snapshot'
+        read_local.assert_called_once_with(date(2026, 8, 10))
+        read_realtime.assert_not_called()
+
+    def test_routes_keep_style_value_in_query_string(self):
+        """初版款号 API 和页面应使用查询参数，兼容斜杠及空款号。"""
+        from django.urls import reverse
+
+        assert reverse('detail-initial-style-overview') == (
+            '/api/dashboard/detail/initial-style-overview/'
+        )
+        assert reverse('detail-initial-style-detail') == (
+            '/api/dashboard/detail/initial-style/'
+        )
+        assert reverse('production-detail-initial-style') == (
+            '/production/detail-data/initial-style/'
+        )
+
+
 class TestProductOverviewEndpoint:
     """GET /api/dashboard/detail/product-overview/"""
 

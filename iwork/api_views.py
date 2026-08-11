@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import asyncio
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -93,6 +94,173 @@ def _snapshot_not_found_response():
         {'error': '该日期尚未生成本地历史快照', 'code': 'history_snapshot_not_found'},
         status=status.HTTP_404_NOT_FOUND,
     )
+
+
+def _natural_sort_key(value: str) -> tuple:
+    """生成包含数字片段的自然排序键。
+
+    Args:
+        value: 需要排序的文本。
+
+    Returns:
+        可用于稳定自然排序的元组。
+    """
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r'(\d+)', str(value))
+        if part
+    )
+
+
+def _aggregate_initial_style_overview(flow_employees: dict) -> dict:
+    """从普通线员工工序快照聚合初版款号概览。
+
+    Args:
+        flow_employees: 按生产线组织的员工及工序明细。
+
+    Returns:
+        包含自然排序初版款号卡片的概览数据。
+    """
+    styles: dict[str, dict] = {}
+    for flow, employees in flow_employees.items():
+        for employee in employees:
+            employee_id = employee.get('reg_per_sys_id')
+            for step in employee.get('steps', []):
+                style_no = str(step.get('initial_style_no') or '').strip()
+                style = styles.setdefault(style_no, {
+                    'initial_style_no': style_no,
+                    'label': style_no or '未设置',
+                    'total_qty': 0,
+                    'workers': set(),
+                    'workorders': set(),
+                    'flows': {},
+                })
+                qty = step.get('qty') or 0
+                style['total_qty'] += qty
+                style['workers'].add(employee_id)
+                workorder = str(step.get('workorder') or '').strip()
+                if workorder:
+                    style['workorders'].add(workorder)
+                flow_summary = style['flows'].setdefault(flow, {
+                    'qty': 0,
+                    'workers': set(),
+                })
+                flow_summary['qty'] += qty
+                flow_summary['workers'].add(employee_id)
+
+    items = []
+    for style in styles.values():
+        flows = [
+            {
+                'flow': flow,
+                'qty': summary['qty'],
+                'worker_count': len(summary['workers']),
+            }
+            for flow, summary in style['flows'].items()
+        ]
+        flows.sort(key=lambda item: (-item['qty'], _natural_sort_key(item['flow'])))
+        items.append({
+            'initial_style_no': style['initial_style_no'],
+            'label': style['label'],
+            'total_qty': style['total_qty'],
+            'worker_count': len(style['workers']),
+            'workorder_count': len(style['workorders']),
+            'flows': flows,
+        })
+
+    items.sort(key=lambda item: (
+        item['initial_style_no'] == '',
+        _natural_sort_key(item['label']),
+    ))
+    return {'items': items}
+
+
+def _aggregate_initial_style_detail(
+    flow_employees: dict,
+    initial_style_no: str,
+) -> dict:
+    """从普通线员工工序快照构建指定初版款号详情。
+
+    Args:
+        flow_employees: 按生产线组织的员工及工序明细。
+        initial_style_no: 已去除首尾空白的初版款号，空字符串表示未设置。
+
+    Returns:
+        合并跨生产线员工并保留工序生产线归属的详情数据。
+    """
+    employees: dict = {}
+    matched_flows = set()
+    for flow, flow_employee_list in flow_employees.items():
+        for source_employee in flow_employee_list:
+            employee_id = source_employee.get('reg_per_sys_id')
+            for source_step in source_employee.get('steps', []):
+                style_no = str(source_step.get('initial_style_no') or '').strip()
+                if style_no != initial_style_no:
+                    continue
+                matched_flows.add(flow)
+                employee = employees.setdefault(employee_id, {
+                    'reg_per_sys_id': employee_id,
+                    'total_qty': 0,
+                    'cumulative_qty': 0,
+                    'cumulative_complete': True,
+                    'output_value': 0.0,
+                    'output_complete': True,
+                    'steps': [],
+                    'workorders': set(),
+                })
+                step = dict(source_step)
+                step['flow'] = flow
+                step['initial_style_no'] = initial_style_no
+                qty = step.get('qty') or 0
+                employee['total_qty'] += qty
+                if 'cumulative_qty' in step:
+                    employee['cumulative_qty'] += step.get('cumulative_qty') or 0
+                else:
+                    employee['cumulative_complete'] = False
+                if step.get('output_value') is None:
+                    employee['output_complete'] = False
+                else:
+                    employee['output_value'] += step['output_value']
+                workorder = str(step.get('workorder') or '').strip()
+                if workorder:
+                    employee['workorders'].add(workorder)
+                employee['steps'].append(step)
+
+    result_employees = []
+    for employee in employees.values():
+        employee['steps'].sort(key=lambda step: (
+            _natural_sort_key(step.get('flow', '')),
+            int(step.get('stepno')) if str(step.get('stepno', '')).isdigit() else 0,
+            _natural_sort_key(step.get('workorder', '')),
+        ))
+        result_employee = {
+            'reg_per_sys_id': employee['reg_per_sys_id'],
+            'total_qty': employee['total_qty'],
+            'output_value': (
+                employee['output_value'] if employee['output_complete'] else None
+            ),
+            'steps': employee['steps'],
+            'workorders': sorted(employee['workorders'], key=_natural_sort_key),
+        }
+        if employee['cumulative_complete']:
+            result_employee['cumulative_qty'] = employee['cumulative_qty']
+        result_employees.append(result_employee)
+
+    result_employees.sort(key=lambda employee: (
+        -employee['total_qty'],
+        _natural_sort_key(str(employee['reg_per_sys_id'])),
+    ))
+    return {
+        'initial_style_no': initial_style_no,
+        'label': initial_style_no or '未设置',
+        'total_qty': sum(employee['total_qty'] for employee in result_employees),
+        'cumulative_qty': sum(
+            employee.get('cumulative_qty', 0) for employee in result_employees
+        ),
+        'worker_count': len(result_employees),
+        'flows': sorted(matched_flows, key=_natural_sort_key),
+        'employees': result_employees,
+    }
 
 
 def _snapshot_response(
@@ -894,6 +1062,117 @@ def stepno_overview(request):
         return _read_model_unavailable_response(exc)
     except Exception as e:
         logger.error(f'获取工序概览失败: {e}')
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def initial_style_overview(request):
+    """获取普通线范围内按初版款号聚合的生产概览。
+
+    Args:
+        request: 支持 ``date`` 日期参数的 DRF 请求。
+
+    Returns:
+        Response: 初版款号、产量、人数、本厂款号数和生产线汇总。
+    """
+    try:
+        date_str = request.query_params.get('date', get_business_date().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = _detail_mode(request, target_date)
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return _snapshot_not_found_response()
+
+        if mode == 'local':
+            result = _aggregate_initial_style_overview(
+                local_get_batch_flow_employees(target_date)
+            )
+            state = _snapshot_state(target_date)
+            result.update({
+                'source': 'local_snapshot',
+                'snapshot_date': target_date.isoformat(),
+                'snapshot_version': state.snapshot_version if state else None,
+            })
+            return Response(result, status=status.HTTP_200_OK)
+
+        snapshot_result = READ_MODEL.details(target_date)
+        result = _aggregate_initial_style_overview(
+            snapshot_result.data.get('flow_employees', {})
+        )
+        result['source'] = 'redis_snapshot'
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
+    except Exception as exc:
+        logger.exception('获取初版款号概览失败: {}', exc)
+        return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def initial_style_detail(request):
+    """获取普通线范围内指定初版款号的跨生产线员工明细。
+
+    Args:
+        request: 必须显式提供 ``initial_style_no``，空值表示未设置款号。
+
+    Returns:
+        Response: 指定初版款号的员工、工序和生产线详情。
+    """
+    if 'initial_style_no' not in request.query_params:
+        return Response(
+            {'error': '缺少 initial_style_no 参数'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        initial_style_no = str(
+            request.query_params.get('initial_style_no') or ''
+        ).strip()
+        date_str = request.query_params.get('date', get_business_date().isoformat())
+        target_date = date.fromisoformat(date_str)
+        mode = _detail_mode(request, target_date)
+        if mode == 'local' and _snapshot_state(target_date) is None:
+            return _snapshot_not_found_response()
+
+        if mode == 'local':
+            result = _aggregate_initial_style_detail(
+                local_get_batch_flow_employees(target_date),
+                initial_style_no,
+            )
+            snapshot_result = None
+        else:
+            snapshot_result = READ_MODEL.details(target_date)
+            result = _aggregate_initial_style_detail(
+                snapshot_result.data.get('flow_employees', {}),
+                initial_style_no,
+            )
+
+        work_minutes, result['employees'] = _with_employee_efficiency(
+            result['employees'],
+            target_date,
+        )
+        result['work_minutes'] = work_minutes
+        result['date'] = target_date.isoformat()
+        result['source'] = 'local_snapshot' if mode == 'local' else 'redis_snapshot'
+        if mode == 'local':
+            state = _snapshot_state(target_date)
+            result.update({
+                'snapshot_date': target_date.isoformat(),
+                'snapshot_version': state.snapshot_version if state else None,
+            })
+            return Response(result, status=status.HTTP_200_OK)
+        return _snapshot_response(SnapshotReadResult(
+            data=result,
+            metadata=snapshot_result.metadata,
+            stale=snapshot_result.stale,
+        ))
+    except ReadModelNotReadyError as exc:
+        return _read_model_unavailable_response(exc)
+    except Exception as exc:
+        logger.exception('获取初版款号详情失败: {}', exc)
         return Response({'error': '获取数据失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

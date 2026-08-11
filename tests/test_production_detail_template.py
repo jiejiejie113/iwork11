@@ -626,6 +626,26 @@ def test_flow_overview_searches_and_displays_initial_styles():
     assert 'const filteredFlowCards = computed(() =>' in TEMPLATE
 
 
+def test_overview_replaces_stepno_grouping_with_initial_style_cards():
+    """概览页应以可搜索的初版款号分组替换按工序分组。"""
+    toolbar = TEMPLATE.split('<!-- 顶部工具栏 -->', 1)[1].split(
+        '<!-- 静默加载条 -->',
+        1,
+    )[0]
+    assert '>按初版款号</button>' in toolbar
+    assert '>按工序</button>' not in toolbar
+    assert "groupMode = 'initial_style'; loadInitialStyleOverview()" in toolbar
+    assert 'v-model.trim="initialStyleOverviewSearch"' in TEMPLATE
+    assert 'v-for="card in filteredInitialStyleCards"' in TEMPLATE
+    assert "goDetail('initial_style', card.initial_style_no)" in TEMPLATE
+    assert '{[ card.label ]}' in TEMPLATE
+    assert '{[ card.worker_count ]}人' in TEMPLATE
+    assert '{[ fmtNum(card.total_qty) ]}件' in TEMPLATE
+    assert '{[ card.workorder_count ]}个本厂款号' in TEMPLATE
+    assert 'v-for="flow in card.flows"' in TEMPLATE
+    assert '暂无初版款号数据' in TEMPLATE
+
+
 def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
     """Flow 详情应按初版款号筛选，并在表格和卡片中显示该字段。"""
     assert 'const initialStyleFilter = ref(\'\');' in TEMPLATE
@@ -638,6 +658,79 @@ def test_flow_detail_filters_by_initial_style_and_shows_it_in_rows():
     assert "{ key: 'initial_style', label: '初版款号'" in TEMPLATE
     assert 'row._step.initial_style_no || \'--\'' in TEMPLATE
     assert 's.initial_style_no || \'未设置初版\'' in TEMPLATE
+
+
+def test_initial_style_detail_has_dedicated_flow_columns_and_data_loading():
+    """初版款号详情应使用独立列配置并显示每条工序的生产线。"""
+    assert "initial_style_expanded: [" in TEMPLATE
+    assert "initial_style_collapsed: [" in TEMPLATE
+    style_columns = TEMPLATE.split('initial_style_expanded: [', 1)[1].split('],', 1)[0]
+    expected_keys = [
+        'employee_id',
+        'flow',
+        'wrk_order',
+        'stepno',
+        'description',
+        'step_qty',
+        'cumulative_qty',
+        'employee_qty',
+        'step_time',
+        'output_value',
+        'total_output_value',
+        'employee_efficiency',
+    ]
+    positions = [style_columns.index(f"key: '{key}'") for key in expected_keys]
+    assert positions == sorted(positions)
+    assert "column.key === 'flow'" in TEMPLATE
+    assert '{[ row._step.flow || \'--\' ]}' in TEMPLATE
+    assert "column.key === 'collapsed_flows'" in TEMPLATE
+    assert 'emp._collapsed_flows.join' in TEMPLATE
+    assert "detailType.value === 'initial_style'" in TEMPLATE
+    assert 'api/dashboard/detail/initial-style/?' in TEMPLATE
+    assert "detailType.value === 'flow' ? data.group_target : null" in TEMPLATE
+    assert (
+        'v-if="detailType === \'flow\' && '
+        '(detailSummary.group_target !== null || detailSummary.target_total > 0)"'
+        in TEMPLATE
+    )
+    assert "initial_style_expanded: detailColumnPreferences.initial_style_expanded" in TEMPLATE
+    assert "initial_style_collapsed: detailColumnPreferences.initial_style_collapsed" in TEMPLATE
+
+
+def test_initial_style_card_detail_shows_flow_without_target_status():
+    """初版款号卡片详情应标注生产线，并仅在生产线详情显示目标状态。"""
+    card_view = TEMPLATE.split(
+        '<!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->',
+        1,
+    )[1].split('</TransitionGroup>', 1)[0]
+
+    assert card_view.count(
+        '<span v-if="detailType === \'initial_style\'" class="text-blue-300 ml-1">'
+    ) == 2
+    assert card_view.count('<template v-if="detailType === \'flow\'">') == 2
+    assert card_view.count('未设目标') == 2
+
+
+def test_initial_style_views_join_snapshot_sse_refresh_flow():
+    """今日初版款号概览和详情应随统一快照刷新，历史日期继续拒绝 SSE。"""
+    detail_refresh = TEMPLATE.split(
+        'async function refreshDetailSilently()',
+        1,
+    )[1].split('// 概览静默刷新', 1)[0]
+    overview_refresh = TEMPLATE.split(
+        'async function refreshOverviewSilently()',
+        1,
+    )[1].split('let detailEventSource', 1)[0]
+    connect_block = TEMPLATE.split(
+        'function connectProductionDetailSSE()',
+        1,
+    )[1].split('async function handleProductionDetailSnapshot', 1)[0]
+
+    assert "refreshDetailType === 'initial_style'" in detail_refresh
+    assert 'api/dashboard/detail/initial-style/?' in detail_refresh
+    assert "refreshGroupMode === 'initial_style'" in overview_refresh
+    assert 'api/dashboard/detail/initial-style-overview/?' in overview_refresh
+    assert 'if (isHistoricalDate.value) return;' in connect_block
 
 
 def test_product_view_exposes_initial_style_as_optional_dimension():

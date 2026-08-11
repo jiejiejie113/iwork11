@@ -15,7 +15,6 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-from django.contrib import admin
 from django.urls import path, include
 from iwork import views, api_views
 
@@ -46,6 +45,8 @@ urlpatterns = [
 
     # 生产详情 API
     path("api/dashboard/detail/stepno-overview/", api_views.stepno_overview, name="detail-stepno-overview"),
+    path("api/dashboard/detail/initial-style-overview/", api_views.initial_style_overview, name="detail-initial-style-overview"),
+    path("api/dashboard/detail/initial-style/", api_views.initial_style_detail, name="detail-initial-style-detail"),
     path("api/dashboard/detail/flows/", api_views.flow_overview, name="detail-flow-overview"),
     path("api/dashboard/detail/flow/<str:flow_name>/", api_views.flow_detail, name="detail-flow-detail"),
     path("api/dashboard/detail/stepno/<int:stepno>/", api_views.stepno_detail, name="detail-stepno-detail"),
@@ -55,6 +56,7 @@ urlpatterns = [
     path("production/detail-data/", views.production_detail, name="production-detail"),
     path("production/detail-data/flow/<str:flow_name>/", views.production_detail_flow, name="production-detail-flow"),
     path("production/detail-data/stepno/<int:stepno>/", views.production_detail_stepno, name="production-detail-stepno"),
+    path("production/detail-data/initial-style/", views.production_detail_initial_style, name="production-detail-initial-style"),
 
     # 产量看板
     path("kanban/", views.kanban_page, name="kanban-page"),
