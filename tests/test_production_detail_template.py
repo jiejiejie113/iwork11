@@ -355,9 +355,14 @@ def test_flow_table_uses_composite_key_step_rows():
 
 def test_flow_table_has_visible_themed_horizontal_scroll_and_drag():
     """Flow 表格应支持可见的主题滚动与拖动。"""
+    detail_panel = TEMPLATE.split('<!-- 右侧：员工明细表 -->', 1)[1].split(
+        '<!-- ===== 版面2：卡片视图',
+        1,
+    )[0]
     assert 'detail-table-scroll' in TEMPLATE
     assert 'ref="detailTableScrollRef"' in TEMPLATE
     assert '<div ref="detailTableScrollRef" class="overflow-auto flex-1 detail-table-scroll"' in TEMPLATE
+    assert 'flex-1 min-w-0 min-h-0' in detail_panel
     assert 'function onDetailTablePointerDown' in TEMPLATE
     assert 'detailTableEl.scrollLeft = detailTableStartScrollLeft - dx;' in TEMPLATE
     assert 'hide-scrollbar' not in TEMPLATE.split('ref="detailTableScrollRef"', 1)[1].split('<table', 1)[0]
