@@ -166,6 +166,43 @@ def test_initial_style_number_flows_through_realtime_and_detail_views():
     assert product_workorder["initial_style_no"] == "SAMPLE-01"
 
 
+def test_flow_overview_lists_styles_from_all_steps_but_counts_step_70_only():
+    """Flow 卡片应展示全部工序出现的初版款号，件数只累计工序 70。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 17,
+                "wrk_order": "BU-NON-OUTPUT",
+                "flow": "SO3-L3B",
+                "qty": 6,
+            },
+            {
+                "reg_per_sys_id": 1002,
+                "stepno": 70,
+                "wrk_order": "BU-OUTPUT",
+                "flow": "SO3-L3B",
+                "qty": 80,
+            },
+        ],
+        products={
+            "BU-NON-OUTPUT": {"initial_style_no": "30405"},
+            "BU-OUTPUT": {"initial_style_no": "30406"},
+        },
+    )
+
+    overview = source.get_batch_flow_overview(BUSINESS_DATE)["SO3-L3B"]
+
+    assert overview["stepnos"]["70"]["qty"] == 80
+    assert overview["initial_styles"] == [
+        {"initial_style_no": "30406", "qty": 80},
+        {"initial_style_no": "30405", "qty": 0},
+    ]
+
+
 def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
     """产品视图应保留全部 Flow，生产线视图仍只显示普通线白名单。"""
     from iwork.read_model.fact_source import ReadModelFactSource

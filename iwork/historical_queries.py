@@ -1,7 +1,7 @@
 from datetime import date
 
 from django.conf import settings
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 
 from iwork.local_models import HistoricalProductionFact, HistoricalStepSnapshot
 from iwork.queries import _build_flow_employees
@@ -115,9 +115,13 @@ def get_batch_flow_overview(target_date: date) -> dict:
         ).values('wrk_order', 'initial_style_no').distinct()
     }
     initial_style_rows = (
-        facts.filter(step_no=settings.ALLOWED_FLOWS_STEPNO)
-        .values('flow', 'wrk_order')
-        .annotate(qty=Sum('qty'))
+        facts.values('flow', 'wrk_order')
+        .annotate(
+            qty=Sum(
+                'qty',
+                filter=Q(step_no=settings.ALLOWED_FLOWS_STEPNO),
+            ),
+        )
     )
     initial_style_qty = {}
     for row in initial_style_rows:

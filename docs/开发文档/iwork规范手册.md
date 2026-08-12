@@ -201,8 +201,9 @@ flows = list(settings.VISIBLE_FLOWS)
 初版款号必须按完整 `WrkOrder` 从远程只读表 `payroll.pywrkord` 一次批量读取，
 `ExtField01` 去除首尾空白后映射为 `initial_style_no`。该查询和 `pytckreg3` 当日事实必须
 位于 Celery 的同一 `REPEATABLE READ` 事务水位；Web 请求禁止远程回源。初版款号进入
-实时生产列表、Flow 员工步骤、Flow 概览和产品树。Flow 概览的初版款号件数只统计
-`ALLOWED_FLOWS_STEPNO`（当前工序 70），避免同一件产品在多工序重复累计。
+实时生产列表、Flow 员工步骤、Flow 概览和产品树。Flow 概览必须从该分组全部工序记录
+收集当天出现的初版款号；每个初版款号的件数只统计 `ALLOWED_FLOWS_STEPNO`（当前工序
+70），没有工序 70 记录的初版款号仍保留并显示 0 件，避免同一件产品在多工序重复累计。
 
 历史快照把 `initial_style_no` 冻结在 `HistoricalStepSnapshot`。新增字段上线后使用
 `backfill_historical_initial_styles` 幂等回填：只处理成功快照中的空字段，按日期使用
@@ -544,7 +545,7 @@ const workorderItems = computed(() => {
 | API 字段 | 前端变量 | 用途 |
 |----------|----------|------|
 | `flow_overview` | `flowCards` | Flow 概览卡片；完整工序汇总用于计算最慢工序 |
-| `flow_overview.*.initial_styles` | `card.initial_styles` | 工序70口径的初版款号及件数；支持概览部分匹配搜索 |
+| `flow_overview.*.initial_styles` | `card.initial_styles` | 全工序收集初版款号、工序70统计件数；支持概览部分匹配搜索 |
 | `flow_overview.*.stepnos[70].qty` | `card.output_qty` | 生产线卡片显示的工序70总件数 |
 | `initial-style-overview.items` | `initialStyleCards` | 普通线初版款号卡片、工序70总件数、去重人数和本厂款号数 |
 | `initial-style-overview.items[].flows` | `card.flows` | 初版款号在各生产线的工序70件数与人数 |

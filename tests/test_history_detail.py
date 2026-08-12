@@ -199,11 +199,16 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-def test_historical_flow_overview_counts_initial_styles_from_step_70_only(client):
-    """历史 Flow 卡片的初版款号件数只能采用普通线工序 70。"""
+def test_historical_flow_overview_lists_all_styles_and_counts_step_70_only(client):
+    """历史 Flow 卡片应展示全部初版款号，件数只采用普通线工序 70。"""
     target_date = date(2026, 7, 15)
     registered_at = timezone.make_aware(datetime(2026, 7, 15, 10))
-    for step_no, qty in ((70, 80), (80, 30)):
+    rows = (
+        ('BU1208A', 70, 80, 'SAMPLE-01'),
+        ('BU1208A', 80, 30, 'SAMPLE-01'),
+        ('BU1209', 17, 25, 'SAMPLE-02'),
+    )
+    for wrk_order, step_no, qty, initial_style_no in rows:
         HistoricalProductionFact.objects.using('iwork_local').create(
             production_date=target_date,
             event_hour=10,
@@ -212,22 +217,22 @@ def test_historical_flow_overview_counts_initial_styles_from_step_70_only(client
             flow='SO5-L5C',
             station_id='L5C',
             employee_id=1942,
-            wrk_order='BU1208A',
+            wrk_order=wrk_order,
             step_no=step_no,
             qty=qty,
             source_record_count=1,
         )
         HistoricalStepSnapshot.objects.using('iwork_local').create(
             snapshot_date=target_date,
-            wrk_order='BU1208A',
+            wrk_order=wrk_order,
             step_no=step_no,
-            initial_style_no='SAMPLE-01',
+            initial_style_no=initial_style_no,
         )
     HistoricalSyncState.objects.using('iwork_local').create(
         snapshot_date=target_date,
         status=HistoricalSyncState.Status.SUCCESS,
-        fact_row_count=2,
-        metadata_row_count=2,
+        fact_row_count=3,
+        metadata_row_count=3,
     )
 
     response = client.get('/api/dashboard/detail/flows/?date=2026-07-15')
@@ -235,6 +240,7 @@ def test_historical_flow_overview_counts_initial_styles_from_step_70_only(client
     assert response.status_code == 200
     assert response.json()['SO5-L5C']['initial_styles'] == [
         {'initial_style_no': 'SAMPLE-01', 'qty': 80},
+        {'initial_style_no': 'SAMPLE-02', 'qty': 0},
     ]
 
 

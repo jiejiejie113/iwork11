@@ -450,12 +450,14 @@ class ReadModelFactSource:
             if employee_id is not None:
                 workers[(flow, stepno)].add(employee_id)
                 total_workers[flow].add(employee_id)
+            wrk_order = str(item.get("wrk_order") or "")
+            initial_style_no = str(
+                self.products.get(wrk_order, {}).get("initial_style_no") or ""
+            )
+            style_key = (flow, initial_style_no)
+            initial_style_qty.setdefault(style_key, 0)
             if stepno == ALLOWED_FLOWS_STEPNO:
-                wrk_order = str(item.get("wrk_order") or "")
-                initial_style_no = str(
-                    self.products.get(wrk_order, {}).get("initial_style_no") or ""
-                )
-                initial_style_qty[(flow, initial_style_no)] += self._qty(item)
+                initial_style_qty[style_key] += self._qty(item)
         result: dict[str, dict] = {}
         for flow, stepno in sorted(qty):
             row = result.setdefault(flow, {"stepnos": {}, "total_workers": 0})
