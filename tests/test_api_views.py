@@ -1286,6 +1286,33 @@ class TestDashboardStream:
         assert response['Cache-Control'] == 'no-cache'
 
     @pytest.mark.asyncio
+    async def test_sse_connection_ends_normally_when_authorization_lease_expires(self):
+        """连接在租约内发送数据，并在到期后正常结束以触发重新授权。"""
+        from iwork.api_views import dashboard_stream
+
+        factory = APIRequestFactory()
+        payload = {
+            'data': {'total_qty': 500},
+            'process_list': [70],
+            'detail_overview': {},
+        }
+        with (
+            patch(
+                'iwork.api_views.READ_MODEL.stream_payload',
+                return_value=_snapshot_result(payload),
+            ),
+            patch('iwork.api_views.SSE_CONNECTION_LEASE_SECONDS', 0.01),
+            patch('iwork.api_views.SSE_HEARTBEAT_SECONDS', 60.0),
+        ):
+            response = await dashboard_stream(factory.get('/api/dashboard/stream/'))
+            stream = response.streaming_content
+            first_chunk = await anext(stream)
+
+            assert first_chunk.decode('utf-8').startswith('data: ')
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(anext(stream), timeout=0.2)
+
+    @pytest.mark.asyncio
     async def test_sse_first_chunk_has_valid_json(self):
         """SSE 第一条消息包含快照版本与同版本数据。"""
         from iwork.api_views import dashboard_stream

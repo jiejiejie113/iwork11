@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-11
+> 最后更新：2026-08-12
 
 ---
 
@@ -95,6 +95,7 @@ Uvicorn ASGI (4 workers)
 | `SSE_PAYLOAD_CACHE_SIZE` | 每 Worker 共享序列化负载的最大键数量，默认 64 | `sse_events.py` |
 | `SSE_PAYLOAD_BUILD_CONCURRENCY` | 不同日期/工序负载的最大并行构建数，默认 4 | `sse_events.py` |
 | `SSE_HEARTBEAT_SECONDS` | SSE 注释心跳间隔，默认 15 秒 | `api_views.py` |
+| `SSE_CONNECTION_LEASE_SECONDS` | 每条SSE连接的授权租约，默认60秒；到期正常结束并由EventSource重连重新经过Portal应用权限检查 | `api_views.py` |
 | `SSE_NOTIFICATION_POLL_SECONDS` | Pub/Sub 丢消息时的共享版本核对间隔，默认 60 秒 | `api_views.py` / `sse_events.py` |
 | `HISTORY_SNAPSHOT_LOCK_TIMEOUT` | 历史快照构建和执行中请求锁租约，默认 1800 秒 | `history_store.py` / `tasks.py` |
 | `HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL` | 历史快照构建锁续租间隔，默认 60 秒 | `history_store.py` |

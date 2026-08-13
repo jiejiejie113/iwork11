@@ -60,6 +60,7 @@ READ_MODEL = ReadModelQueries()
 # ======
 # SSE 保活配置
 SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
+SSE_CONNECTION_LEASE_SECONDS = settings.SSE_CONNECTION_LEASE_SECONDS
 SSE_NOTIFICATION_POLL_SECONDS = settings.SSE_NOTIFICATION_POLL_SECONDS
 
 
@@ -1499,18 +1500,27 @@ async def dashboard_stream(request):
         Yields:
             str: SSE 数据事件、不可用事件或心跳注释。
         """
+        lease_deadline = asyncio.get_running_loop().time() + SSE_CONNECTION_LEASE_SECONDS
         last_version = None
         has_attempted_payload = False
         async with broker.subscribe() as notification_queue:
             while True:
+                remaining_lease = lease_deadline - asyncio.get_running_loop().time()
+                if remaining_lease <= 0:
+                    return
                 notification = None
                 if has_attempted_payload:
+                    waiting_for_lease_expiry = (
+                        remaining_lease <= SSE_HEARTBEAT_SECONDS
+                    )
                     try:
                         notification = await asyncio.wait_for(
                             notification_queue.get(),
-                            timeout=SSE_HEARTBEAT_SECONDS,
+                            timeout=min(SSE_HEARTBEAT_SECONDS, remaining_lease),
                         )
                     except TimeoutError:
+                        if waiting_for_lease_expiry:
+                            return
                         yield ": heartbeat\n\n"
 
                 current_business_date = get_business_date()
