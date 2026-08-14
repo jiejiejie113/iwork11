@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-12
+> 最后更新：2026-08-13
 
 ---
 
@@ -60,6 +60,9 @@ Uvicorn ASGI (4 workers)
 ### 运行与测试环境
 
 - Docker 使用 `env/local.env` 或 `env/production.env` 保存非敏感配置；
+- DITU 命名迁移后正式生产入口为 `dituportal.dongming.local`，认证入口为
+  `auth.dituportal.dongming.local`；观察期内 `DJANGO_ALLOWED_HOSTS` 必须同时保留
+  两个旧 DKT 域名，由 Portal Nginx 执行 307 兼容跳转，iwork 不自行生成跨域跳转；
 - 真实密钥从两个仓库共同上级目录的 `dkt-secrets.env` 显式注入；
 - `DKT_iwork` 的 8000 端口只在 `docker_dkt-net` 内暴露，外部请求必须经过 Nginx 和 oauth2-proxy；
 - pytest 固定加载 `iwork.test_settings`，使用内存 SQLite、LocMem 缓存和内存 Celery，不依赖开发数据库或 Redis；

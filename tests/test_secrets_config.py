@@ -27,6 +27,22 @@ def test_non_secret_profiles_are_present_and_contain_no_passwords():
         assert 'SECRET_KEY=' not in content
 
 
+def test_production_profile_accepts_ditu_and_legacy_portal_hosts():
+    """生产环境在迁移观察期必须同时接受DITU正式入口和DKT旧入口。"""
+    content = (ROOT / 'env' / 'production.env').read_text(encoding='utf-8')
+    allowed_hosts_line = next(
+        line for line in content.splitlines() if line.startswith('DJANGO_ALLOWED_HOSTS=')
+    )
+    allowed_hosts = set(allowed_hosts_line.split('=', 1)[1].split(','))
+
+    assert {
+        'dituportal.dongming.local',
+        'auth.dituportal.dongming.local',
+        'dktportal.dongming.local',
+        'auth.dktportal.dongming.local',
+    } <= allowed_hosts
+
+
 def test_deploy_script_loads_profile_and_central_secrets():
     content = (ROOT / 'deploy.ps1').read_text(encoding='utf-8')
     assert "'--env-file', $Profile" in content
