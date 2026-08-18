@@ -798,7 +798,7 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 
 - 写接口必须使用Nginx/Authorizer注入的稳定`Remote-Subject`。
 - iwork只信任`IWORK_TRUSTED_PROXY_HOSTS`解析出的明确代理地址；禁止按整个私网网段信任身份头。
-- `/admin`推导管理员；当日有效`ManagedFlowAssignment`推导组长；其余iwork账号为普通用户。
+- 可信代理声明中的Keycloak短组名`admin`或全路径组名`/admin`推导管理员；当日有效`ManagedFlowAssignment`推导组长；其余iwork账号为普通用户。不得接受其他管理员组名。
 - 本地Principal只保存展示快照，授权判断始终使用当前请求身份和有效分配。
 
 ### 13.2 目标责任

@@ -1,5 +1,6 @@
 """可信账户、Flow 分配和每日目标责任 API。"""
 
+import re
 from datetime import date, time
 
 import requests
@@ -37,6 +38,9 @@ from iwork.target_responsibility import (
 ACCOUNT_ACCESS_VALIDATION_URL = (
     'http://DKT_kc_nginx:8080/api/management/iwork/accounts/'
 )
+ACCOUNT_ACCESS_VALIDATION_HOST_PATTERN = re.compile(
+    r'^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$'
+)
 
 
 def _validate_target_iwork_access(request, *, subject: str, username: str) -> None:
@@ -58,10 +62,23 @@ def _validate_target_iwork_access(request, *, subject: str, username: str) -> No
             '账号访问权校验服务配置无效',
             503,
         )
+    host_header = settings.IWORK_ACCOUNT_ACCESS_VALIDATION_HOST_HEADER
+    if (
+        not isinstance(host_header, str)
+        or not ACCOUNT_ACCESS_VALIDATION_HOST_PATTERN.fullmatch(host_header)
+    ):
+        raise TargetResponsibilityError(
+            'account_access_validation_unavailable',
+            '账号访问权校验Host配置无效',
+            503,
+        )
     try:
         response = requests.get(
             ACCOUNT_ACCESS_VALIDATION_URL,
-            headers={'Cookie': request.META.get('HTTP_COOKIE', '')},
+            headers={
+                'Cookie': request.META.get('HTTP_COOKIE', ''),
+                'Host': host_header,
+            },
             params={'username': username, 'access_only': '1'},
             timeout=settings.IWORK_ACCOUNT_ACCESS_VALIDATION_TIMEOUT_SECONDS,
             allow_redirects=False,

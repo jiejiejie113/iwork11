@@ -67,11 +67,17 @@ Flow写入由Portal先复验`/apps/iwork`并覆盖浏览器subject，iwork再调
 - Portal、Authorizer和oauth2-proxy已重建，Keycloak保持原数据库与卷；授权资源同步结果为6个资源、7个策略和6个权限。
 - Nginx配置检查通过并完成平滑重载；运行配置确认先清空浏览器传入的`Remote-Subject`，再注入Authorizer返回的可信subject。
 - Portal、iwork和管理页的匿名访问均返回302，并跳转到本地`http://192.168.30.190:8080/realms/dkt`；OIDC discovery返回200，issuer严格等于本地Realm地址；退出链路回到本地Keycloak。
-- 浏览器已实际到达本地Keycloak登录页。当前验收浏览器没有登录会话，因此未伪造Cookie或账号；管理员、组长和普通用户的真实交互矩阵仍需使用真实测试账号登录后补验，自动化测试已覆盖对应权限分支。
+- 已使用4个唯一前缀临时Keycloak账号完成真实OIDC验收：管理员、组长、普通用户和仅有`/users`的无应用访问权账号均通过本地Realm登录。管理员管理页返回200，组长和普通用户返回403；前三类账号可访问iwork，无应用访问权账号返回403。
+- 真实权限矩阵已验证：管理员可分配Flow和修改任意Flow目标；组长只能修改所属Flow；普通用户不能修改目标；无iwork访问权账号不能被分配Flow。`/api/account/me/`正确解析管理员、组长和普通用户角色，0目标按有效填报处理。
+- 真实通知链路已验证：目标逾期警报仅管理员可见，组长和普通用户不可见；通知SSE返回200及正确`text/event-stream`；移出`/apps/iwork`后等待18秒，原组长会话访问iwork收敛为403。
+- 实机验收发现两项仅在真实代理链出现的问题并已修复：内部Nginx地址`DKT_kc_nginx`含下划线，不能作为Django Host，因此Portal和iwork改为使用独立、格式受限的固定Host配置；本地Keycloak的Groups Mapper使用`full.path=false`，真实声明为`admin`而非`/admin`，因此iwork兼容可信代理传入的`admin`与`/admin`两种精确组名。
+- 临时账号密码只在运行时随机生成，不写入日志或代码。验收结束后4个Keycloak账号和Flow分配由`finally`清理；随后按唯一测试前缀、业务日期和4个隔离Flow精确删除2条目标、3条责任、4条审计、1条警报、2条通知回执和6条Principal快照，并删除对应Redis目标键。清理后相关计数均为0。
 
 首次Portal重建时发现Keycloak数据卷的导入目录残留一个2026-06-16生成的0字节`dkt-realm.json`，导致Keycloak报`No content to map due to end-of-input`并重启。处置时只停止本地Keycloak、删除已核实为空的历史导入文件并重新启动；没有删除或重建数据库、卷或Realm。恢复后Keycloak健康且重启次数为0，完整联合重建与连通性检查通过。
 
 非阻断既有警告：Celery worker当前仍以root运行；Nginx仍提示DSM配置存在重复`text/html` MIME声明和代理Header哈希尺寸非最优。本轮未扩大范围修改这些历史配置。
+
+本次iwork重建时，联合脚本在容器刚启动后立即执行内部HTTP检查，首次出现一次`Connection refused`。容器继续启动后，`DKT_iwork`内部HTTP返回200，`DKT_iwork_alert_worker`健康，确认是检查时机竞态，不是镜像或应用启动失败。联合重建脚本已改为最多等待120秒并每3秒复验一次，避免正常启动过程被误报为部署失败。
 
 ## 部署与回滚
 

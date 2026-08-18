@@ -41,6 +41,31 @@ def test_trusted_proxy_builds_complete_identity_from_remote_headers():
     }
 
 
+@override_settings(IWORK_ADMIN_GROUPS=['admin', '/admin'])
+def test_trusted_proxy_accepts_keycloak_short_admin_group():
+    """Keycloak短组名声明应被识别为iwork管理员。"""
+    from iwork.middleware import TrustedProxyMiddleware
+
+    captured = {}
+
+    def endpoint(request):
+        """记录中间件写入的短组名身份。"""
+        captured['identity'] = request.iwork_identity
+        return None
+
+    request = RequestFactory().get(
+        '/',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='keycloak-short-admin',
+        HTTP_REMOTE_USER='short-admin',
+        HTTP_REMOTE_GROUPS='users,admin,apps/iwork',
+    )
+
+    TrustedProxyMiddleware(endpoint)(request)
+
+    assert captured['identity'].is_admin is True
+
+
 def test_trusted_proxy_keeps_anonymous_dashboard_requests_available():
     """可信来源缺少身份头时仍应允许普通看板请求。"""
     from iwork.middleware import TrustedProxyMiddleware
@@ -455,5 +480,51 @@ def test_direct_assignment_revalidates_target_iwork_access(monkeypatch):
     assert response.status_code == 403
     assert response.json()['code'] == 'iwork_access_required'
     assert captured['params'] == {'username': 'leader', 'access_only': '1'}
+    assert captured['headers'] == {
+        'Cookie': '_oauth2_proxy=session',
+        'Host': 'localhost',
+    }
     assert captured['allow_redirects'] is False
+    assert not ManagedFlowAssignment.objects.exists()
+
+
+@override_settings(IWORK_ACCOUNT_ACCESS_VALIDATION_HOST_HEADER='DKT_kc_nginx')
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_direct_assignment_rejects_invalid_validation_host(monkeypatch):
+    """二次复验Host含下划线时应返回503且不发起Portal请求。"""
+    import json
+
+    from django.test import Client
+
+    from iwork.local_models import ManagedFlowAssignment
+
+    called = False
+
+    def fake_get(*args, **kwargs):
+        """记录不应发生的Portal请求。"""
+        nonlocal called
+        called = True
+        raise AssertionError('无效Host配置不应发起Portal请求')
+
+    monkeypatch.setattr('iwork.api_views_account.requests.get', fake_get)
+    response = Client().put(
+        '/api/account-admin/flow-assignments/',
+        data=json.dumps({
+            'subject': 'leader-subject',
+            'username': 'leader',
+            'flow_name': 'SO3-L3A',
+            'effective_date': '2026-08-18',
+            'expires_date': None,
+        }),
+        content_type='application/json',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_COOKIE='_oauth2_proxy=session',
+        HTTP_REMOTE_SUBJECT='admin-subject',
+        HTTP_REMOTE_USER='admin',
+        HTTP_REMOTE_GROUPS='/admin',
+    )
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'account_access_validation_unavailable'
+    assert called is False
     assert not ManagedFlowAssignment.objects.exists()

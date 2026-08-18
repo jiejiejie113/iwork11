@@ -196,7 +196,10 @@ CELERY_RESULT_SERIALIZER = 'json'
 # 业务配置（统一管理，模块内通过 django.conf.settings 引用）
 # iwork 的生产日期、班次和 Celery 调度统一使用曼谷时区。
 IWORK_BUSINESS_TIME_ZONE = env('IWORK_BUSINESS_TIME_ZONE', default='Asia/Bangkok')
-IWORK_ADMIN_GROUPS = env.list('IWORK_ADMIN_GROUPS', default=['/admin'])
+IWORK_ADMIN_GROUPS = env.list(
+    'IWORK_ADMIN_GROUPS',
+    default=['admin', '/admin'],
+)
 IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE = env(
     'IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE',
     default='09:00',
@@ -204,6 +207,10 @@ IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE = env(
 IWORK_ACCOUNT_ACCESS_VALIDATION_URL = env(
     'IWORK_ACCOUNT_ACCESS_VALIDATION_URL',
     default='http://DKT_kc_nginx:8080/api/management/iwork/accounts/',
+)
+IWORK_ACCOUNT_ACCESS_VALIDATION_HOST_HEADER = env(
+    'IWORK_ACCOUNT_ACCESS_VALIDATION_HOST_HEADER',
+    default='localhost',
 )
 IWORK_ACCOUNT_ACCESS_VALIDATION_TIMEOUT_SECONDS = env.float(
     'IWORK_ACCOUNT_ACCESS_VALIDATION_TIMEOUT_SECONDS',
