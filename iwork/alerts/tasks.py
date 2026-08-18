@@ -25,7 +25,14 @@ DELIVERY_BATCH_SIZE = 200
 
 
 def _claim_notification_deliveries(now):
-    """事务性领取一批待投递记录，避免多个Worker重复发布。"""
+    """事务性领取一批待投递记录，避免多个Worker重复发布。
+
+    Args:
+        now (datetime): 当前领取时刻。
+
+    Returns:
+        list[NotificationDelivery]: 已进入发送中状态的投递记录。
+    """
     retryable = (
         Q(status=NotificationDelivery.Status.PENDING)
         | Q(status=NotificationDelivery.Status.FAILED, next_retry_at__lte=now)
@@ -83,7 +90,11 @@ def evaluate_published_snapshot_task(
 
 @shared_task(queue="alerts")
 def reconcile_target_obligations_task() -> dict[str, object]:
-    """每分钟补偿目标责任并评估逾期与恢复。"""
+    """每分钟补偿目标责任并评估逾期与恢复。
+
+    Returns:
+        dict[str, object]: 业务日期、责任总数和逾期数。
+    """
     business_date = get_business_date()
     obligations = list_target_obligations_for_alerts(business_date)
     result = AlertService().evaluate_target_submission_overdue(business_date)
@@ -96,7 +107,11 @@ def reconcile_target_obligations_task() -> dict[str, object]:
 
 @shared_task(queue="alerts")
 def reconcile_alerts_task() -> dict[str, int]:
-    """补偿当前快照评估并重试未完成站内投递。"""
+    """补偿当前快照评估并重试未完成站内投递。
+
+    Returns:
+        dict[str, int]: 本轮成功和失败的投递数量。
+    """
     business_date = get_business_date()
     try:
         metadata = SnapshotStore().read_metadata(business_date).metadata

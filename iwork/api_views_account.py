@@ -4,6 +4,7 @@ from datetime import date, time
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -21,9 +22,11 @@ from iwork.target_responsibility import (
     LOCAL_DB_ALIAS,
     TargetResponsibilityError,
     active_assignment_query,
+    deadline_for_date,
     ensure_daily_target_obligations,
     require_admin,
     require_subject,
+    next_business_date,
     set_submission_policy,
     sync_principal,
     waive_unfinished_obligations,
@@ -31,7 +34,15 @@ from iwork.target_responsibility import (
 
 
 def _identity_or_response(request, *, admin: bool = False):
-    """取得可信身份，失败时返回统一错误响应。"""
+    """取得可信身份，失败时返回统一错误响应。
+
+    Args:
+        request (Request): 当前REST请求。
+        admin (bool): 是否要求管理员身份。
+
+    Returns:
+        tuple[IworkIdentity | None, Response | None]: 身份与错误响应二元组。
+    """
     try:
         identity = getattr(request, 'iwork_identity', None)
         identity = require_admin(identity) if admin else require_subject(identity)
@@ -44,7 +55,16 @@ def _identity_or_response(request, *, admin: bool = False):
 
 
 def _parse_date(value, field_name: str, *, required: bool = True):
-    """解析 API 日期字段并返回值或错误响应。"""
+    """解析 API 日期字段并返回值或错误响应。
+
+    Args:
+        value (object): 待解析的日期值。
+        field_name (str): 用于错误提示的字段名。
+        required (bool): 是否要求字段非空。
+
+    Returns:
+        tuple[date | None, Response | None]: 日期与错误响应二元组。
+    """
     if not value and not required:
         return None, None
     try:
@@ -57,7 +77,14 @@ def _parse_date(value, field_name: str, *, required: bool = True):
 
 
 def _assignment_payload(assignment: ManagedFlowAssignment) -> dict[str, object]:
-    """序列化 Portal 约定的 Flow 分配字段。"""
+    """序列化 Portal 约定的 Flow 分配字段。
+
+    Args:
+        assignment (ManagedFlowAssignment): 待序列化的负责人分配。
+
+    Returns:
+        dict[str, object]: Portal接口使用的负责人分配数据。
+    """
     return {
         'id': assignment.pk,
         'subject': assignment.principal.subject,
@@ -69,7 +96,14 @@ def _assignment_payload(assignment: ManagedFlowAssignment) -> dict[str, object]:
 
 
 def _obligation_payload(obligation: DailyTargetObligation) -> dict[str, object]:
-    """序列化 Portal 约定的每日目标责任字段。"""
+    """序列化 Portal 约定的每日目标责任字段。
+
+    Args:
+        obligation (DailyTargetObligation): 待序列化的每日目标责任。
+
+    Returns:
+        dict[str, object]: Portal接口使用的每日目标责任数据。
+    """
     leaders = [
         {'subject': leader.subject, 'username': leader.username}
         for leader in obligation.leader_links.all()
@@ -87,7 +121,14 @@ def _obligation_payload(obligation: DailyTargetObligation) -> dict[str, object]:
 
 @api_view(['GET'])
 def me(request):
-    """返回当前可信身份和当日有效 Flow 分配。"""
+    """返回当前可信身份和当日有效 Flow 分配。
+
+    Args:
+        request (Request): 当前账户信息请求。
+
+    Returns:
+        Response: 身份、有效分配或身份错误响应。
+    """
     identity, error = _identity_or_response(request)
     if error:
         return error
@@ -106,7 +147,14 @@ def me(request):
 
 @api_view(['GET', 'PUT'])
 def flow_assignments(request):
-    """管理员列出或创建 Flow 负责人分配。"""
+    """管理员列出或创建 Flow 负责人分配。
+
+    Args:
+        request (Request): GET列表或PUT保存请求。
+
+    Returns:
+        Response: 分配列表、保存结果或错误响应。
+    """
     identity, error = _identity_or_response(request, admin=True)
     if error:
         return error
@@ -131,6 +179,7 @@ def flow_assignments(request):
     )
     if expires_error:
         return expires_error
+    assignment_id = request.data.get('id')
     if not subject or not flow_name:
         return Response(
             {'error': 'subject 和 flow_name 均为必填项', 'code': 'invalid_assignment'},
@@ -146,7 +195,13 @@ def flow_assignments(request):
             {'error': 'expires_date 不能早于 effective_date', 'code': 'invalid_assignment_dates'},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    assignment_id = request.data.get('id')
+    business_date = get_business_date()
+    if (
+        assignment_id is None
+        and effective_date <= business_date
+        and timezone.now() > deadline_for_date(business_date)
+    ):
+        effective_date = next_business_date(business_date)
     try:
         with transaction.atomic(using=LOCAL_DB_ALIAS):
             principal, _ = IworkPrincipal.objects.using(LOCAL_DB_ALIAS).update_or_create(
@@ -188,7 +243,15 @@ def flow_assignments(request):
 
 @api_view(['DELETE'])
 def flow_assignment_detail(request, assignment_id: int):
-    """管理员删除单条 Flow 负责人分配。"""
+    """管理员删除单条 Flow 负责人分配。
+
+    Args:
+        request (Request): 删除负责人分配的请求。
+        assignment_id (int): 待删除的负责人分配主键。
+
+    Returns:
+        Response: 空成功响应或错误响应。
+    """
     identity, error = _identity_or_response(request, admin=True)
     if error:
         return error
@@ -212,7 +275,14 @@ def flow_assignment_detail(request, assignment_id: int):
 
 @api_view(['GET'])
 def target_obligations(request):
-    """返回管理员全部或当前组长自己的每日目标责任。"""
+    """返回管理员全部或当前组长自己的每日目标责任。
+
+    Args:
+        request (Request): 带可选日期参数的责任查询请求。
+
+    Returns:
+        Response: 每日目标责任列表或错误响应。
+    """
     identity, error = _identity_or_response(request, admin=True)
     if error:
         return error
@@ -234,7 +304,14 @@ def target_obligations(request):
 
 @api_view(['GET', 'PUT'])
 def target_policy(request):
-    """读取当前策略，或由管理员设置下一业务日生效的策略。"""
+    """读取当前策略，或由管理员设置下一业务日生效的策略。
+
+    Args:
+        request (Request): GET读取或PUT设置策略请求。
+
+    Returns:
+        Response: 当前策略、保存后的策略或错误响应。
+    """
     identity, error = _identity_or_response(request, admin=True)
     if error:
         return error

@@ -43,7 +43,12 @@ class AlertService:
         detectors: Mapping[str, AlertDetector] | None = None,
         snapshot_loader: Callable[[date, str], tuple[dict, dict | None]] | None = None,
     ) -> None:
-        """注入检测器和快照读取器，默认仅保留禁用的水位扩展点。"""
+        """注入检测器和快照读取器，默认仅保留禁用的水位扩展点。
+
+        Args:
+            detectors (Mapping[str, AlertDetector] | None): 按规则编码索引的检测器。
+            snapshot_loader (Callable | None): 按日期和版本读取快照的函数。
+        """
         self.detectors = dict(detectors or {})
         self.snapshot_loader = snapshot_loader or (lambda _date, _version: ({}, None))
 
@@ -63,6 +68,9 @@ class AlertService:
 
         Returns:
             EvaluationResult: 本轮日期、版本和事件数量。
+
+        Raises:
+            Exception: 快照读取、检测或持久化失败时原样抛出。
         """
         rules = self.ensure_builtin_rules()
         with transaction.atomic(using=LOCAL_DB_ALIAS):
@@ -122,7 +130,16 @@ class AlertService:
         candidate: AlertCandidate,
         snapshot_version: str,
     ) -> AlertEvent:
-        """把测试或后续正式检测器候选幂等转换为事件、受众和投递。"""
+        """把测试或后续正式检测器候选幂等转换为事件、受众和投递。
+
+        Args:
+            rule (AlertRule): 候选对应的警报规则。
+            candidate (AlertCandidate): 检测器生成的警报候选。
+            snapshot_version (str): 候选来源快照版本。
+
+        Returns:
+            AlertEvent: 创建或更新后的警报事件。
+        """
         with transaction.atomic(using=LOCAL_DB_ALIAS):
             event, created = AlertEvent.objects.using(LOCAL_DB_ALIAS).get_or_create(
                 rule=rule,

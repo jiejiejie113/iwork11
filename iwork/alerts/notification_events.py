@@ -110,7 +110,11 @@ class NotificationWakeupBroker:
             self._listener_task = asyncio.create_task(self._listen_forever())
 
     async def _listen_forever(self) -> None:
-        """监听跨容器唤醒并在Redis断线后自动重连。"""
+        """监听跨容器唤醒并在Redis断线后自动重连。
+
+        Raises:
+            asyncio.CancelledError: 监听任务被取消时向上抛出。
+        """
         retry_delay = 1.0
         while True:
             client = None
@@ -152,7 +156,14 @@ class NotificationWakeupBroker:
 
 
 def _parse_wakeup(message: object) -> dict[str, object] | None:
-    """校验Redis内部通知唤醒负载。"""
+    """校验Redis内部通知唤醒负载。
+
+    Args:
+        message (object): Redis频道收到的原始消息体。
+
+    Returns:
+        dict[str, object] | None: 标准化唤醒负载；无效时返回 ``None``。
+    """
     try:
         payload = json.loads(message) if isinstance(message, (str, bytes)) else message
         if not isinstance(payload, dict) or payload.get("protocol_version") != NOTIFICATION_PROTOCOL_VERSION:

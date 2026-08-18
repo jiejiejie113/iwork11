@@ -63,7 +63,17 @@ def require_subject(identity: IworkIdentity | None) -> IworkIdentity:
 
 
 def sync_principal(identity: IworkIdentity) -> IworkPrincipal:
-    """把可信身份的最新展示属性同步到本地数据库。"""
+    """把可信身份的最新展示属性同步到本地数据库。
+
+    Args:
+        identity (IworkIdentity): 待同步的可信身份。
+
+    Returns:
+        IworkPrincipal: 创建或更新后的本地用户。
+
+    Raises:
+        TargetResponsibilityError: 身份缺少稳定subject时抛出。
+    """
     identity = require_subject(identity)
     principal, _ = IworkPrincipal.objects.using(LOCAL_DB_ALIAS).update_or_create(
         subject=identity.subject,
@@ -79,7 +89,14 @@ def sync_principal(identity: IworkIdentity) -> IworkPrincipal:
 
 
 def next_business_date(value: date) -> date:
-    """返回仅排除周末的下一业务日。"""
+    """返回仅排除周末的下一业务日。
+
+    Args:
+        value (date): 起算日期。
+
+    Returns:
+        date: 起算日期之后的首个工作日。
+    """
     result = value + timedelta(days=1)
     while result.weekday() >= 5:
         result += timedelta(days=1)
@@ -87,7 +104,14 @@ def next_business_date(value: date) -> date:
 
 
 def active_assignment_query(target_date: date) -> models.Q:
-    """构造指定日期有效的负责人条件。"""
+    """构造指定日期有效的负责人条件。
+
+    Args:
+        target_date (date): 待判断分配有效性的日期。
+
+    Returns:
+        models.Q: 可组合到查询集的有效期条件。
+    """
     return models.Q(effective_date__lte=target_date) & (
         models.Q(expires_date__isnull=True) | models.Q(expires_date__gte=target_date)
     )
@@ -98,7 +122,19 @@ def identity_can_manage_flow(
     flow_name: str,
     target_date: date,
 ) -> bool:
-    """判断管理员或有效组长能否管理指定 Flow。"""
+    """判断管理员或有效组长能否管理指定 Flow。
+
+    Args:
+        identity (IworkIdentity): 待校验的可信身份。
+        flow_name (str): 生产组名称。
+        target_date (date): 权限生效日期。
+
+    Returns:
+        bool: 允许管理时返回 ``True``。
+
+    Raises:
+        TargetResponsibilityError: 身份缺少稳定subject时抛出。
+    """
     identity = require_subject(identity)
     if identity.is_admin:
         return True
@@ -114,7 +150,16 @@ def require_flow_permission(
     flow_name: str,
     target_date: date,
 ) -> None:
-    """校验目标写入的管理员或组长权限。"""
+    """校验目标写入的管理员或组长权限。
+
+    Args:
+        identity (IworkIdentity): 待校验的可信身份。
+        flow_name (str): 目标所属生产组。
+        target_date (date): 目标业务日期。
+
+    Raises:
+        TargetResponsibilityError: 身份无效或无权管理生产组时抛出。
+    """
     if not identity_can_manage_flow(identity, flow_name, target_date):
         raise TargetResponsibilityError(
             'managed_flow_required',
@@ -124,7 +169,17 @@ def require_flow_permission(
 
 
 def require_admin(identity: IworkIdentity | None) -> IworkIdentity:
-    """要求请求身份是管理员。"""
+    """要求请求身份是管理员。
+
+    Args:
+        identity (IworkIdentity | None): 待校验的请求身份。
+
+    Returns:
+        IworkIdentity: 已认证的管理员身份。
+
+    Raises:
+        TargetResponsibilityError: 身份缺失或不是管理员时抛出。
+    """
     identity = require_subject(identity)
     if not identity.is_admin:
         raise TargetResponsibilityError('admin_required', '此接口仅限管理员', 403)
@@ -132,7 +187,14 @@ def require_admin(identity: IworkIdentity | None) -> IworkIdentity:
 
 
 def get_policy_for_date(target_date: date) -> tuple[time, str]:
-    """获取目标日期生效的策略，缺省为曼谷 09:00。"""
+    """获取目标日期生效的策略，缺省为曼谷 09:00。
+
+    Args:
+        target_date (date): 待查询策略的业务日期。
+
+    Returns:
+        tuple[time, str]: 截止时间和IANA时区名称。
+    """
     policy = TargetSubmissionPolicy.objects.using(LOCAL_DB_ALIAS).filter(
         effective_date__lte=target_date,
     ).order_by('-effective_date').first()
@@ -146,13 +208,30 @@ def get_policy_for_date(target_date: date) -> tuple[time, str]:
 
 
 def deadline_for_date(target_date: date) -> datetime:
-    """计算指定业务日期的时区感知截止时间。"""
+    """计算指定业务日期的时区感知截止时间。
+
+    Args:
+        target_date (date): 目标业务日期。
+
+    Returns:
+        datetime: 带策略时区的截止时刻。
+
+    Raises:
+        ZoneInfoNotFoundError: 策略中的IANA时区不存在时抛出。
+    """
     deadline_time, timezone_name = get_policy_for_date(target_date)
     return datetime.combine(target_date, deadline_time, tzinfo=ZoneInfo(timezone_name))
 
 
 def _now_instant(now: datetime | None) -> datetime:
-    """返回用于状态比较的时区感知当前时间。"""
+    """返回用于状态比较的时区感知当前时间。
+
+    Args:
+        now (datetime | None): 可注入的当前时刻。
+
+    Returns:
+        datetime: 保留原时区或补充默认时区的时刻。
+    """
     value = now or timezone.now()
     if timezone.is_naive(value):
         return timezone.make_aware(value, ZoneInfo(DEFAULT_TIMEZONE_NAME))
@@ -243,7 +322,14 @@ def ensure_daily_target_obligations(
 
 
 def mark_overdue_target_obligations(*, now: datetime | None = None) -> int:
-    """批量把超过截止时间的待提交责任标记为逾期。"""
+    """批量把超过截止时间的待提交责任标记为逾期。
+
+    Args:
+        now (datetime | None): 可注入的当前时刻。
+
+    Returns:
+        int: 更新为逾期状态的责任数量。
+    """
     instant = _now_instant(now)
     return DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).filter(
         status=DailyTargetObligation.Status.PENDING,
@@ -291,6 +377,9 @@ def waive_unfinished_obligations(
 
     Returns:
         int: 本次免除的责任数。
+
+    Raises:
+        TargetResponsibilityError: 当前身份不是管理员时抛出。
     """
     require_admin(identity)
     instant = _now_instant(now)
@@ -346,6 +435,9 @@ def save_group_target(
 
     Returns:
         GroupTargetProduction: 已保存目标。
+
+    Raises:
+        TargetResponsibilityError: 身份、日期、权限或目标数量不合法时抛出。
     """
     identity = require_subject(identity)
     if not identity.is_admin and target_date != get_business_date():
@@ -428,7 +520,20 @@ def set_submission_policy(
     timezone_name: str,
     as_of_date: date,
 ) -> TargetSubmissionPolicy:
-    """创建从下一业务日生效的提交策略版本。"""
+    """创建从下一业务日生效的提交策略版本。
+
+    Args:
+        identity (IworkIdentity): 执行设置的管理员身份。
+        deadline_time (time): 每日目标提交截止时间。
+        timezone_name (str): 截止时间使用的IANA时区名称。
+        as_of_date (date): 计算生效日期的当前业务日。
+
+    Returns:
+        TargetSubmissionPolicy: 创建或更新后的策略版本。
+
+    Raises:
+        TargetResponsibilityError: 身份无权设置或时区无效时抛出。
+    """
     require_admin(identity)
     try:
         ZoneInfo(timezone_name)

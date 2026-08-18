@@ -25,12 +25,23 @@ LOCAL_DB_ALIAS = "iwork_local"
 
 
 def _request_identity(request: HttpRequest) -> IworkIdentity:
-    """读取中间件挂载的可信身份，缺失时返回匿名身份。"""
+    """读取中间件挂载的可信身份，缺失时返回匿名身份。
+
+    Args:
+        request (HttpRequest): 当前HTTP请求。
+
+    Returns:
+        IworkIdentity: 可信身份或匿名身份。
+    """
     return getattr(request, "iwork_identity", ANONYMOUS_IDENTITY)
 
 
 def _identity_error() -> JsonResponse:
-    """返回稳定的缺少subject错误。"""
+    """返回稳定的缺少subject错误。
+
+    Returns:
+        JsonResponse: HTTP 401身份错误响应。
+    """
     return JsonResponse(
         {"code": "identity_required", "message": "此接口需要可信用户身份"},
         status=401,
@@ -39,6 +50,12 @@ def _identity_error() -> JsonResponse:
 
 def _load_json(request: HttpRequest) -> dict:
     """解析JSON对象请求体。
+
+    Args:
+        request (HttpRequest): 包含JSON请求体的HTTP请求。
+
+    Returns:
+        dict: 解析后的JSON对象。
 
     Raises:
         ValueError: 请求体不是合法JSON对象。
@@ -53,7 +70,14 @@ def _load_json(request: HttpRequest) -> dict:
 
 
 def _active_flow_scopes(identity: IworkIdentity) -> set[str]:
-    """返回身份当前仍有效的可管理Flow集合。"""
+    """返回身份当前仍有效的可管理Flow集合。
+
+    Args:
+        identity (IworkIdentity): 待检查的可信身份。
+
+    Returns:
+        set[str]: 当前身份可管理的生产组名称集合。
+    """
     if identity.is_admin:
         return set(settings.VISIBLE_FLOWS)
     return set(
@@ -65,14 +89,29 @@ def _active_flow_scopes(identity: IworkIdentity) -> set[str]:
 
 
 def _current_role(identity: IworkIdentity, flow_scopes: set[str] | None = None) -> str:
-    """按当前Keycloak管理员身份和有效Flow分配推导职能。"""
+    """按当前Keycloak管理员身份和有效Flow分配推导职能。
+
+    Args:
+        identity (IworkIdentity): 待判断职能的可信身份。
+        flow_scopes (set[str] | None): 已查询的可管理生产组集合。
+
+    Returns:
+        str: ``admin``、``leader``或``user``。
+    """
     if identity.is_admin:
         return "admin"
     return "leader" if (flow_scopes if flow_scopes is not None else _active_flow_scopes(identity)) else "user"
 
 
 def _valid_subscriptions(identity: IworkIdentity) -> list[AlertSubscription]:
-    """重新校验当前职能和Flow范围后返回仍有效的订阅。"""
+    """重新校验当前职能和Flow范围后返回仍有效的订阅。
+
+    Args:
+        identity (IworkIdentity): 当前可信身份。
+
+    Returns:
+        list[AlertSubscription]: 当前身份仍有权访问的订阅。
+    """
     flow_scopes = _active_flow_scopes(identity)
     role = _current_role(identity, flow_scopes)
     rows = (
@@ -90,7 +129,14 @@ def _valid_subscriptions(identity: IworkIdentity) -> list[AlertSubscription]:
 
 
 def _serialize_subscriptions(identity: IworkIdentity) -> list[dict[str, object]]:
-    """序列化一个用户当前仍有权访问的订阅。"""
+    """序列化一个用户当前仍有权访问的订阅。
+
+    Args:
+        identity (IworkIdentity): 当前可信身份。
+
+    Returns:
+        list[dict[str, object]]: 可返回给客户端的订阅数据。
+    """
     return [
         {
             "rule_code": row.rule.code,
@@ -102,7 +148,14 @@ def _serialize_subscriptions(identity: IworkIdentity) -> list[dict[str, object]]
 
 
 def _available_rules(identity: IworkIdentity) -> list[dict[str, object]]:
-    """返回当前角色可配置的规则、强制状态和允许范围。"""
+    """返回当前角色可配置的规则、强制状态和允许范围。
+
+    Args:
+        identity (IworkIdentity): 当前可信身份。
+
+    Returns:
+        list[dict[str, object]]: 当前身份可用的警报规则配置。
+    """
     flow_scopes = sorted(_active_flow_scopes(identity))
     role = _current_role(identity, set(flow_scopes))
     result = []
@@ -122,7 +175,14 @@ def _available_rules(identity: IworkIdentity) -> list[dict[str, object]]:
 
 @require_http_methods(["GET", "PUT"])
 def subscriptions(request: HttpRequest) -> JsonResponse:
-    """读取或整体替换当前用户的可选站内订阅。"""
+    """读取或整体替换当前用户的可选站内订阅。
+
+    Args:
+        request (HttpRequest): GET或PUT订阅请求。
+
+    Returns:
+        JsonResponse: 当前订阅配置或错误响应。
+    """
     identity = _request_identity(request)
     if not identity.subject:
         return _identity_error()
@@ -190,7 +250,14 @@ def subscriptions(request: HttpRequest) -> JsonResponse:
 
 
 def _visible_events(identity: IworkIdentity):
-    """构造当前身份可见事件查询集。"""
+    """构造当前身份可见事件查询集。
+
+    Args:
+        identity (IworkIdentity): 当前可信身份。
+
+    Returns:
+        QuerySet: 当前身份可见的警报事件查询集。
+    """
     audience_filter = Q(audiences__audience_type="subject", audiences__audience_key=identity.subject)
     if identity.is_admin:
         audience_filter |= Q(audiences__audience_type="role", audiences__audience_key="admin")
@@ -210,7 +277,14 @@ def _visible_events(identity: IworkIdentity):
 
 @require_GET
 def notifications(request: HttpRequest) -> JsonResponse:
-    """返回当前身份可见的通知历史和未读数。"""
+    """返回当前身份可见的通知历史和未读数。
+
+    Args:
+        request (HttpRequest): 通知列表请求。
+
+    Returns:
+        JsonResponse: 通知列表、未读数或身份错误响应。
+    """
     identity = _request_identity(request)
     if not identity.subject:
         return _identity_error()
@@ -246,7 +320,15 @@ def notifications(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 def mark_notification_read(request: HttpRequest, notification_id: int) -> JsonResponse:
-    """将当前用户可见事件的当前修订标记为已读。"""
+    """将当前用户可见事件的当前修订标记为已读。
+
+    Args:
+        request (HttpRequest): 标记已读请求。
+        notification_id (int): 待标记的通知主键。
+
+    Returns:
+        JsonResponse: 标记结果或错误响应。
+    """
     identity = _request_identity(request)
     if not identity.subject:
         return _identity_error()
@@ -263,7 +345,14 @@ def mark_notification_read(request: HttpRequest, notification_id: int) -> JsonRe
 
 @require_POST
 def mark_all_notifications_read(request: HttpRequest) -> JsonResponse:
-    """将当前用户全部可见事件的当前修订标记为已读。"""
+    """将当前用户全部可见事件的当前修订标记为已读。
+
+    Args:
+        request (HttpRequest): 全部标记已读请求。
+
+    Returns:
+        JsonResponse: 已标记数量或身份错误响应。
+    """
     identity = _request_identity(request)
     if not identity.subject:
         return _identity_error()
@@ -281,13 +370,24 @@ def mark_all_notifications_read(request: HttpRequest) -> JsonResponse:
 
 
 async def notification_stream(request: HttpRequest) -> StreamingHttpResponse | JsonResponse:
-    """建立只发送通用唤醒、最长六十秒的账号通知SSE连接。"""
+    """建立只发送通用唤醒、最长六十秒的账号通知SSE连接。
+
+    Args:
+        request (HttpRequest): SSE连接请求。
+
+    Returns:
+        StreamingHttpResponse | JsonResponse: SSE流或身份错误响应。
+    """
     identity = _request_identity(request)
     if not identity.subject:
         return _identity_error()
 
     async def event_generator():
-        """生成心跳和不含业务数据的通知变化事件。"""
+        """生成心跳和不含业务数据的通知变化事件。
+
+        Yields:
+            str: SSE重试、心跳或通知变化帧。
+        """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + settings.SSE_CONNECTION_LEASE_SECONDS
         yield "retry: 3000\n\n"

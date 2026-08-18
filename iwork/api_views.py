@@ -1622,6 +1622,9 @@ def set_targets(request):
     """
     设置目标产量（HTTP POST）
 
+    Args:
+        request (Request): 包含目标产量数据的REST请求。
+
     请求体（整组格式为当前页面标准，旧格式仅用于向后兼容）：
         flow (str): 生产组名称。
         group_target (int): 整组目标；每道工序获得相同目标并按人数分配。

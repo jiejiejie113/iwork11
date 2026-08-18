@@ -126,7 +126,11 @@ class IworkPrincipal(models.Model):
         verbose_name_plural = 'iwork 身份'
 
     def __str__(self) -> str:
-        """返回优先使用用户名的可读身份。"""
+        """返回优先使用用户名的可读身份。
+
+        Returns:
+            str: 用户名；用户名为空时返回稳定subject。
+        """
         return self.username or self.subject
 
 

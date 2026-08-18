@@ -31,13 +31,24 @@ class TrustedProxyMiddleware:
     """
 
     def __init__(self, get_response):
-        """保存后续请求处理器。"""
+        """保存后续请求处理器。
+
+        Args:
+            get_response (Callable): Django后续请求处理器。
+        """
         self.get_response = get_response
         self._trusted_ips = set(LOCAL_LOOPBACK_ADDRESSES)
         self._trusted_ips_expires_at = 0.0
 
     def _resolve_trusted_ips(self, *, force: bool = False) -> set[str]:
-        """解析配置的可信代理主机并短期缓存地址。"""
+        """解析配置的可信代理主机并短期缓存地址。
+
+        Args:
+            force (bool): 是否忽略尚未过期的缓存并重新解析。
+
+        Returns:
+            set[str]: 本机回环地址和已解析的可信代理地址。
+        """
         now = time.monotonic()
         if not force and now < self._trusted_ips_expires_at:
             return self._trusted_ips
@@ -55,7 +66,14 @@ class TrustedProxyMiddleware:
         return resolved
 
     def __call__(self, request):
-        """验证代理来源并挂载可信身份。"""
+        """验证代理来源并挂载可信身份。
+
+        Args:
+            request (HttpRequest): 当前Django请求。
+
+        Returns:
+            HttpResponse: 拒绝响应或后续处理器响应。
+        """
         remote_addr = request.META.get('REMOTE_ADDR', '')
 
         if not remote_addr:

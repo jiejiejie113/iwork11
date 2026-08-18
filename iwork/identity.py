@@ -18,11 +18,19 @@ class IworkIdentity:
 
     @property
     def is_authenticated(self) -> bool:
-        """判断身份是否具备稳定的 Keycloak subject。"""
+        """判断身份是否具备稳定的 Keycloak subject。
+
+        Returns:
+            bool: 具备稳定subject时返回 ``True``。
+        """
         return bool(self.subject)
 
     def as_dict(self) -> dict[str, object]:
-        """返回可序列化的身份字典。"""
+        """返回可序列化的身份字典。
+
+        Returns:
+            dict[str, object]: 当前身份的全部可序列化字段。
+        """
         return asdict(self)
 
 

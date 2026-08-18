@@ -45,7 +45,14 @@ def _is_retryable(exc: Exception) -> bool:
     task_soft_time_limit=55,
 )
 def sync_dashboard_stats(self):
-    """每 60 秒受控采集远程数据并原子发布完整实时快照。"""
+    """每 60 秒受控采集远程数据并原子发布完整实时快照。
+
+    Returns:
+        int: 发布的源记录数量；跳过发布时返回 ``0``。
+
+    Raises:
+        Exception: 快照构建遇到不可重试错误或重试仍失败时抛出。
+    """
     business_date = get_business_date()
     lock_key = f'{READ_MODEL_CACHE_PREFIX}:{business_date.isoformat()}:refresh-lock'
     lock = cache.lock(

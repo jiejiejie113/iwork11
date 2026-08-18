@@ -341,3 +341,38 @@ def test_assignment_date_change_waives_future_unfinished_obligation():
     assert response.status_code == 200
     obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')
     assert obligation.status == DailyTargetObligation.Status.WAIVED
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_assignment_created_after_deadline_starts_next_business_day():
+    """截止后新增组长不得立即产生当天逾期责任。"""
+    import json
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from django.test import Client
+
+    current_date = date(2026, 8, 18)
+    after_deadline = datetime.combine(current_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
+    with (
+        patch('iwork.api_views_account.get_business_date', return_value=current_date),
+        patch('iwork.api_views_account.timezone.now', return_value=after_deadline),
+    ):
+        response = Client().put(
+            '/api/account-admin/flow-assignments/',
+            data=json.dumps({
+                'subject': 'leader-subject',
+                'username': 'leader',
+                'flow_name': 'SO3-L3A',
+                'effective_date': current_date.isoformat(),
+                'expires_date': None,
+            }),
+            content_type='application/json',
+            REMOTE_ADDR='127.0.0.1',
+            HTTP_REMOTE_SUBJECT='admin-subject',
+            HTTP_REMOTE_USER='admin',
+            HTTP_REMOTE_GROUPS='/admin',
+        )
+
+    assert response.status_code == 201
+    assert response.json()['effective_date'] == '2026-08-19'
