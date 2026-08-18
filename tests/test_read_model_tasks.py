@@ -41,6 +41,7 @@ def test_refresh_builds_and_publishes_one_complete_version(
     with (
         patch("iwork.tasks.get_business_date", return_value=business_date),
         patch("iwork.tasks.publish_snapshot_notification", return_value=2) as notify,
+        patch("iwork.tasks.evaluate_published_snapshot_task.apply_async") as evaluate_alerts,
     ):
         result = sync_dashboard_stats()
 
@@ -49,7 +50,43 @@ def test_refresh_builds_and_publishes_one_complete_version(
     mock_connections.__getitem__.assert_called_with("iwork")
     mock_connections.__getitem__.return_value.close.assert_called_once()
     notify.assert_called_once_with(business_date, "v1")
+    evaluate_alerts.assert_called_once_with(
+        args=[business_date.isoformat(), "v1"],
+        queue="alerts",
+    )
     assert result == 123
+
+
+@patch("iwork.tasks.connections")
+@patch("iwork.tasks.SnapshotStore")
+@patch("iwork.tasks.build_snapshot")
+def test_alert_enqueue_failure_does_not_rollback_published_snapshot(
+    mock_build,
+    mock_store_class,
+    mock_connections,
+):
+    """警报队列不可用不得回滚或重试已发布的实时快照。"""
+    from iwork.tasks import sync_dashboard_stats
+
+    business_date = date(2026, 8, 18)
+    mock_build.return_value = {
+        "metadata": {"record_count": 9, "business_date": business_date.isoformat()},
+        "views": {},
+    }
+    mock_store_class.return_value.publish.return_value = "v-alert"
+
+    with (
+        patch("iwork.tasks.get_business_date", return_value=business_date),
+        patch("iwork.tasks.publish_snapshot_notification", return_value=0),
+        patch(
+            "iwork.tasks.evaluate_published_snapshot_task.apply_async",
+            side_effect=ConnectionError("警报队列不可用"),
+        ),
+    ):
+        assert sync_dashboard_stats() == 9
+
+    mock_build.assert_called_once_with(business_date)
+    mock_store_class.return_value.publish.assert_called_once()
 
 
 @patch("iwork.tasks.connections")

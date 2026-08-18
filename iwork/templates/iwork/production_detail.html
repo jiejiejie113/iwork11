@@ -220,6 +220,15 @@
                 :class="groupMode === 'product' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按产品名称</button>
         </div>
+        <div v-if="currentView === 'overview' && groupMode === 'flow' && managedFlowNames.length"
+             class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+            <button @click="managedOnly = true"
+                    :class="managedOnly ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'"
+                    class="px-3 py-1.5 rounded-md text-xs transition-colors">我管理的组</button>
+            <button @click="managedOnly = false"
+                    :class="!managedOnly ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+                    class="px-3 py-1.5 rounded-md text-xs transition-colors">全部分组</button>
+        </div>
         <div class="flex items-center gap-2">
             <input type="date" v-model="selectedDate" :max="businessToday" @change="changeProductionDate"
                 class="bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
@@ -561,6 +570,25 @@
                     <span v-else class="text-slate-500">目标达成率 --</span>
                 </span>
             </span>
+            <span v-if="detailType === 'flow' && targetObligation"
+                  class="px-2 py-1 rounded border text-xs"
+                  :class="targetObligationClass">
+                {[ targetObligationLabel ]}
+                <template v-if="targetObligation.submitted_by_username">
+                    · {[ targetObligation.submitted_by_username ]}
+                </template>
+                <template v-if="targetObligation.submitted_at">
+                    · {[ formatAccountTime(targetObligation.submitted_at) ]}
+                </template>
+            </span>
+            <span v-if="detailType === 'initial_style' && flowTargets.length"
+                  class="text-xs text-slate-400">
+                分组目标：
+                <span v-for="item in flowTargets" :key="item.flow" class="mr-2">
+                    {[ item.flow ]} {[ item.group_target ?? '--' ]}
+                    <span v-if="item.target_obligation">({[ obligationStatusText(item.target_obligation.status) ]})</span>
+                </span>
+            </span>
 
             <!-- 右侧：控件组 -->
             <div class="flex items-center gap-3 ml-auto flex-wrap">
@@ -588,11 +616,11 @@
                         :class="isEditing ? 'bg-slate-900 border-slate-600' : 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed'"
                         class="w-32 border rounded-lg px-3 py-2 text-sm tabular-nums">
                 </label>
-                <button v-if="detailType === 'flow' && !isEditing && !isHistoricalDate" @click="startEditing"
+                <button v-if="canEditCurrentFlow && !isEditing" @click="startEditing"
                     class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">编辑</button>
-                <button v-if="detailType === 'flow' && isEditing" @click="cancelEditing"
+                <button v-if="canEditCurrentFlow && isEditing" @click="cancelEditing"
                     class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors">取消</button>
-                <button v-if="detailType === 'flow' && isEditing" @click="saveTargets"
+                <button v-if="canEditCurrentFlow && isEditing" @click="saveTargets"
                     class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm transition-colors">保存</button>
             </div>
         </div>
@@ -1066,6 +1094,10 @@ createApp({
         const lastUpdateTime = ref('');
 
         const isEditing = ref(false);
+        const account = ref(null);
+        const managedOnly = ref(false);
+        const targetObligation = ref(null);
+        const flowTargets = ref([]);
         const groupTarget = ref(null);
         const currentGroupTarget = ref(null);
         const workHours = ref(null);
@@ -1835,7 +1867,7 @@ createApp({
         }
 
         function startEditing() {
-            if (detailType.value !== 'flow') return;
+            if (!canEditCurrentFlow.value) return;
             groupTargetDraft.value = groupTarget.value || 0;
             workHoursDraft.value = workHours.value || 10;
             isEditing.value = true;
@@ -1853,6 +1885,56 @@ createApp({
         const stepnoCards = ref([]);
         const employees = ref([]);
         const targets = reactive({});
+
+        const managedFlowNames = computed(() => (
+            account.value?.flow_assignments || []
+        ).map(item => item.flow_name));
+        const canEditCurrentFlow = computed(() => (
+            detailType.value === 'flow'
+            && !isHistoricalDate.value
+            && Boolean(account.value?.is_admin || managedFlowNames.value.includes(detailKey.value))
+        ));
+
+        function obligationStatusText(status) {
+            return {
+                pending: '目标未填',
+                fulfilled: '正常提交',
+                overdue: '目标已逾期',
+                fulfilled_late: '逾期补填',
+                waived: '已免除',
+            }[status] || '状态未知';
+        }
+        const targetObligationLabel = computed(() => (
+            obligationStatusText(targetObligation.value?.status)
+        ));
+        const targetObligationClass = computed(() => ({
+            pending: 'border-amber-700 bg-amber-950 text-amber-200',
+            fulfilled: 'border-emerald-700 bg-emerald-950 text-emerald-200',
+            overdue: 'border-red-700 bg-red-950 text-red-200',
+            fulfilled_late: 'border-orange-700 bg-orange-950 text-orange-200',
+            waived: 'border-slate-600 bg-slate-800 text-slate-300',
+        }[targetObligation.value?.status] || 'border-slate-700 bg-slate-800 text-slate-300'));
+        function formatAccountTime(value) {
+            if (!value) return '';
+            return new Date(value).toLocaleString('zh-CN', {
+                timeZone: 'Asia/Bangkok',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+        }
+
+        async function loadAccount() {
+            try {
+                const response = await fetch(`${basePath}api/account/me/`);
+                if (!response.ok) return;
+                account.value = await response.json();
+                managedOnly.value = !account.value.is_admin && managedFlowNames.value.length > 0;
+            } catch (error) {
+                console.warn('读取账号职能失败，目标编辑保持关闭:', error);
+            }
+        }
 
         function detailTargetScopeKey(
             type = detailType.value,
@@ -1874,7 +1956,9 @@ createApp({
 
         const detailSummary = computed(() => {
             const emps = employees.value;
-            const withTarget = emps.filter(e => e.target > 0);
+            const withTarget = groupTarget.value !== null
+                ? emps
+                : emps.filter(e => e.target > 0);
             const targeted_qty = withTarget.reduce((s, e) => s + (e.qty || 0), 0);
             const target_total = withTarget.reduce((s, e) => s + e.target, 0);
             return {
@@ -1904,8 +1988,13 @@ createApp({
 
         const filteredFlowCards = computed(() => {
             const query = initialStyleSearch.value.trim().toLowerCase();
-            if (!query) return flowCards.value;
-            return flowCards.value.filter(card => (
+            let cards = flowCards.value;
+            if (managedOnly.value && managedFlowNames.value.length) {
+                const managed = new Set(managedFlowNames.value);
+                cards = cards.filter(card => managed.has(card.flow));
+            }
+            if (!query) return cards;
+            return cards.filter(card => (
                 (card.initial_styles || []).some(style => (
                     String(style.initial_style_no || '').toLowerCase().includes(query)
                 ))
@@ -3059,6 +3148,8 @@ createApp({
                 }
                 const data = await readResponse(resp);
                 groupTarget.value = type === 'flow' ? data.group_target : null;
+                targetObligation.value = type === 'flow' ? (data.target_obligation || null) : null;
+                flowTargets.value = type === 'initial_style' ? (data.flow_targets || []) : [];
                 currentGroupTarget.value = type === 'flow' ? data.current_group_target : null;
                 workHours.value = type === 'flow' ? data.work_hours : null;
                 effectiveWorkMinutes.value = data.work_minutes ?? null;
@@ -3110,6 +3201,8 @@ createApp({
                     || detailKey.value !== refreshDetailKey
                 ) return null;
                 groupTarget.value = detailType.value === 'flow' ? data.group_target : null;
+                targetObligation.value = detailType.value === 'flow' ? (data.target_obligation || null) : null;
+                flowTargets.value = detailType.value === 'initial_style' ? (data.flow_targets || []) : [];
                 currentGroupTarget.value = detailType.value === 'flow' ? data.current_group_target : null;
                 workHours.value = detailType.value === 'flow' ? data.work_hours : null;
                 effectiveWorkMinutes.value = data.work_minutes ?? null;
@@ -3501,6 +3594,7 @@ createApp({
             loadDetailColumnPreferences();
             document.addEventListener('pointerdown', onDetailColumnOutsidePointerDown);
             loadProductViewState();
+            await loadAccount();
             if (initialView === 'overview') {
                 await loadOverview();
             } else if (initialView === 'detail') {
@@ -3523,6 +3617,9 @@ createApp({
 
         return {
             basePath,
+            account, managedOnly, managedFlowNames, canEditCurrentFlow,
+            targetObligation, targetObligationLabel, targetObligationClass,
+            flowTargets, obligationStatusText, formatAccountTime,
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,

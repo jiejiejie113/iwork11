@@ -1,6 +1,8 @@
 from django.db import models
 from datetime import datetime
 
+from iwork import alert_models as _alert_models  # noqa: F401
+
 
 class Pytckreg3(models.Model):
     """

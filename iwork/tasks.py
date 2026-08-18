@@ -6,6 +6,7 @@ from django.db import OperationalError, connections
 from loguru import logger
 from redis.exceptions import LockError, LockNotOwnedError
 
+from iwork.alerts.tasks import evaluate_published_snapshot_task
 from iwork.history_store import SnapshotBuildInProgressError, snapshot_history_date
 from iwork.read_model.builder import build_snapshot
 from iwork.read_model.errors import SnapshotConsistencyError
@@ -80,6 +81,19 @@ def sync_dashboard_stats(self):
                 business_date,
                 version,
                 notification_error,
+            )
+        try:
+            evaluate_published_snapshot_task.apply_async(
+                args=[business_date.isoformat(), version],
+                queue="alerts",
+            )
+        except Exception as alert_error:
+            logger.warning(
+                "实时快照已完成，但警报评估任务入队失败，将由补偿任务恢复: "
+                "date={} version={} error={}",
+                business_date,
+                version,
+                alert_error,
             )
         record_count = snapshot['metadata']['record_count']
         logger.success(

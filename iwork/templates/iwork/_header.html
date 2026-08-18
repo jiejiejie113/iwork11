@@ -1,3 +1,4 @@
+{% load static %}
 <!-- 共用标题栏 + tab导航（实时数据/生产详情/历史数据） -->
 <!-- 用法：在 header 标签内 include，之后再放各页面特有的控件 -->
 <h1 class="text-xl font-bold text-slate-100">{{ page_title }} <span v-if="stepnoFilter" class="text-slate-400">- {[ stepnoFilter ]}工序</span></h1>
@@ -19,3 +20,26 @@
             :class="currentView === 'history' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
             class="px-4 py-2 rounded-md text-sm transition-colors font-medium">历史数据</a>
     </div>
+
+    <div class="relative" data-iwork-notification-center>
+        <button type="button" data-notification-toggle
+                class="relative w-10 h-10 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 transition-colors"
+                aria-label="打开站内通知">
+            <span aria-hidden="true">🔔</span>
+            <span data-notification-count hidden
+                  class="absolute -right-1 -top-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[11px] leading-5 text-center"></span>
+        </button>
+        <section data-notification-drawer hidden
+                 class="absolute right-0 top-full mt-2 z-[100] w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-600 bg-slate-900 shadow-2xl overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                <strong class="text-sm">站内通知</strong>
+                <div class="flex gap-2">
+                    <button type="button" data-notification-settings class="text-xs text-blue-300 hover:text-blue-100">订阅设置</button>
+                    <button type="button" data-notification-read-all class="text-xs text-slate-300 hover:text-white">全部已读</button>
+                </div>
+            </div>
+            <div data-notification-list class="max-h-96 overflow-y-auto p-2"></div>
+            <div data-notification-subscriptions hidden class="max-h-96 overflow-y-auto p-3"></div>
+        </section>
+    </div>
+    <script defer src="{% static 'iwork/notifications.js' %}"></script>

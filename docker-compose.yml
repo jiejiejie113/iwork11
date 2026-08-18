@@ -19,6 +19,31 @@ services:
     networks:
       - dkt-net
 
+  alert-worker:
+    build: .
+    container_name: DKT_iwork_alert_worker
+    restart: unless-stopped
+    env_file:
+      - ./env/${DKT_ENVIRONMENT:-production}.env
+    environment:
+      IWORK_CONTAINER_ROLE: alert-worker
+      DJANGO_SECRET_KEY: ${IWORK_DJANGO_SECRET_KEY:?Set IWORK_DJANGO_SECRET_KEY in dkt-secrets.env}
+      ACCESS_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
+      LOCAL_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
+      IWORK_DB_PASSWORD: ${IWORK_DB_PASSWORD:?Set IWORK_DB_PASSWORD in dkt-secrets.env}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - dkt-net
+    depends_on:
+      - iwork
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A iwork inspect ping -d alerts@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 networks:
   dkt-net:
     external: true

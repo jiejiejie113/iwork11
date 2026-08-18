@@ -22,6 +22,19 @@ class DatabaseRouter:
         'historicalproductionfact',
         'historicalstepsnapshot',
         'historicalsyncstate',
+        'iworkprincipal',
+        'managedflowassignment',
+        'targetsubmissionpolicy',
+        'dailytargetobligation',
+        'dailytargetobligationleader',
+        'grouptargetauditlog',
+        'alertrule',
+        'alertsubscription',
+        'alertevent',
+        'alertaudience',
+        'notificationreceipt',
+        'notificationdelivery',
+        'alertevaluationrun',
     }
 
     def _is_local(self, model):

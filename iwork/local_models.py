@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.db import models
 
 
@@ -80,6 +82,10 @@ class GroupTargetProduction(models.Model):
         null=True,
         blank=True,
     )
+    submitted_by_subject = models.CharField('提交人 subject', max_length=255, blank=True, default='')
+    submitted_by_username = models.CharField('提交人用户名', max_length=150, blank=True, default='')
+    submitted_at = models.DateTimeField('提交时间', null=True, blank=True)
+    is_late = models.BooleanField('是否逾期提交', default=False)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
 
@@ -99,6 +105,161 @@ class GroupTargetProduction(models.Model):
             str: 整组目标记录的可读文本。
         """
         return f'{self.target_date} - {self.flow_name}: {self.target_qty}'
+
+
+class IworkPrincipal(models.Model):
+    """iwork 本地稳定身份快照。"""
+
+    subject = models.CharField('Keycloak subject', max_length=255, unique=True)
+    username = models.CharField('用户名', max_length=150, blank=True, default='')
+    email = models.EmailField('邮箱', blank=True, default='')
+    display_name = models.CharField('显示名称', max_length=255, blank=True, default='')
+    keycloak_groups = models.JSONField('Keycloak 组', default=list, blank=True)
+    is_admin = models.BooleanField('是否管理员', default=False)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'iwork_principal'
+        verbose_name = 'iwork 身份'
+        verbose_name_plural = 'iwork 身份'
+
+    def __str__(self) -> str:
+        """返回优先使用用户名的可读身份。"""
+        return self.username or self.subject
+
+
+class ManagedFlowAssignment(models.Model):
+    """稳定身份在有效期内负责的生产组。"""
+
+    principal = models.ForeignKey(
+        IworkPrincipal,
+        on_delete=models.CASCADE,
+        related_name='flow_assignments',
+        verbose_name='负责人',
+    )
+    flow_name = models.CharField('生产组', max_length=40)
+    effective_date = models.DateField('生效日期')
+    expires_date = models.DateField('失效日期', null=True, blank=True)
+    created_by_subject = models.CharField('创建人 subject', max_length=255)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'managed_flow_assignment'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['principal', 'flow_name', 'effective_date'],
+                name='uq_flow_assignment_start',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(expires_date__isnull=True)
+                    | models.Q(expires_date__gte=models.F('effective_date'))
+                ),
+                name='ck_flow_assignment_dates',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['flow_name', 'effective_date', 'expires_date'], name='idx_flow_assignment_valid'),
+        ]
+
+
+class TargetSubmissionPolicy(models.Model):
+    """按生效日期版本化的每日目标提交策略。"""
+
+    effective_date = models.DateField('生效日期', unique=True)
+    deadline_time = models.TimeField('提交截止时间', default=time(9, 0))
+    timezone_name = models.CharField('业务时区', max_length=64, default='Asia/Bangkok')
+    created_by_subject = models.CharField('创建人 subject', max_length=255)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'target_submission_policy'
+        ordering = ['-effective_date']
+
+
+class DailyTargetObligation(models.Model):
+    """一个生产组在一个业务日的目标提交责任。"""
+
+    class Status(models.TextChoices):
+        """每日责任状态。"""
+
+        PENDING = 'pending', '待提交'
+        FULFILLED = 'fulfilled', '按时完成'
+        OVERDUE = 'overdue', '已逾期'
+        FULFILLED_LATE = 'fulfilled_late', '逾期完成'
+        WAIVED = 'waived', '已免除'
+
+    target_date = models.DateField('目标日期')
+    flow_name = models.CharField('生产组', max_length=40)
+    status = models.CharField('状态', max_length=16, choices=Status.choices, default=Status.PENDING)
+    deadline_at = models.DateTimeField('截止时间')
+    submitted_by_subject = models.CharField('提交人 subject', max_length=255, blank=True, default='')
+    submitted_by_username = models.CharField('提交人用户名', max_length=150, blank=True, default='')
+    submitted_at = models.DateTimeField('提交时间', null=True, blank=True)
+    waived_at = models.DateTimeField('免除时间', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'daily_target_obligation'
+        constraints = [
+            models.UniqueConstraint(fields=['target_date', 'flow_name'], name='uq_daily_target_obligation'),
+        ]
+        indexes = [
+            models.Index(fields=['target_date', 'status'], name='idx_target_obligation_status'),
+        ]
+
+
+class DailyTargetObligationLeader(models.Model):
+    """每日责任生成时冻结的有效负责人快照。"""
+
+    obligation = models.ForeignKey(
+        DailyTargetObligation,
+        on_delete=models.CASCADE,
+        related_name='leader_links',
+        verbose_name='每日责任',
+    )
+    principal = models.ForeignKey(
+        IworkPrincipal,
+        on_delete=models.PROTECT,
+        related_name='obligation_links',
+        verbose_name='负责人',
+    )
+    subject = models.CharField('负责人 subject', max_length=255)
+    username = models.CharField('负责人用户名', max_length=150, blank=True, default='')
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'daily_target_obligation_leader'
+        constraints = [
+            models.UniqueConstraint(fields=['obligation', 'principal'], name='uq_obligation_leader'),
+        ]
+
+
+class GroupTargetAuditLog(models.Model):
+    """生产组目标写入和责任状态变化的审计日志。"""
+
+    target_date = models.DateField('目标日期')
+    flow_name = models.CharField('生产组', max_length=40)
+    action = models.CharField('动作', max_length=32)
+    actor_subject = models.CharField('操作人 subject', max_length=255)
+    actor_username = models.CharField('操作人用户名', max_length=150, blank=True, default='')
+    old_value = models.JSONField('变更前', null=True, blank=True)
+    new_value = models.JSONField('变更后', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'group_target_audit_log'
+        indexes = [
+            models.Index(fields=['target_date', 'flow_name', 'created_at'], name='idx_group_target_audit'),
+        ]
 
 
 class ProductionOrder(models.Model):

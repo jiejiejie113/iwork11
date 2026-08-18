@@ -1495,6 +1495,28 @@ class TestDashboardStream:
 class TestSetTargets:
     """set_targets HTTP POST 视图测试"""
 
+    pytestmark = pytest.mark.django_db(databases=['default', 'iwork_local'])
+
+    @pytest.fixture(autouse=True)
+    def trusted_admin_identity(self, monkeypatch):
+        """为直接调用视图的旧测试注入当前可信管理员身份。"""
+        from iwork.identity import IworkIdentity
+
+        original_post = APIRequestFactory.post
+
+        def post_with_identity(factory, *args, **kwargs):
+            """创建携带可信管理员身份的 DRF 请求。"""
+            request = original_post(factory, *args, **kwargs)
+            request.iwork_identity = IworkIdentity(
+                subject='test-admin-subject',
+                username='test-admin',
+                keycloak_groups=['/admin'],
+                is_admin=True,
+            )
+            return request
+
+        monkeypatch.setattr(APIRequestFactory, 'post', post_with_identity)
+
     @patch('iwork.api_views.cache')
     def test_set_targets_success(self, mock_cache):
         """POST 成功写入 Redis 并返回 200"""
@@ -1532,9 +1554,35 @@ class TestSetTargets:
         assert response.status_code == 200
         assert response.data['count'] == 0
 
-    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
     @patch('iwork.api_views.cache')
-    def test_set_group_target_success(self, mock_cache, mock_update_or_create):
+    def test_legacy_zero_target_replaces_previous_database_value(self, mock_cache):
+        """旧格式合法零目标必须落库，不能在缓存过期后恢复旧值。"""
+        from iwork.api_views import set_targets
+        from iwork.local_models import TargetProduction
+        from iwork.statistics import get_business_date
+
+        target_date = get_business_date()
+        target = TargetProduction.objects.using('iwork_local').create(
+            target_date=target_date,
+            employee_id='1001',
+            workorder='',
+            target_qty=100,
+        )
+        request = APIRequestFactory().post(
+            '/api/dashboard/set-targets/',
+            data={'targets': {'1001': 0}},
+            format='json',
+        )
+
+        response = set_targets(request)
+
+        target.refresh_from_db(using='iwork_local')
+        assert response.status_code == 200
+        assert target.target_qty == 0
+
+    @patch('iwork.api_views.save_group_target')
+    @patch('iwork.api_views.cache')
+    def test_set_group_target_success(self, mock_cache, mock_save_group_target):
         """整组目标应按业务日期和生产组持久化，并刷新当天缓存。"""
         from iwork.api_views import set_targets
 
@@ -1544,16 +1592,19 @@ class TestSetTargets:
             format='json',
         )
 
+        mock_save_group_target.return_value = SimpleNamespace(is_late=False)
         response = set_targets(request)
 
         assert response.status_code == 200
         assert response.data['status'] == 'ok'
         assert response.data['flow'] == 'SO3-L3A'
         assert response.data['group_target'] == 1000
-        mock_update_or_create.assert_called_once_with(
+        mock_save_group_target.assert_called_once_with(
+            identity=request.iwork_identity,
             target_date=date.today(),
             flow_name='SO3-L3A',
-            defaults={'target_qty': 1000},
+            target_qty=1000,
+            planned_work_minutes=None,
         )
         mock_cache.set.assert_called_once_with(
             f'group_target:{date.today().isoformat()}:SO3-L3A',
@@ -1578,9 +1629,9 @@ class TestSetTargets:
         assert response.data['error'] == '整组目标不能小于 0'
         mock_update_or_create.assert_not_called()
 
-    @patch('iwork.api_views.GroupTargetProduction.objects.update_or_create')
+    @patch('iwork.api_views.save_group_target')
     @patch('iwork.api_views.cache')
-    def test_set_group_target_saves_work_hours(self, mock_cache, mock_update_or_create):
+    def test_set_group_target_saves_work_hours(self, mock_cache, mock_save_group_target):
         """保存整组目标时应同时保存计划工作时长。"""
         from iwork.api_views import set_targets
 
@@ -1590,14 +1641,17 @@ class TestSetTargets:
             format='json',
         )
 
+        mock_save_group_target.return_value = SimpleNamespace(is_late=False)
         response = set_targets(request)
 
         assert response.status_code == 200
         assert response.data['work_hours'] == 10
-        mock_update_or_create.assert_called_once_with(
+        mock_save_group_target.assert_called_once_with(
+            identity=request.iwork_identity,
             target_date=date.today(),
             flow_name='SO3-L3A',
-            defaults={'target_qty': 1000, 'planned_work_minutes': 600},
+            target_qty=1000,
+            planned_work_minutes=600,
         )
         assert mock_cache.set.call_count == 2
 

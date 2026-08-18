@@ -30,4 +30,18 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=3, minute=0),
         'args': (3,),
     },
+    'reconcile-target-obligations-every-minute': {
+        'task': 'iwork.alerts.tasks.reconcile_target_obligations_task',
+        'schedule': 60.0,
+        'options': {'queue': 'alerts'},
+    },
+    'reconcile-alerts-every-five-minutes': {
+        'task': 'iwork.alerts.tasks.reconcile_alerts_task',
+        'schedule': 300.0,
+        'options': {'queue': 'alerts'},
+    },
+}
+
+app.conf.task_routes = {
+    'iwork.alerts.tasks.*': {'queue': 'alerts'},
 }

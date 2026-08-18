@@ -16,7 +16,8 @@ Including another URLconf
 """
 
 from django.urls import path, include
-from iwork import views, api_views
+from iwork import api_views, api_views_account, views
+from iwork.alerts import api as alerts_api
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -39,6 +40,46 @@ urlpatterns = [
     # SSE 实时推送 + 目标产量设置
     path("api/dashboard/stream/", api_views.dashboard_stream, name="dashboard-stream"),
     path("api/dashboard/set-targets/", api_views.set_targets, name="set-targets"),
+
+    # 可信账户与目标责任管理 API
+    path("api/account/me/", api_views_account.me, name="account-me"),
+    path("api/account/subscriptions/", alerts_api.subscriptions, name="account-subscriptions"),
+    path("api/account/notifications/", alerts_api.notifications, name="account-notifications"),
+    path(
+        "api/account/notifications/stream/",
+        alerts_api.notification_stream,
+        name="account-notifications-stream",
+    ),
+    path(
+        "api/account/notifications/read-all/",
+        alerts_api.mark_all_notifications_read,
+        name="account-notifications-read-all",
+    ),
+    path(
+        "api/account/notifications/<int:notification_id>/read/",
+        alerts_api.mark_notification_read,
+        name="account-notification-read",
+    ),
+    path(
+        "api/account-admin/flow-assignments/",
+        api_views_account.flow_assignments,
+        name="account-admin-flow-assignments",
+    ),
+    path(
+        "api/account-admin/flow-assignments/<int:assignment_id>/",
+        api_views_account.flow_assignment_detail,
+        name="account-admin-flow-assignment-detail",
+    ),
+    path(
+        "api/account-admin/target-obligations/",
+        api_views_account.target_obligations,
+        name="account-admin-target-obligations",
+    ),
+    path(
+        "api/account-admin/target-policy/",
+        api_views_account.target_policy,
+        name="account-admin-target-policy",
+    ),
 
     # 历史数据API（迁移到独立路由）
     path("api/history/", include('iwork.history_urls')),

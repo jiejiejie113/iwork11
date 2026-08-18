@@ -18,6 +18,11 @@ while ! python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_
 done
 echo "Redis is ready"
 
+if [ "${IWORK_CONTAINER_ROLE:-web}" = "alert-worker" ]; then
+    echo "Starting isolated Alert Worker..."
+    IWORK_PROCESS_ROLE=celery exec celery -A iwork worker -l info -P solo -Q alerts -n "alerts@%h"
+fi
+
 # Run database migrations
 echo "Running database migrations..."
 IWORK_PROCESS_ROLE=management python manage.py migrate --database=default --noinput
@@ -29,7 +34,7 @@ IWORK_PROCESS_ROLE=management python manage.py collectstatic --noinput 2>/dev/nu
 
 # Start Celery Worker (background)
 echo "Starting Celery Worker..."
-IWORK_PROCESS_ROLE=celery celery -A iwork worker -l info -P solo &
+IWORK_PROCESS_ROLE=celery celery -A iwork worker -l info -P solo -Q celery -n "realtime@%h" &
 CELERY_WORKER_PID=$!
 
 # Start Celery Beat (background)

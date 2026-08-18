@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from asgiref.sync import sync_to_async
@@ -38,9 +39,16 @@ from iwork.local_queries import (
     get_workorder_detail as local_get_workorder_detail,
 )
 from iwork.local_models import (
+    DailyTargetObligation,
     GroupTargetProduction,
     HistoricalSyncState,
     TargetProduction,
+)
+from iwork.target_responsibility import (
+    TargetResponsibilityError,
+    require_admin,
+    require_subject,
+    save_group_target,
 )
 from iwork.read_model.errors import ReadModelNotReadyError
 from iwork.read_model.queries import ReadModelQueries
@@ -717,6 +725,35 @@ def _get_group_target_with_fallback(target_date, flow_name):
     return None
 
 
+def _get_target_obligation_summary(target_date: date, flow_name: str) -> dict | None:
+    """读取已固化的每日目标责任展示信息。
+
+    Args:
+        target_date: 目标业务日期。
+        flow_name: 生产组名称。
+
+    Returns:
+        dict | None: 提交状态、提交人和时间；尚未生成责任时返回 ``None``。
+    """
+    try:
+        obligation = (
+            DailyTargetObligation.objects.using('iwork_local')
+            .filter(target_date=target_date, flow_name=flow_name)
+            .first()
+        )
+    except Exception as exc:
+        logger.warning('读取目标责任展示状态失败: date={} flow={} error={}', target_date, flow_name, exc)
+        return None
+    if obligation is None:
+        return None
+    return {
+        'status': obligation.status,
+        'deadline_at': obligation.deadline_at.isoformat(),
+        'submitted_by_username': obligation.submitted_by_username,
+        'submitted_at': obligation.submitted_at.isoformat() if obligation.submitted_at else None,
+    }
+
+
 def _get_group_work_minutes_with_fallback(target_date, flow_name):
     """获取指定生产组的计划工作分钟数。
 
@@ -1016,6 +1053,9 @@ def _get_flow_detail_data(flow_name, target_date, mode='remote', detail_payload=
         'work_hours': target_summary['work_hours'],
         'step_targets': target_summary['step_targets'],
     }
+    target_obligation = _get_target_obligation_summary(target_date, flow_name)
+    if target_obligation is not None:
+        result['target_obligation'] = target_obligation
     if mode == 'local':
         state = _snapshot_state(target_date)
         result.update({
@@ -1234,6 +1274,13 @@ def initial_style_detail(request):
             }
             for flow_name in result['flows']
         ]
+        for flow_target in result['flow_targets']:
+            target_obligation = _get_target_obligation_summary(
+                target_date,
+                flow_target['flow'],
+            )
+            if target_obligation is not None:
+                flow_target['target_obligation'] = target_obligation
         result['date'] = target_date.isoformat()
         result['source'] = 'local_snapshot' if mode == 'local' else 'redis_snapshot'
         if mode == 'local':
@@ -1585,6 +1632,15 @@ def set_targets(request):
     Returns:
         Response: 保存结果；参数无效时返回 400。
     """
+    identity = getattr(request, 'iwork_identity', None)
+    try:
+        identity = require_subject(identity)
+    except TargetResponsibilityError as exc:
+        return Response(
+            {'error': exc.message, 'code': exc.code},
+            status=exc.http_status,
+        )
+
     group_target = request.data.get('group_target')
     if group_target is not None:
         flow_name = str(request.data.get('flow', '')).strip()
@@ -1648,27 +1704,42 @@ def set_targets(request):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        today = get_business_date()
-        defaults = {'target_qty': group_target_int}
-        if planned_work_minutes is not None:
-            defaults['planned_work_minutes'] = planned_work_minutes
-        GroupTargetProduction.objects.update_or_create(
-            target_date=today,
-            flow_name=flow_name,
-            defaults=defaults,
-        )
-        cache_key = f'group_target:{today.isoformat()}:{flow_name}'
-        cache.set(
-            cache_key,
-            group_target_int,
-            timeout=_seconds_to_midnight(),
-        )
-        if planned_work_minutes is not None:
+        target_date_value = request.data.get('target_date')
+        try:
+            today = date.fromisoformat(target_date_value) if target_date_value else get_business_date()
+        except (TypeError, ValueError):
+            return Response(
+                {'error': '目标日期格式错误，需为 YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            target = save_group_target(
+                identity=identity,
+                flow_name=flow_name,
+                target_date=today,
+                target_qty=group_target_int,
+                planned_work_minutes=planned_work_minutes,
+            )
+        except TargetResponsibilityError as exc:
+            return Response(
+                {'error': exc.message, 'code': exc.code},
+                status=exc.http_status,
+            )
+        try:
+            cache_key = f'group_target:{today.isoformat()}:{flow_name}'
             cache.set(
-                f'group_work_minutes:{today.isoformat()}:{flow_name}',
-                planned_work_minutes,
+                cache_key,
+                group_target_int,
                 timeout=_seconds_to_midnight(),
             )
+            if planned_work_minutes is not None:
+                cache.set(
+                    f'group_work_minutes:{today.isoformat()}:{flow_name}',
+                    planned_work_minutes,
+                    timeout=_seconds_to_midnight(),
+                )
+        except Exception as exc:
+            logger.warning('整组目标已写入数据库，但Redis缓存刷新失败: {}', exc)
         logger.info(
             '整组目标已保存: {} = {}, 工作时间={}小时',
             flow_name,
@@ -1679,6 +1750,7 @@ def set_targets(request):
             'status': 'ok',
             'flow': flow_name,
             'group_target': group_target_int,
+            'is_late': target.is_late,
             'work_hours': (
                 planned_work_minutes / 60
                 if planned_work_minutes is not None
@@ -1686,56 +1758,85 @@ def set_targets(request):
             ),
         })
 
+    try:
+        require_admin(identity)
+    except TargetResponsibilityError as exc:
+        return Response(
+            {'error': exc.message, 'code': exc.code},
+            status=exc.http_status,
+        )
+
     targets = request.data.get('targets', {})
     wo_targets = request.data.get('wo_targets', {})
     today = get_business_date()
-
-    # 1. 保存工单级目标到数据库
-    if wo_targets:
+    if not isinstance(targets, dict) or not isinstance(wo_targets, dict):
+        return Response(
+            {'error': 'targets 和 wo_targets 必须是对象'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        normalized_wo_targets = {}
         for key, qty in wo_targets.items():
-            parts = key.split('@', 1)
-            if len(parts) != 2:
-                continue
-            emp_id, workorder = parts
-            qty_int = int(qty) if qty else 0
-            TargetProduction.objects.update_or_create(
+            emp_id, workorder = str(key).split('@', 1)
+            if not emp_id or not workorder:
+                raise ValueError
+            qty_int = int(qty) if qty not in (None, '') else 0
+            if qty_int < 0:
+                raise ValueError
+            normalized_wo_targets[str(key)] = qty_int
+        normalized_targets = {
+            str(emp_id): int(qty) if qty not in (None, '') else 0
+            for emp_id, qty in targets.items()
+        }
+        if any(qty < 0 for qty in normalized_targets.values()):
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response(
+            {'error': '旧格式目标必须是非负整数，工单键格式为员工ID@工单号'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if normalized_wo_targets:
+        normalized_targets = {}
+        for key, qty_int in normalized_wo_targets.items():
+            emp_id = key.split('@', 1)[0]
+            normalized_targets[emp_id] = normalized_targets.get(emp_id, 0) + qty_int
+
+    with transaction.atomic(using='iwork_local'):
+        for key, qty_int in normalized_wo_targets.items():
+            emp_id, workorder = key.split('@', 1)
+            TargetProduction.objects.using('iwork_local').update_or_create(
                 target_date=today,
-                employee_id=str(emp_id),
+                employee_id=emp_id,
                 workorder=workorder,
                 defaults={'target_qty': qty_int},
             )
-        logger.info(f'工单目标已保存: {len(wo_targets)} 条')
+        for emp_id, qty_int in normalized_targets.items():
+            TargetProduction.objects.using('iwork_local').update_or_create(
+                target_date=today,
+                employee_id=emp_id,
+                workorder='',
+                defaults={'target_qty': qty_int},
+            )
 
-        # 自动聚合计算员工总目标
-        targets = {}
-        for key, qty in wo_targets.items():
-            emp_id = key.split('@')[0]
-            targets[emp_id] = targets.get(emp_id, 0) + (int(qty) or 0)
+    try:
+        if normalized_targets:
+            cache.set(
+                f'targets:{today.isoformat()}',
+                json.dumps(normalized_targets),
+                timeout=_seconds_to_midnight(),
+            )
+        if normalized_wo_targets:
+            cache.set(
+                f'wo_targets:{today.isoformat()}',
+                json.dumps(normalized_wo_targets),
+                timeout=_seconds_to_midnight(),
+            )
+    except Exception as exc:
+        logger.warning('目标已写入数据库，但Redis缓存刷新失败: {}', exc)
 
-    # 2. 保存员工总目标到数据库（兼容旧格式 + 工单聚合结果）
-    if targets:
-        try:
-            for emp_id, qty in targets.items():
-                qty_int = int(qty) if qty else 0
-                if qty_int > 0:
-                    TargetProduction.objects.update_or_create(
-                        target_date=today,
-                        employee_id=str(emp_id),
-                        workorder='',
-                        defaults={'target_qty': qty_int}
-                    )
-            logger.info(f'员工总目标已保存: {len(targets)} 条')
-        except Exception as e:
-            logger.error(f'目标产量保存到数据库失败: {e}')
-
-    # 3. 写入 Redis 缓存
-    if targets:
-        key = f'targets:{today.isoformat()}'
-        cache.set(key, json.dumps(targets), timeout=_seconds_to_midnight())
-    if wo_targets:
-        key = f'wo_targets:{today.isoformat()}'
-        cache.set(key, json.dumps(wo_targets), timeout=_seconds_to_midnight())
-        logger.info(f'工单目标已缓存到 Redis: {key}')
+    targets = normalized_targets
+    wo_targets = normalized_wo_targets
 
     return Response({'status': 'ok', 'count': len(targets), 'wo_count': len(wo_targets)})
 

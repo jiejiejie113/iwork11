@@ -521,7 +521,8 @@ def test_historical_detail_keeps_date_and_disables_live_actions():
     """历史详情应保留日期并禁用实时操作。"""
     assert '已加载历史数据' in TEMPLATE
     assert 'const isHistoricalDate = computed' in TEMPLATE
-    assert "!isEditing && !isHistoricalDate" in TEMPLATE
+    assert 'v-if="canEditCurrentFlow && !isEditing"' in TEMPLATE
+    assert "&& !isHistoricalDate" in TEMPLATE
     assert "if (isHistoricalDate.value) return;" in TEMPLATE
     assert "'?date=' + encodeURIComponent(selectedDate.value)" in TEMPLATE
     assert 'v-if="loadError"' in TEMPLATE
@@ -866,4 +867,24 @@ def test_flow_target_inputs_are_visible_before_editing_in_both_layouts():
     assert ':readonly="!isEditing"' in controls
     assert "detailType === 'flow' && detailLayout === 'table' && !isEditing" not in controls
     assert "detailType === 'flow' && detailLayout === 'table' && isEditing" not in controls
-    assert '!isEditing && !isHistoricalDate' in controls
+    assert 'v-if="canEditCurrentFlow && !isEditing"' in controls
+
+
+def test_account_role_controls_managed_flow_filter_and_target_editing():
+    """组长默认只看负责分组且编辑按钮由可信账号职能控制。"""
+    assert "我管理的组" in TEMPLATE
+    assert "全部分组" in TEMPLATE
+    assert "await loadAccount();" in TEMPLATE
+    assert "managedOnly.value = !account.value.is_admin" in TEMPLATE
+    assert "managedFlowNames.value.includes(detailKey.value)" in TEMPLATE
+    assert 'v-if="canEditCurrentFlow && !isEditing"' in TEMPLATE
+
+
+def test_target_responsibility_status_and_initial_style_targets_are_read_only():
+    """Flow责任状态应展示，初版款号仅展示各分组目标而不开放编辑。"""
+    assert "targetObligationLabel" in TEMPLATE
+    assert "正常提交" in TEMPLATE
+    assert "目标已逾期" in TEMPLATE
+    assert "逾期补填" in TEMPLATE
+    assert "分组目标：" in TEMPLATE
+    assert "flowTargets.length" in TEMPLATE

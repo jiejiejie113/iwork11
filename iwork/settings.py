@@ -196,6 +196,7 @@ CELERY_RESULT_SERIALIZER = 'json'
 # 业务配置（统一管理，模块内通过 django.conf.settings 引用）
 # iwork 的生产日期、班次和 Celery 调度统一使用曼谷时区。
 IWORK_BUSINESS_TIME_ZONE = env('IWORK_BUSINESS_TIME_ZONE', default='Asia/Bangkok')
+IWORK_ADMIN_GROUPS = env.list('IWORK_ADMIN_GROUPS', default=['/admin'])
 CELERY_TIMEZONE = IWORK_BUSINESS_TIME_ZONE
 WORKDAY_START_MINUTE = 7 * 60
 WORKDAY_LUNCH_START_MINUTE = 11 * 60
@@ -253,6 +254,14 @@ SSE_HEARTBEAT_SECONDS = env.float('SSE_HEARTBEAT_SECONDS', default=15.0)
 SSE_CONNECTION_LEASE_SECONDS = env.float(
     'SSE_CONNECTION_LEASE_SECONDS',
     default=60.0,
+)
+ALERT_NOTIFICATION_CHANNEL = env(
+    'ALERT_NOTIFICATION_CHANNEL',
+    default='iwork:alerts:v1:notifications',
+)
+IWORK_TRUSTED_PROXY_HOSTS = env.list(
+    'IWORK_TRUSTED_PROXY_HOSTS',
+    default=['DKT_kc_nginx'],
 )
 SSE_NOTIFICATION_POLL_SECONDS = env.float(
     'SSE_NOTIFICATION_POLL_SECONDS',
