@@ -59,7 +59,19 @@ Flow写入由Portal先复验`/apps/iwork`并覆盖浏览器subject，iwork再调
 - Django/pytest全量测试、Ruff、JavaScript语法、Compose解析、Nginx配置和`git diff --check`。
 
 提交前最终全量结果为：iwork `516 passed`；Portal `90 passed, 2 skipped`。
-本地Docker重建后的容器、页面、API和SSE实机结果在部署完成后补充。
+
+### 2026-08-18本地Docker实机验收
+
+- `DKT_iwork`和`DKT_iwork_alert_worker`已使用本轮镜像重建，均为运行状态且重启次数为0；alert worker健康检查通过，并且只监听独立`alerts`队列。
+- iwork迁移`0009_identity_target_responsibility`和`0010_alerts`均已应用；实时快照成功发布，内部HTTP入口返回200。
+- Portal、Authorizer和oauth2-proxy已重建，Keycloak保持原数据库与卷；授权资源同步结果为6个资源、7个策略和6个权限。
+- Nginx配置检查通过并完成平滑重载；运行配置确认先清空浏览器传入的`Remote-Subject`，再注入Authorizer返回的可信subject。
+- Portal、iwork和管理页的匿名访问均返回302，并跳转到本地`http://192.168.30.190:8080/realms/dkt`；OIDC discovery返回200，issuer严格等于本地Realm地址；退出链路回到本地Keycloak。
+- 浏览器已实际到达本地Keycloak登录页。当前验收浏览器没有登录会话，因此未伪造Cookie或账号；管理员、组长和普通用户的真实交互矩阵仍需使用真实测试账号登录后补验，自动化测试已覆盖对应权限分支。
+
+首次Portal重建时发现Keycloak数据卷的导入目录残留一个2026-06-16生成的0字节`dkt-realm.json`，导致Keycloak报`No content to map due to end-of-input`并重启。处置时只停止本地Keycloak、删除已核实为空的历史导入文件并重新启动；没有删除或重建数据库、卷或Realm。恢复后Keycloak健康且重启次数为0，完整联合重建与连通性检查通过。
+
+非阻断既有警告：Celery worker当前仍以root运行；Nginx仍提示DSM配置存在重复`text/html` MIME声明和代理Header哈希尺寸非最优。本轮未扩大范围修改这些历史配置。
 
 ## 部署与回滚
 
