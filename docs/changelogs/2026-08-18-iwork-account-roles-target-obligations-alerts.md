@@ -30,10 +30,13 @@ iwork此前只依赖Portal判断应用访问权，应用内部没有稳定的Key
 
 - Keycloak账号启用状态、管理员状态和iwork访问权。
 - 显式分开的“授予/撤销iwork访问权”和“分配/移除Flow”操作。
-- 当前账号的Flow分配与所选日期目标责任。
+- 全局账号/组长清单、未填与逾期责任摘要，以及指定账号的Flow和责任明细。
 - Keycloak账号状态只读，不提供账号创建、删除、改密或启停。
 
 页面查询失败时会清空上一次账号结果，默认日期使用浏览器本地日期。
+Flow写入由Portal先复验`/apps/iwork`并覆盖浏览器subject，iwork再调用Portal的
+`access_only=1`轻量查询复验一次，因此管理员绕过Portal写代理直调iwork也不能
+为无应用访问权账号分配Flow。内部HTTP固定地址、禁止重定向且不记录Cookie。
 
 ## 警报与站内通知
 
@@ -51,8 +54,12 @@ iwork此前只依赖Portal判断应用访问权，应用内部没有稳定的Key
 - 订阅范围撤权、通知隔离、50个并发SSE连接和60秒租约。
 - 重复评估与重复投递幂等。
 - Portal账号管理、Keycloak 404/503、内部Nginx二次认证。
+- Portal全局账号/组长汇总、服务端Flow双重复验和失败结果清理。
 - 实时数据、生产详情、历史数据、既有SSE回归。
 - Django/pytest全量测试、Ruff、JavaScript语法、Compose解析、Nginx配置和`git diff --check`。
+
+提交前最终全量结果为：iwork `516 passed`；Portal `90 passed, 2 skipped`。
+本地Docker重建后的容器、页面、API和SSE实机结果在部署完成后补充。
 
 ## 部署与回滚
 

@@ -24,8 +24,18 @@ from iwork.statistics import get_business_date
 # ======
 # 本地目标责任配置
 LOCAL_DB_ALIAS = 'iwork_local'
-DEFAULT_DEADLINE_TIME = time(9, 0)
-DEFAULT_TIMEZONE_NAME = 'Asia/Bangkok'
+
+
+def _default_deadline_time() -> time:
+    """读取统一配置的默认目标提交截止时间。
+
+    Returns:
+        time: 配置的无时区本地截止时间。
+
+    Raises:
+        ValueError: 配置值不是合法ISO时间。
+    """
+    return time.fromisoformat(settings.IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE)
 
 
 class TargetResponsibilityError(Exception):
@@ -199,11 +209,7 @@ def get_policy_for_date(target_date: date) -> tuple[time, str]:
         effective_date__lte=target_date,
     ).order_by('-effective_date').first()
     if policy is None:
-        return DEFAULT_DEADLINE_TIME, getattr(
-            settings,
-            'IWORK_BUSINESS_TIME_ZONE',
-            DEFAULT_TIMEZONE_NAME,
-        )
+        return _default_deadline_time(), settings.IWORK_BUSINESS_TIME_ZONE
     return policy.deadline_time, policy.timezone_name
 
 
@@ -234,7 +240,7 @@ def _now_instant(now: datetime | None) -> datetime:
     """
     value = now or timezone.now()
     if timezone.is_naive(value):
-        return timezone.make_aware(value, ZoneInfo(DEFAULT_TIMEZONE_NAME))
+        return timezone.make_aware(value, ZoneInfo(settings.IWORK_BUSINESS_TIME_ZONE))
     return value
 
 

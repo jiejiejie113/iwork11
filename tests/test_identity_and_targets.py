@@ -241,11 +241,16 @@ def test_admin_authorization_uses_current_proxy_groups_not_principal_snapshot():
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-def test_admin_assignment_api_uses_portal_contract_fields():
+def test_admin_assignment_api_uses_portal_contract_fields(monkeypatch):
     """管理员 PUT 创建分配时应返回 Portal 约定字段。"""
     import json
 
     from django.test import Client
+
+    monkeypatch.setattr(
+        'iwork.api_views_account._validate_target_iwork_access',
+        lambda request, subject, username: None,
+    )
 
     response = Client().put(
         '/api/account-admin/flow-assignments/',
@@ -303,7 +308,7 @@ def test_leader_cannot_rewrite_historical_target(monkeypatch):
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-def test_assignment_date_change_waives_future_unfinished_obligation():
+def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch):
     """修改唯一分配的生效日期后应免除已不再负责的未来责任。"""
     import json
 
@@ -311,6 +316,11 @@ def test_assignment_date_change_waives_future_unfinished_obligation():
 
     from iwork.local_models import DailyTargetObligation, IworkPrincipal, ManagedFlowAssignment
     from iwork.target_responsibility import ensure_daily_target_obligations
+
+    monkeypatch.setattr(
+        'iwork.api_views_account._validate_target_iwork_access',
+        lambda request, subject, username: None,
+    )
 
     principal = IworkPrincipal.objects.create(subject='leader-subject', username='leader')
     assignment = ManagedFlowAssignment.objects.create(
@@ -357,6 +367,7 @@ def test_assignment_created_after_deadline_starts_next_business_day():
     with (
         patch('iwork.api_views_account.get_business_date', return_value=current_date),
         patch('iwork.api_views_account.timezone.now', return_value=after_deadline),
+        patch('iwork.api_views_account._validate_target_iwork_access'),
     ):
         response = Client().put(
             '/api/account-admin/flow-assignments/',
@@ -376,3 +387,73 @@ def test_assignment_created_after_deadline_starts_next_business_day():
 
     assert response.status_code == 201
     assert response.json()['effective_date'] == '2026-08-19'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_direct_assignment_revalidates_target_iwork_access(monkeypatch):
+    """绕过Portal代理直调iwork时仍必须复验目标账号访问权。"""
+    import json
+
+    from django.test import Client
+
+    from iwork.local_models import ManagedFlowAssignment
+
+    captured = {}
+
+    class PortalResponse:
+        """提供目标账号无iwork访问权的Portal响应。"""
+
+        status_code = 200
+
+        @staticmethod
+        def json():
+            """返回严格Keycloak账号查询结果。
+
+            Returns:
+                dict: 目标账号当前访问权快照。
+            """
+            return {
+                'accounts': [{
+                    'subject': 'leader-subject',
+                    'username': 'leader',
+                    'has_iwork_access': False,
+                }],
+            }
+
+    def fake_get(url, **kwargs):
+        """记录Portal复验请求并返回无权限账号。
+
+        Args:
+            url (str): Portal复验地址。
+            **kwargs: HTTP请求参数。
+
+        Returns:
+            PortalResponse: 固定的无访问权响应。
+        """
+        captured['url'] = url
+        captured.update(kwargs)
+        return PortalResponse()
+
+    monkeypatch.setattr('iwork.api_views_account.requests.get', fake_get)
+    response = Client().put(
+        '/api/account-admin/flow-assignments/',
+        data=json.dumps({
+            'subject': 'leader-subject',
+            'username': 'leader',
+            'flow_name': 'SO3-L3A',
+            'effective_date': '2026-08-18',
+            'expires_date': None,
+        }),
+        content_type='application/json',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_COOKIE='_oauth2_proxy=session',
+        HTTP_REMOTE_SUBJECT='admin-subject',
+        HTTP_REMOTE_USER='admin',
+        HTTP_REMOTE_GROUPS='/admin',
+    )
+
+    assert response.status_code == 403
+    assert response.json()['code'] == 'iwork_access_required'
+    assert captured['params'] == {'username': 'leader', 'access_only': '1'}
+    assert captured['allow_redirects'] is False
+    assert not ManagedFlowAssignment.objects.exists()

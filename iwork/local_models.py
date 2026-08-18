@@ -1,5 +1,6 @@
 from datetime import time
 
+from django.conf import settings
 from django.db import models
 
 
@@ -175,8 +176,15 @@ class TargetSubmissionPolicy(models.Model):
     """按生效日期版本化的每日目标提交策略。"""
 
     effective_date = models.DateField('生效日期', unique=True)
-    deadline_time = models.TimeField('提交截止时间', default=time(9, 0))
-    timezone_name = models.CharField('业务时区', max_length=64, default='Asia/Bangkok')
+    deadline_time = models.TimeField(
+        '提交截止时间',
+        default=time.fromisoformat(settings.IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE),
+    )
+    timezone_name = models.CharField(
+        '业务时区',
+        max_length=64,
+        default=settings.IWORK_BUSINESS_TIME_ZONE,
+    )
     created_by_subject = models.CharField('创建人 subject', max_length=255)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
 

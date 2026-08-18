@@ -807,6 +807,11 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 - 组长只能写当前业务日且属于自己的Flow；历史修正和旧目标格式只允许管理员。
 - 0目标属于有效提交，不得用“大于0”判断是否填写。
 - 目标、责任状态和审计日志必须使用`iwork_local`同一事务保存。
+- Flow负责人写入必须通过Portal轻量账号接口实时复验目标subject和`/apps/iwork`；
+  不能只依赖Portal页面按钮或代理层校验。复验必须携带当前管理员会话、使用固定
+  内网URL、禁止重定向，Portal的`access_only`查询不得回调iwork。
+- 默认截止时间和业务时区统一由`IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE`、
+  `IWORK_BUSINESS_TIME_ZONE`配置，业务模块和模型不得硬编码。
 
 ### 13.3 警报与通知
 
