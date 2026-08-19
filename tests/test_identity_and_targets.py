@@ -1,6 +1,6 @@
 """可信代理身份与目标责任后端测试。"""
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 from django.test import RequestFactory, override_settings
@@ -220,14 +220,16 @@ def test_late_submission_preserves_overdue_fact():
 
     from iwork.identity import IworkIdentity
     from iwork.local_models import DailyTargetObligation, IworkPrincipal, ManagedFlowAssignment
+    from iwork.statistics import get_business_date
     from iwork.target_responsibility import ensure_daily_target_obligations, save_group_target
 
-    target_date = date(2026, 8, 18)
+    # 组长只能修改当前业务日；日期必须动态获取，硬编码日期跨日后必然被拒绝。
+    target_date = get_business_date()
     principal = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     ManagedFlowAssignment.objects.create(
         principal=principal,
         flow_name='SO3-L3A',
-        effective_date=date(2026, 8, 1),
+        effective_date=target_date - timedelta(days=30),
     )
     late_time = datetime.combine(target_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
     ensure_daily_target_obligations(target_date, now=late_time)
