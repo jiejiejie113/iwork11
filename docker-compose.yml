@@ -18,6 +18,16 @@ services:
       - ./static:/app/static
     networks:
       - dkt-net
+    healthcheck:
+      # 与 Rebuild-Local.ps1 的 Wait-IworkReady 同一探法；start_period 需覆盖迁移与静态收集
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import http.client,sys; conn=http.client.HTTPConnection('127.0.0.1',8000,timeout=5); conn.request('GET','/',headers={'Connection':'close'}); status=conn.getresponse().status; conn.close(); sys.exit(0 if status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
 
   alert-worker:
     build: .
