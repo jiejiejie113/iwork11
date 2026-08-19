@@ -186,8 +186,8 @@ def test_policy_change_uses_next_business_day():
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-def test_generated_obligation_freezes_leader_snapshot_and_deadline():
-    """责任生成后新增组长和策略变更不得改写当天快照。"""
+def test_generated_obligation_freezes_deadline_and_appends_new_leaders():
+    """责任生成后截止时间冻结，当日新增的有效组长会追加进快照。"""
     from iwork.local_models import (
         IworkPrincipal,
         ManagedFlowAssignment,
@@ -219,7 +219,59 @@ def test_generated_obligation_freezes_leader_snapshot_and_deadline():
     obligation = ensure_daily_target_obligations(target_date)[0]
 
     assert obligation.deadline_at == original_deadline
-    assert list(obligation.leader_links.values_list('subject', flat=True)) == ['subject-a']
+    assert list(
+        obligation.leader_links.order_by('pk').values_list('subject', flat=True)
+    ) == ['subject-a', 'subject-b']
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_waived_obligation_revives_when_leader_reassigned():
+    """豁免后重新出现组长时，责任应恢复为待提交或逾期。"""
+    from zoneinfo import ZoneInfo
+
+    from iwork.local_models import (
+        DailyTargetObligation,
+        IworkPrincipal,
+        ManagedFlowAssignment,
+    )
+    from iwork.target_responsibility import (
+        ensure_daily_target_obligations,
+        waive_unfinished_obligations,
+    )
+    from iwork.identity import IworkIdentity
+
+    target_date = date(2026, 8, 18)
+    early_time = datetime.combine(target_date, time(8, 30), tzinfo=ZoneInfo('Asia/Bangkok'))
+    leader_a = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
+    assignment = ManagedFlowAssignment.objects.create(
+        principal=leader_a,
+        flow_name='SO3-L3A',
+        effective_date=date(2026, 8, 1),
+    )
+    ensure_daily_target_obligations(target_date, now=early_time)
+    assignment.delete()
+    waive_unfinished_obligations(
+        flow_name='SO3-L3A',
+        identity=IworkIdentity(subject='admin-subject', username='admin', is_admin=True),
+        now=early_time,
+    )
+    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')
+    assert obligation.status == DailyTargetObligation.Status.WAIVED
+
+    leader_b = IworkPrincipal.objects.create(subject='subject-b', username='leader-b')
+    ManagedFlowAssignment.objects.create(
+        principal=leader_b,
+        flow_name='SO3-L3A',
+        effective_date=target_date,
+    )
+    ensure_daily_target_obligations(target_date, now=early_time)
+
+    obligation.refresh_from_db()
+    assert obligation.status == DailyTargetObligation.Status.PENDING
+    assert obligation.waived_at is None
+    assert list(
+        obligation.leader_links.order_by('pk').values_list('subject', flat=True)
+    ) == ['subject-a', 'subject-b']
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
@@ -436,20 +488,22 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-def test_assignment_created_after_deadline_starts_next_business_day():
-    """截止后新增组长不得立即产生当天逾期责任。"""
+def test_assignment_after_deadline_takes_effect_same_day_as_overdue():
+    """截止后新增组长当日立即生效，并直接生成逾期责任。"""
     import json
     from unittest.mock import patch
     from zoneinfo import ZoneInfo
 
     from django.test import Client
 
+    from iwork.local_models import DailyTargetObligation
+
     current_date = date(2026, 8, 18)
     after_deadline = datetime.combine(current_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
     with (
         patch('iwork.api_views_account.get_business_date', return_value=current_date),
-        patch('iwork.api_views_account.timezone.now', return_value=after_deadline),
         patch('iwork.api_views_account._validate_target_iwork_access'),
+        patch('iwork.target_responsibility.timezone.now', return_value=after_deadline),
     ):
         response = Client().put(
             '/api/account-admin/flow-assignments/',
@@ -468,7 +522,48 @@ def test_assignment_created_after_deadline_starts_next_business_day():
         )
 
     assert response.status_code == 201
-    assert response.json()['effective_date'] == '2026-08-19'
+    assert response.json()['effective_date'] == '2026-08-18'
+    obligation = DailyTargetObligation.objects.get(
+        target_date=current_date,
+        flow_name='SO3-L3A',
+    )
+    assert obligation.status == DailyTargetObligation.Status.OVERDUE
+    assert list(obligation.leader_links.values_list('subject', flat=True)) == ['leader-subject']
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_assignment_without_effective_date_defaults_to_business_date():
+    """未传 effective_date 的分配应在当前业务日立即生效。"""
+    import json
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from django.test import Client
+
+    current_date = date(2026, 8, 18)
+    early_time = datetime.combine(current_date, time(8, 30), tzinfo=ZoneInfo('Asia/Bangkok'))
+    with (
+        patch('iwork.api_views_account.get_business_date', return_value=current_date),
+        patch('iwork.api_views_account._validate_target_iwork_access'),
+        patch('iwork.target_responsibility.timezone.now', return_value=early_time),
+    ):
+        response = Client().put(
+            '/api/account-admin/flow-assignments/',
+            data=json.dumps({
+                'subject': 'leader-subject',
+                'username': 'leader',
+                'flow_name': 'SO3-L3A',
+                'expires_date': None,
+            }),
+            content_type='application/json',
+            REMOTE_ADDR='127.0.0.1',
+            HTTP_REMOTE_SUBJECT='admin-subject',
+            HTTP_REMOTE_USER='admin',
+            HTTP_REMOTE_GROUPS='/admin',
+        )
+
+    assert response.status_code == 201
+    assert response.json()['effective_date'] == current_date.isoformat()
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

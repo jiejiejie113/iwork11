@@ -244,12 +244,36 @@ def _now_instant(now: datetime | None) -> datetime:
     return value
 
 
+def _sync_obligation_leaders(obligation, leaders):
+    """把当日仍有效的组长追加进责任快照，不删除已冻结的历史负责人。
+
+    Args:
+        obligation (DailyTargetObligation): 待同步负责人的责任。
+        leaders (list[IworkPrincipal]): 该 Flow 当日仍有效的组长列表。
+    """
+    existing_subjects = set(
+        obligation.leader_links.values_list('subject', flat=True)
+    )
+    for leader in leaders:
+        if leader.subject in existing_subjects:
+            continue
+        DailyTargetObligationLeader.objects.using(LOCAL_DB_ALIAS).create(
+            obligation=obligation,
+            principal=leader,
+            subject=leader.subject,
+            username=leader.username,
+        )
+
+
 def ensure_daily_target_obligations(
     target_date: date,
     *,
     now: datetime | None = None,
 ) -> list[DailyTargetObligation]:
     """生成或补偿一个业务日的 Flow 目标责任并刷新逾期/撤销状态。
+
+    当日新增的有效组长会追加进快照；重新出现组长的已豁免责任会恢复为
+    待提交或逾期，保证分配当天立即能看到责任。
 
     Args:
         target_date (date): 责任所属业务日期。
@@ -283,19 +307,12 @@ def ensure_daily_target_obligations(
                 target_date=target_date,
                 flow_name=flow_name,
             ).first()
-            obligation, created = DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).get_or_create(
+            obligation, _ = DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).get_or_create(
                 target_date=target_date,
                 flow_name=flow_name,
                 defaults={'deadline_at': deadline_for_date(target_date)},
             )
-            if created:
-                for leader in leaders:
-                    DailyTargetObligationLeader.objects.using(LOCAL_DB_ALIAS).create(
-                        obligation=obligation,
-                        principal=leader,
-                        subject=leader.subject,
-                        username=leader.username,
-                    )
+            _sync_obligation_leaders(obligation, leaders)
             if target is not None:
                 submitted_at = target.submitted_at or target.updated_at
                 obligation.status = (
@@ -307,6 +324,22 @@ def ensure_daily_target_obligations(
                 obligation.submitted_by_username = target.submitted_by_username
                 obligation.submitted_at = submitted_at
                 obligation.waived_at = None
+            elif leaders and obligation.status == DailyTargetObligation.Status.WAIVED:
+                obligation.status = (
+                    DailyTargetObligation.Status.OVERDUE
+                    if instant > obligation.deadline_at
+                    else DailyTargetObligation.Status.PENDING
+                )
+                obligation.waived_at = None
+                GroupTargetAuditLog.objects.using(LOCAL_DB_ALIAS).create(
+                    target_date=target_date,
+                    flow_name=flow_name,
+                    action='obligation_revived',
+                    actor_subject='system',
+                    actor_username='',
+                    old_value={'status': DailyTargetObligation.Status.WAIVED},
+                    new_value={'status': obligation.status},
+                )
             elif obligation.status == DailyTargetObligation.Status.PENDING:
                 obligation.status = (
                     DailyTargetObligation.Status.OVERDUE

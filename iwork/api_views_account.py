@@ -6,7 +6,6 @@ from datetime import date, time
 import requests
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -22,11 +21,9 @@ from iwork.target_responsibility import (
     LOCAL_DB_ALIAS,
     TargetResponsibilityError,
     active_assignment_query,
-    deadline_for_date,
     ensure_daily_target_obligations,
     require_admin,
     require_subject,
-    next_business_date,
     set_submission_policy,
     sync_principal,
     waive_unfinished_obligations,
@@ -258,6 +255,9 @@ def flow_list(request):
 def flow_assignments(request):
     """管理员列出或创建 Flow 负责人分配。
 
+    新建分配默认在分配当日立即生效（未传 effective_date 时取当前业务日），
+    且保存后立即生成/刷新生效日期当日的目标责任。
+
     Args:
         request (Request): GET列表或PUT保存请求。
 
@@ -278,7 +278,11 @@ def flow_assignments(request):
     subject = str(request.data.get('subject', '')).strip()
     flow_name = str(request.data.get('flow_name', '')).strip()
     username = str(request.data.get('username', '')).strip()
-    effective_date, date_error = _parse_date(request.data.get('effective_date'), 'effective_date')
+    effective_date, date_error = _parse_date(
+        request.data.get('effective_date'),
+        'effective_date',
+        required=False,
+    )
     if date_error:
         return date_error
     expires_date, expires_error = _parse_date(
@@ -299,6 +303,9 @@ def flow_assignments(request):
             {'error': '生产组不在允许范围内', 'code': 'invalid_flow'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    business_date = get_business_date()
+    if effective_date is None:
+        effective_date = business_date
     if expires_date and expires_date < effective_date:
         return Response(
             {'error': 'expires_date 不能早于 effective_date', 'code': 'invalid_assignment_dates'},
@@ -315,13 +322,6 @@ def flow_assignments(request):
             {'error': exc.message, 'code': exc.code},
             status=exc.http_status,
         )
-    business_date = get_business_date()
-    if (
-        assignment_id is None
-        and effective_date <= business_date
-        and timezone.now() > deadline_for_date(business_date)
-    ):
-        effective_date = next_business_date(business_date)
     try:
         with transaction.atomic(using=LOCAL_DB_ALIAS):
             principal, _ = IworkPrincipal.objects.using(LOCAL_DB_ALIAS).update_or_create(
@@ -355,6 +355,8 @@ def flow_assignments(request):
             {'error': '相同负责人、Flow和生效日期的分配已存在', 'code': 'assignment_conflict'},
             status=status.HTTP_409_CONFLICT,
         )
+    if effective_date <= business_date:
+        ensure_daily_target_obligations(effective_date)
     return Response(
         _assignment_payload(assignment),
         status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
