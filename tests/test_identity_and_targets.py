@@ -105,6 +105,9 @@ def test_shared_private_network_address_cannot_sign_remote_identity():
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
     """同一 Flow 的任一有效组长提交非负目标后应完成每日责任。"""
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+
     from iwork.identity import IworkIdentity
     from iwork.local_models import (
         DailyTargetObligation,
@@ -122,7 +125,14 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
             effective_date=date(2026, 8, 1),
         )
     target_date = date(2026, 8, 19)
+    # 截止时间 09:00；必须固定 now，否则测试在 09:00 后运行时会被判为逾期补交。
+    early_time = datetime.combine(
+        target_date,
+        time(8, 30),
+        tzinfo=ZoneInfo('Asia/Bangkok'),
+    )
     monkeypatch.setattr('iwork.target_responsibility.get_business_date', lambda: target_date)
+    monkeypatch.setattr('iwork.target_responsibility.timezone.now', lambda: early_time)
     ensure_daily_target_obligations(target_date)
 
     result = save_group_target(
@@ -307,6 +317,41 @@ def test_admin_assignment_api_uses_portal_contract_fields(monkeypatch):
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_admin_flows_endpoint_returns_visible_flows():
+    """管理员 GET flows 端点应返回与配置一致的候选清单。"""
+    from django.conf import settings
+    from django.test import Client
+
+    response = Client().get(
+        '/api/account-admin/flows/',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='admin-subject',
+        HTTP_REMOTE_USER='admin',
+        HTTP_REMOTE_GROUPS='/users,/admin',
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {'flows': list(settings.VISIBLE_FLOWS)}
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_flows_endpoint_requires_admin():
+    """非管理员访问 flows 端点必须被拒绝。"""
+    from django.test import Client
+
+    response = Client().get(
+        '/api/account-admin/flows/',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='subject-a',
+        HTTP_REMOTE_USER='leader',
+        HTTP_REMOTE_GROUPS='/users',
+    )
+
+    assert response.status_code == 403
+    assert response.json()['code'] == 'admin_required'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_leader_cannot_rewrite_historical_target(monkeypatch):
     """已失效组长不能利用历史有效期回写历史目标。"""
     from iwork.identity import IworkIdentity
@@ -338,6 +383,8 @@ def test_leader_cannot_rewrite_historical_target(monkeypatch):
 def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch):
     """修改唯一分配的生效日期后应免除已不再负责的未来责任。"""
     import json
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
 
     from django.test import Client
 
@@ -356,6 +403,14 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
         effective_date=date(2026, 8, 1),
     )
     target_date = date(2026, 8, 19)
+    # 豁免逻辑要求 now 早于截止时间；固定 now 避免真实时钟跨过 09:00 后，
+    # 责任先被创建为 overdue、waive 退化为逾期保留。
+    early_time = datetime.combine(
+        target_date,
+        time(8, 30),
+        tzinfo=ZoneInfo('Asia/Bangkok'),
+    )
+    monkeypatch.setattr('iwork.target_responsibility.timezone.now', lambda: early_time)
     ensure_daily_target_obligations(target_date)
 
     response = Client().put(

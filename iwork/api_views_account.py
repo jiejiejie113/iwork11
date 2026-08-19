@@ -238,6 +238,22 @@ def me(request):
     return Response(payload)
 
 
+@api_view(['GET'])
+def flow_list(request):
+    """管理员获取可分配 Flow 清单，供 Portal 管理页输入候选。
+
+    Args:
+        request (Request): GET 请求。
+
+    Returns:
+        Response: ``{'flows': [...]}`` 或管理员权限错误。
+    """
+    identity, error = _identity_or_response(request, admin=True)
+    if error:
+        return error
+    return Response({'flows': list(settings.VISIBLE_FLOWS)})
+
+
 @api_view(['GET', 'PUT'])
 def flow_assignments(request):
     """管理员列出或创建 Flow 负责人分配。

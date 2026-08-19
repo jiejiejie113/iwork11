@@ -61,6 +61,11 @@ urlpatterns = [
         name="account-notification-read",
     ),
     path(
+        "api/account-admin/flows/",
+        api_views_account.flow_list,
+        name="account-admin-flows",
+    ),
+    path(
         "api/account-admin/flow-assignments/",
         api_views_account.flow_assignments,
         name="account-admin-flow-assignments",
