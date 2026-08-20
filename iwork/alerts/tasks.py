@@ -90,18 +90,21 @@ def evaluate_published_snapshot_task(
 
 @shared_task(queue="alerts")
 def reconcile_target_obligations_task() -> dict[str, object]:
-    """每分钟补偿目标责任并评估逾期与恢复。
+    """每分钟补偿目标责任并评估逾期与每日摘要。
 
     Returns:
-        dict[str, object]: 业务日期、责任总数和逾期数。
+        dict[str, object]: 业务日期、责任总数、逾期数和未填写组数。
     """
     business_date = get_business_date()
     obligations = list_target_obligations_for_alerts(business_date)
-    result = AlertService().evaluate_target_submission_overdue(business_date)
+    service = AlertService()
+    overdue_result = service.evaluate_target_submission_overdue(business_date)
+    summary_result = service.evaluate_daily_responsibility_summary(business_date)
     return {
         "business_date": business_date.isoformat(),
         "obligation_count": len(obligations),
-        "overdue_count": result.event_count,
+        "overdue_count": overdue_result.event_count,
+        "summary_count": summary_result.event_count,
     }
 
 

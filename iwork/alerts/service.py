@@ -22,6 +22,7 @@ from iwork.local_models import DailyTargetObligation
 # 警报持久化与内置规则配置
 LOCAL_DB_ALIAS = "iwork_local"
 TARGET_OVERDUE_RULE_CODE = "target_submission_overdue"
+DAILY_SUMMARY_RULE_CODE = "daily_responsibility_summary"
 DATA_WATERMARK_RULE_CODE = "data_watermark_anomaly"
 
 
@@ -193,6 +194,19 @@ class AlertService:
                 "enabled": True,
             },
         )
+        daily_rule, _ = AlertRule.objects.using(LOCAL_DB_ALIAS).get_or_create(
+            code=DAILY_SUMMARY_RULE_CODE,
+            defaults={
+                "name": "每日责任摘要",
+                "severity": "warning",
+                "detector_type": DAILY_SUMMARY_RULE_CODE,
+                "allowed_roles": ["admin"],
+                "scope_type": "none",
+                "mandatory_roles": ["admin"],
+                "cooldown_seconds": 0,
+                "enabled": True,
+            },
+        )
         watermark_rule, _ = AlertRule.objects.using(LOCAL_DB_ALIAS).get_or_create(
             code=DATA_WATERMARK_RULE_CODE,
             defaults={
@@ -205,7 +219,11 @@ class AlertService:
                 "enabled": False,
             },
         )
-        return {target_rule.code: target_rule, watermark_rule.code: watermark_rule}
+        return {
+            target_rule.code: target_rule,
+            daily_rule.code: daily_rule,
+            watermark_rule.code: watermark_rule,
+        }
 
     def evaluate_target_submission_overdue(self, business_date: date) -> EvaluationResult:
         """评估并恢复指定业务日的目标逾期事件。
@@ -267,6 +285,93 @@ class AlertService:
             business_date=business_date,
             snapshot_version="target-obligation",
             event_count=len(overdue_flows),
+        )
+
+    def evaluate_daily_responsibility_summary(self, business_date: date) -> EvaluationResult:
+        """评估并维护指定业务日的每日责任摘要事件。
+
+        只要当日存在未填写（待提交或已逾期）责任，就生成一条管理员可见的
+        汇总事件；全部填写或豁免后转为已恢复。每条事件按业务日去重。
+
+        Args:
+            business_date: 待检查的曼谷业务日期。
+
+        Returns:
+            EvaluationResult: 本轮未填写生产组数量。
+        """
+        rule = self.ensure_builtin_rules()[DAILY_SUMMARY_RULE_CODE]
+        if not rule.enabled:
+            return EvaluationResult(business_date, "daily-summary", 0)
+        obligations = list(
+            DailyTargetObligation.objects.using(LOCAL_DB_ALIAS)
+            .filter(target_date=business_date)
+            .prefetch_related("leader_links")
+            .order_by("flow_name")
+        )
+        status_order = ("pending", "overdue", "fulfilled", "fulfilled_late", "waived")
+        status_counts = {name: 0 for name in status_order}
+        flows = []
+        for obligation in obligations:
+            status_counts[obligation.status] = status_counts.get(obligation.status, 0) + 1
+            flows.append({
+                "flow": obligation.flow_name,
+                "status": obligation.status,
+                "deadline_at": obligation.deadline_at.isoformat(),
+                "leaders": [link.username for link in obligation.leader_links.all()],
+            })
+        unfilled = [item for item in flows if item["status"] in ("pending", "overdue")]
+        payload = {
+            "type": "daily_summary",
+            "business_date": business_date.isoformat(),
+            "status_counts": status_counts,
+            "flows": flows,
+        }
+        now = timezone.now()
+        with transaction.atomic(using=LOCAL_DB_ALIAS):
+            event = (
+                AlertEvent.objects.using(LOCAL_DB_ALIAS)
+                .select_for_update()
+                .filter(rule=rule, business_date=business_date, dimension_key="daily")
+                .first()
+            )
+            if unfilled:
+                message = "今日 {count} 个生产组未填写目标，其中 {overdue} 个已逾期。".format(
+                    count=len(unfilled),
+                    overdue=status_counts.get("overdue", 0),
+                )
+                if event is None:
+                    event = AlertEvent.objects.using(LOCAL_DB_ALIAS).create(
+                        rule=rule,
+                        business_date=business_date,
+                        dimension_key="daily",
+                        severity=rule.severity,
+                        title="每日责任摘要",
+                        message=message,
+                        payload=payload,
+                    )
+                else:
+                    if event.status == AlertEvent.Status.RECOVERED:
+                        event.status = AlertEvent.Status.OPEN
+                        event.recovered_at = None
+                        event.revision += 1
+                    event.title = "每日责任摘要"
+                    event.message = message
+                    event.payload = payload
+                    event.occurrence_count += 1
+                    event.last_seen_at = now
+                    event.save(using=LOCAL_DB_ALIAS)
+                self._ensure_admin_delivery(event)
+            elif event is not None and event.status == AlertEvent.Status.OPEN:
+                event.status = AlertEvent.Status.RECOVERED
+                event.recovered_at = now
+                event.revision += 1
+                event.message = "当日目标已全部填写。"
+                event.save(using=LOCAL_DB_ALIAS)
+                self._ensure_admin_delivery(event, reset=True)
+        return EvaluationResult(
+            business_date=business_date,
+            snapshot_version="daily-summary",
+            event_count=len(unfilled),
         )
 
     def _ensure_admin_delivery(self, event: AlertEvent, *, reset: bool = False) -> None:

@@ -22,6 +22,13 @@ DEBUG = env.bool('DJANGO_DEBUG', default=False)
 
 ALLOWED_HOSTS = env.list('DJANGO_ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
+# Django 5.2 对非 HTTPS POST 启用 Origin 校验；nginx 转发时 Host 不带端口，
+# 必须把带端口的对外源站加入信任列表，否则站内通知等 POST 接口返回 403。
+CSRF_TRUSTED_ORIGINS = env.list(
+    'DJANGO_CSRF_TRUSTED_ORIGINS',
+    default=['http://192.168.30.190:8080', 'http://localhost:8080'],
+)
+
 
 # Application definition
 
@@ -162,7 +169,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = "static/"
+# 应用部署在 nginx 子路径 /iwork/ 下；staticfiles 会把 STATIC_URL 规范化为
+# 根绝对路径，因此必须显式携带子路径前缀，浏览器才能把静态请求路由回本应用。
+STATIC_URL = env('DJANGO_STATIC_URL', default='/iwork/static/')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -32,6 +32,34 @@
         return element;
     }
 
+    const STATUS_META = {
+        pending: ["待提交", "bg-amber-500/20 text-amber-300 border-amber-500"],
+        overdue: ["已逾期", "bg-red-500/20 text-red-300 border-red-500"],
+        fulfilled: ["已完成", "bg-emerald-500/20 text-emerald-300 border-emerald-500"],
+        fulfilled_late: ["逾期补交", "bg-orange-500/20 text-orange-300 border-orange-500"],
+        waived: ["已豁免", "bg-slate-500/20 text-slate-300 border-slate-500"],
+    };
+
+    function formatDeadline(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        return new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Asia/Bangkok",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+        }).format(date).replace("T", " ");
+    }
+
+    function statusBadge(status) {
+        const [label, className] = STATUS_META[status] || [status, "bg-slate-500/20 text-slate-300 border-slate-500"];
+        const badge = createText("span", `inline-block px-2 py-0.5 rounded border text-xs ${className}`, label);
+        return badge;
+    }
+
     document.querySelectorAll("[data-iwork-notification-center]").forEach((root) => {
         if (root.dataset.initialized === "true") return;
         root.dataset.initialized = "true";
@@ -42,8 +70,78 @@
         const subscriptionsPanel = root.querySelector("[data-notification-subscriptions]");
         const settingsButton = root.querySelector("[data-notification-settings]");
         const readAllButton = root.querySelector("[data-notification-read-all]");
+        const modal = root.querySelector("[data-notification-modal]");
+        const modalTitle = root.querySelector("[data-notification-modal-title]");
+        const modalBody = root.querySelector("[data-notification-modal-body]");
+        const modalClose = root.querySelector("[data-notification-modal-close]");
         let notifications = [];
         let subscriptionData = {subscriptions: [], available_rules: []};
+
+        function closeModal() {
+            modal.hidden = true;
+            modalBody.replaceChildren();
+        }
+
+        function renderModalDetail(payload) {
+            modalBody.replaceChildren();
+            const counts = payload.status_counts || {};
+            const countRow = document.createElement("div");
+            countRow.className = "flex flex-wrap gap-2 mb-3";
+            for (const [status, [label]] of Object.entries(STATUS_META)) {
+                const pill = document.createElement("span");
+                pill.className = "px-2 py-1 rounded border border-slate-600 bg-slate-800 text-xs";
+                pill.append(statusBadge(status), document.createTextNode(` ${counts[status] || 0}`));
+                countRow.appendChild(pill);
+            }
+            modalBody.appendChild(countRow);
+
+            const flows = payload.flows || [];
+            const table = document.createElement("table");
+            table.className = "w-full text-left text-sm border-collapse";
+            const head = document.createElement("thead");
+            head.innerHTML = "<tr class='text-xs text-slate-400 border-b border-slate-700'>"
+                + "<th class='py-2 pr-2'>分组</th><th class='py-2 pr-2'>状态</th>"
+                + "<th class='py-2 pr-2'>截止时间（UTC+7）</th><th class='py-2'>负责人</th></tr>";
+            const body = document.createElement("tbody");
+            if (!flows.length) {
+                const row = document.createElement("tr");
+                const cell = document.createElement("td");
+                cell.colSpan = 4;
+                cell.className = "py-6 text-center text-slate-500";
+                cell.textContent = "当日无责任明细。";
+                row.appendChild(cell);
+                body.appendChild(row);
+            }
+            for (const item of flows) {
+                const row = document.createElement("tr");
+                row.className = "border-b border-slate-800 align-top";
+                const flowCell = document.createElement("td");
+                flowCell.className = "py-2 pr-2";
+                flowCell.textContent = item.flow;
+                const statusCell = document.createElement("td");
+                statusCell.className = "py-2 pr-2";
+                statusCell.appendChild(statusBadge(item.status));
+                const deadlineCell = document.createElement("td");
+                deadlineCell.className = "py-2 pr-2 whitespace-nowrap";
+                deadlineCell.textContent = formatDeadline(item.deadline_at);
+                const leaderCell = document.createElement("td");
+                leaderCell.className = "py-2";
+                leaderCell.textContent = (item.leaders || []).join("、") || "—";
+                row.append(flowCell, statusCell, deadlineCell, leaderCell);
+                body.appendChild(row);
+            }
+            table.append(head, body);
+            modalBody.appendChild(table);
+        }
+
+        function openModalDetail(notification) {
+            if (!notification || !notification.payload || notification.payload.type !== "daily_summary") {
+                return;
+            }
+            modalTitle.textContent = notification.title || "每日责任摘要";
+            renderModalDetail(notification.payload);
+            modal.hidden = false;
+        }
 
         function renderNotifications(unreadCount = 0) {
             count.hidden = unreadCount <= 0;
@@ -60,12 +158,13 @@
                 card.append(createText("strong", "block text-sm", notification.title));
                 card.append(createText("span", "block mt-1 text-xs", notification.message));
                 card.append(createText("time", "block mt-1 text-[11px] text-slate-500", new Date(notification.updated_at).toLocaleString("zh-CN")));
-                if (!notification.is_read) {
-                    card.addEventListener("click", async () => {
+                card.addEventListener("click", async () => {
+                    if (!notification.is_read) {
                         await requestJson(`api/account/notifications/${notification.id}/read/`, {method: "POST", body: "{}"});
                         await loadNotifications();
-                    });
-                }
+                    }
+                    openModalDetail(notification);
+                });
                 list.append(card);
             });
         }
@@ -149,6 +248,14 @@
         });
         document.addEventListener("click", (event) => {
             if (!root.contains(event.target)) drawer.hidden = true;
+        });
+        modalClose.addEventListener("click", closeModal);
+        modal.addEventListener("click", (event) => {
+            // 遮罩层是模态容器的直接子元素，点击面板外的任意位置都关闭。
+            if (!event.target.closest("[data-notification-modal-panel]")) closeModal();
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !modal.hidden) closeModal();
         });
 
         const source = new EventSource(basePath + "api/account/notifications/stream/");

@@ -15,13 +15,23 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-from django.urls import path, include
+from django.conf import settings
+from django.urls import path, re_path, include
+from django.views.static import serve as serve_static
 from iwork import api_views, api_views_account, views
 from iwork.alerts import api as alerts_api
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("history/", views.history_dashboard, name="history-dashboard"),
+
+    # 静态文件：uvicorn 不提供 runserver 的静态服务，应用必须自带路由。
+    # nginx 会把 /iwork/static/ 重写为 /static/ 后转发到本应用。
+    re_path(
+        r"^static/(?P<path>.*)$",
+        serve_static,
+        {"document_root": settings.BASE_DIR / "static"},
+    ),
 
     # 实时数据API
     path("api/dashboard/realtime/", api_views.realtime_stats, name="realtime-stats"),

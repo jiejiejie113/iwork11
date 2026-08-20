@@ -314,6 +314,7 @@ def notifications(request: HttpRequest) -> JsonResponse:
             "revision": event.revision,
             "is_read": is_read,
             "updated_at": event.last_seen_at.isoformat(),
+            "payload": event.payload,
         })
     return JsonResponse({"notifications": serialized, "unread_count": unread_count})
 

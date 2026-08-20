@@ -17,7 +17,7 @@ def test_alert_tasks_are_routed_to_independent_queue():
 
 
 def test_minute_task_compensates_obligations_before_evaluating_overdue():
-    """每分钟任务应先生成责任，再评估逾期事件。"""
+    """每分钟任务应先生成责任，再评估逾期事件与每日摘要。"""
     from iwork.alerts.tasks import reconcile_target_obligations_task
 
     with (
@@ -26,14 +26,17 @@ def test_minute_task_compensates_obligations_before_evaluating_overdue():
         patch("iwork.alerts.tasks.AlertService") as service,
     ):
         service.return_value.evaluate_target_submission_overdue.return_value.event_count = 1
+        service.return_value.evaluate_daily_responsibility_summary.return_value.event_count = 2
         result = reconcile_target_obligations_task()
 
     obligations.assert_called_once_with(date(2026, 8, 18))
     service.return_value.evaluate_target_submission_overdue.assert_called_once_with(date(2026, 8, 18))
+    service.return_value.evaluate_daily_responsibility_summary.assert_called_once_with(date(2026, 8, 18))
     assert result == {
         "business_date": "2026-08-18",
         "obligation_count": 1,
         "overdue_count": 1,
+        "summary_count": 2,
     }
 
 

@@ -152,6 +152,31 @@ def test_leader_can_only_subscribe_to_an_assigned_flow(client):
     assert refreshed.json()["subscriptions"] == []
 
 
+@pytest.mark.django_db(databases=["default", "iwork_local"])
+def test_admin_notification_list_serializes_payload(client):
+    """管理员通知列表应返回每日摘要事件的业务负载供详情弹窗使用。"""
+    from iwork.alert_models import AlertEvent
+    from iwork.alerts.service import AlertService
+    from iwork.local_models import DailyTargetObligation
+
+    DailyTargetObligation.objects.using("iwork_local").create(
+        target_date=date(2026, 8, 18),
+        flow_name="SO1",
+        status="overdue",
+        deadline_at=timezone.now(),
+    )
+    AlertService().evaluate_daily_responsibility_summary(date(2026, 8, 18))
+
+    response = client.get("/api/account/notifications/", **AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()["notifications"][0]["payload"]
+    assert payload["type"] == "daily_summary"
+    assert payload["status_counts"]["overdue"] == 1
+    assert payload["flows"][0]["flow"] == "SO1"
+    assert AlertEvent.objects.using("iwork_local").get().rule.code == "daily_responsibility_summary"
+
+
 @pytest.mark.asyncio
 async def test_notification_sse_only_emits_generic_wakeup():
     """通知SSE不得携带用户名、Flow或警报正文。"""
