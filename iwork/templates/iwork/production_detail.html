@@ -220,15 +220,6 @@
                 :class="groupMode === 'product' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
                 class="px-3 py-1.5 rounded-md text-xs transition-colors">按产品名称</button>
         </div>
-        <div v-if="currentView === 'overview' && groupMode === 'flow' && managedFlowNames.length"
-             class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
-            <button @click="managedOnly = true"
-                    :class="managedOnly ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-3 py-1.5 rounded-md text-xs transition-colors">我管理的组</button>
-            <button @click="managedOnly = false"
-                    :class="!managedOnly ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
-                    class="px-3 py-1.5 rounded-md text-xs transition-colors">全部分组</button>
-        </div>
         <div class="flex items-center gap-2">
             <input type="date" v-model="selectedDate" :max="businessToday" @change="changeProductionDate"
                 class="bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5 text-xs">
@@ -294,52 +285,110 @@
             <input v-model.trim="initialStyleSearch" placeholder="搜索初版款号..."
                 class="w-72 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
         </div>
-        <div v-if="groupMode === 'flow'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div v-for="card in filteredFlowCards" :key="card.flow"
-                @click="goDetail('flow', card.flow)"
-                class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors flex flex-col">
-                <div class="flex justify-between items-start">
-                    <div class="flex-1 min-w-0">
-                        <h3 class="font-bold text-lg">
-                            {[ card.flow ]}
-                            <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
-                        </h3>
-                        <p class="text-sm text-slate-400 mt-1">
-                            📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
-                        </p>
-                        <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
-                            <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
-                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border border-cyan-400/80 text-cyan-300 bg-cyan-400/10">
-                                    {[ style.initial_style_no || '未设置' ]}
+        <!-- 我管理的分组（置顶） -->
+        <div v-if="groupMode === 'flow' && managedFlowCards.length" class="mb-6">
+            <div class="flex items-center gap-2 mb-2">
+                <h3 class="text-xs font-semibold text-slate-400 whitespace-nowrap">我管理的分组</h3>
+                <div class="flex-1 border-t border-slate-700"></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div v-for="card in managedFlowCards" :key="card.flow"
+                    @click="goDetail('flow', card.flow)"
+                    class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors flex flex-col">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <h3 class="font-bold text-lg">
+                                {[ card.flow ]}
+                                <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
+                            </h3>
+                            <p class="text-sm text-slate-400 mt-1">
+                                📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
+                            </p>
+                            <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                                <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border border-cyan-400/80 text-cyan-300 bg-cyan-400/10">
+                                        {[ style.initial_style_no || '未设置' ]}
+                                    </span>
+                                    <span>{[ dailyQtyLabel ]} {[ fmtNum(style.qty) ]}件</span>
                                 </span>
-                                <span>{[ dailyQtyLabel ]} {[ fmtNum(style.qty) ]}件</span>
-                            </span>
-                            <span v-if="!card.initial_styles.length" class="text-slate-600">暂无初版款号</span>
+                                <span v-if="!card.initial_styles.length" class="text-slate-600">暂无初版款号</span>
+                            </div>
+                        </div>
+                        <div class="text-right flex-shrink-0 ml-2">
+                            <span class="text-slate-600 text-lg">→</span>
                         </div>
                     </div>
-                    <div class="text-right flex-shrink-0 ml-2">
-                        <span class="text-slate-600 text-lg">→</span>
+                    <div v-if="card.hourly && card.hourly.length" style="height:60px;">
+                        <canvas :id="'mini-chart-' + card.flow"></canvas>
+                    </div>
+                    <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
+                        <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
+                        <span class="text-red-400 font-semibold">
+                            （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
+                        </span>
+                    </div>
+                    <div v-if="card.target_total > 0" class="mt-2 text-xs">
+                        <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
+                        <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
+                        </span>
                     </div>
                 </div>
-                <div v-if="card.hourly && card.hourly.length" style="height:60px;">
-                    <canvas :id="'mini-chart-' + card.flow"></canvas>
-                </div>
-                <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
-                    <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
-                    <span class="text-red-400 font-semibold">
-                        （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
-                    </span>
-                </div>
-                <div v-if="card.target_total > 0" class="mt-2 text-xs">
-                    <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
-                    <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                        效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
-                    </span>
+            </div>
+        </div>
+        <!-- 其余分组 -->
+        <div v-if="groupMode === 'flow' && otherFlowCards.length" class="mb-6">
+            <div v-if="managedFlowCards.length" class="flex items-center gap-2 mb-2">
+                <h3 class="text-xs font-semibold text-slate-400 whitespace-nowrap">其余分组</h3>
+                <div class="flex-1 border-t border-slate-700"></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div v-for="card in otherFlowCards" :key="card.flow"
+                    @click="goDetail('flow', card.flow)"
+                    class="bg-slate-800 border border-slate-700 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 transition-colors flex flex-col">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <h3 class="font-bold text-lg">
+                                {[ card.flow ]}
+                                <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
+                            </h3>
+                            <p class="text-sm text-slate-400 mt-1">
+                                📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
+                            </p>
+                            <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                                <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border border-cyan-400/80 text-cyan-300 bg-cyan-400/10">
+                                        {[ style.initial_style_no || '未设置' ]}
+                                    </span>
+                                    <span>{[ dailyQtyLabel ]} {[ fmtNum(style.qty) ]}件</span>
+                                </span>
+                                <span v-if="!card.initial_styles.length" class="text-slate-600">暂无初版款号</span>
+                            </div>
+                        </div>
+                        <div class="text-right flex-shrink-0 ml-2">
+                            <span class="text-slate-600 text-lg">→</span>
+                        </div>
+                    </div>
+                    <div v-if="card.hourly && card.hourly.length" style="height:60px;">
+                        <canvas :id="'mini-chart-' + card.flow"></canvas>
+                    </div>
+                    <div v-if="slowestStepInfo(card)" class="mt-2 text-xs">
+                        <span class="text-slate-400">最慢工序：工序{[ slowestStepInfo(card).stepno ]}</span>
+                        <span class="text-red-400 font-semibold">
+                            （{[ fmtNum(slowestStepInfo(card).qty) ]}件 ▼{[ slowestStepInfo(card).belowAveragePct ]}%）
+                        </span>
+                    </div>
+                    <div v-if="card.target_total > 0" class="mt-2 text-xs">
+                        <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
+                        <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
+                        </span>
+                    </div>
                 </div>
             </div>
-            <div v-if="filteredFlowCards.length === 0" class="col-span-full text-center text-slate-500 py-12">
-                暂无生产线数据
-            </div>
+        </div>
+        <div v-if="groupMode === 'flow' && filteredFlowCards.length === 0" class="text-center text-slate-500 py-12">
+            暂无生产线数据
         </div>
 
         <!-- 工序卡片 -->
@@ -1095,7 +1144,6 @@ createApp({
 
         const isEditing = ref(false);
         const account = ref(null);
-        const managedOnly = ref(false);
         const targetObligation = ref(null);
         const flowTargets = ref([]);
         const groupTarget = ref(null);
@@ -1930,7 +1978,6 @@ createApp({
                 const response = await fetch(`${basePath}api/account/me/`);
                 if (!response.ok) return;
                 account.value = await response.json();
-                managedOnly.value = !account.value.is_admin && managedFlowNames.value.length > 0;
             } catch (error) {
                 console.warn('读取账号职能失败，目标编辑保持关闭:', error);
             }
@@ -1988,17 +2035,20 @@ createApp({
 
         const filteredFlowCards = computed(() => {
             const query = initialStyleSearch.value.trim().toLowerCase();
-            let cards = flowCards.value;
-            if (managedOnly.value && managedFlowNames.value.length) {
-                const managed = new Set(managedFlowNames.value);
-                cards = cards.filter(card => managed.has(card.flow));
-            }
-            if (!query) return cards;
-            return cards.filter(card => (
+            if (!query) return flowCards.value;
+            return flowCards.value.filter(card => (
                 (card.initial_styles || []).some(style => (
                     String(style.initial_style_no || '').toLowerCase().includes(query)
                 ))
             ));
+        });
+        const managedFlowCards = computed(() => {
+            const managed = new Set(managedFlowNames.value);
+            return filteredFlowCards.value.filter(card => managed.has(card.flow));
+        });
+        const otherFlowCards = computed(() => {
+            const managed = new Set(managedFlowNames.value);
+            return filteredFlowCards.value.filter(card => !managed.has(card.flow));
         });
 
         const filteredInitialStyleCards = computed(() => {
@@ -3617,7 +3667,7 @@ createApp({
 
         return {
             basePath,
-            account, managedOnly, managedFlowNames, canEditCurrentFlow,
+            account, managedFlowNames, managedFlowCards, otherFlowCards, canEditCurrentFlow,
             targetObligation, targetObligationLabel, targetObligationClass,
             flowTargets, obligationStatusText, formatAccountTime,
             currentView, groupMode, detailType, detailKey, detailLayout,

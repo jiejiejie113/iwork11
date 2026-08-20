@@ -143,30 +143,65 @@
             modal.hidden = false;
         }
 
+        function hasDetail(notification) {
+            return Boolean(notification && notification.payload && notification.payload.type === "daily_summary");
+        }
+
+        function createNotificationCard(notification) {
+            const card = document.createElement("button");
+            card.type = "button";
+            card.className = `w-full text-left rounded-md px-3 py-2 mb-1 border transition-colors ${notification.is_read ? "border-slate-800 bg-slate-800/40 text-slate-400" : "border-blue-800 bg-blue-950/40 text-slate-100"}`;
+            card.append(createText("strong", "block text-sm", notification.title));
+            card.append(createText("span", "block mt-1 text-xs", notification.message));
+            card.append(createText("time", "block mt-1 text-[11px] text-slate-500", new Date(notification.updated_at).toLocaleString("zh-CN")));
+            if (hasDetail(notification)) {
+                card.append(createText("span", "block mt-1 text-[11px] text-blue-400", "查看详情 ›"));
+            }
+            card.addEventListener("click", async () => {
+                if (!notification.is_read) {
+                    await requestJson(`api/account/notifications/${notification.id}/read/`, {method: "POST", body: "{}"});
+                    await loadNotifications();
+                }
+                if (hasDetail(notification)) openModalDetail(notification);
+            });
+            return card;
+        }
+
+        let readExpanded = false;
+
         function renderNotifications(unreadCount = 0) {
             count.hidden = unreadCount <= 0;
             count.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+            readExpanded = false;
             list.replaceChildren();
             if (!notifications.length) {
                 list.append(createText("p", "py-8 text-center text-sm text-slate-500", "暂无通知"));
                 return;
             }
-            notifications.forEach((notification) => {
-                const card = document.createElement("button");
-                card.type = "button";
-                card.className = `w-full text-left rounded-md px-3 py-2 mb-1 border transition-colors ${notification.is_read ? "border-slate-800 bg-slate-800/40 text-slate-400" : "border-blue-800 bg-blue-950/40 text-slate-100"}`;
-                card.append(createText("strong", "block text-sm", notification.title));
-                card.append(createText("span", "block mt-1 text-xs", notification.message));
-                card.append(createText("time", "block mt-1 text-[11px] text-slate-500", new Date(notification.updated_at).toLocaleString("zh-CN")));
-                card.addEventListener("click", async () => {
-                    if (!notification.is_read) {
-                        await requestJson(`api/account/notifications/${notification.id}/read/`, {method: "POST", body: "{}"});
-                        await loadNotifications();
-                    }
-                    openModalDetail(notification);
-                });
-                list.append(card);
+            notifications.filter((notification) => !notification.is_read)
+                .forEach((notification) => list.append(createNotificationCard(notification)));
+            const read = notifications.filter((notification) => notification.is_read);
+            if (!read.length) return;
+            const readToggle = createText("button", "w-full text-left rounded-md px-3 py-2 mb-1 border border-slate-800 bg-slate-800/40 text-slate-400 text-xs", "");
+            readToggle.type = "button";
+            const refreshReadToggle = () => {
+                readToggle.textContent = `已读消息（${read.length} 条）${readExpanded ? " ▾" : " ▸"}`;
+            };
+            refreshReadToggle();
+            readToggle.addEventListener("click", () => {
+                readExpanded = !readExpanded;
+                refreshReadToggle();
+                const readSection = list.querySelector("[data-notification-read-section]");
+                if (readExpanded && !readSection) {
+                    const section = document.createElement("div");
+                    section.dataset.notificationReadSection = "true";
+                    read.forEach((notification) => section.append(createNotificationCard(notification)));
+                    list.append(section);
+                } else if (!readExpanded && readSection) {
+                    readSection.remove();
+                }
             });
+            list.append(readToggle);
         }
 
         async function loadNotifications() {
@@ -186,6 +221,13 @@
 
         function renderSubscriptions() {
             subscriptionsPanel.replaceChildren();
+            const back = createText("button", "mb-2 text-xs text-blue-300 hover:text-blue-100", "← 返回通知");
+            back.type = "button";
+            back.addEventListener("click", () => {
+                subscriptionsPanel.hidden = true;
+                list.hidden = false;
+            });
+            subscriptionsPanel.append(back);
             const selected = new Set((subscriptionData.subscriptions || []).map((item) => subscriptionKey(item.rule_code, item.scope_value)));
             const editable = [];
             (subscriptionData.available_rules || []).forEach((rule) => {
@@ -222,19 +264,30 @@
                     scope_type: input.dataset.scopeType,
                     scope_value: input.dataset.scopeValue,
                 }));
-                subscriptionData = await requestJson("api/account/subscriptions/", {
-                    method: "PUT",
-                    body: JSON.stringify({subscriptions: payload}),
-                });
-                subscriptionsPanel.hidden = true;
-                list.hidden = false;
+                try {
+                    subscriptionData = await requestJson("api/account/subscriptions/", {
+                        method: "PUT",
+                        body: JSON.stringify({subscriptions: payload}),
+                    });
+                    subscriptionsPanel.hidden = true;
+                    list.hidden = false;
+                } catch (error) {
+                    save.insertAdjacentElement(
+                        "beforebegin",
+                        createText("p", "mb-2 text-xs text-red-400", `保存失败：${error.message}`),
+                    );
+                }
             });
             subscriptionsPanel.append(save);
         }
 
         toggle.addEventListener("click", async () => {
             drawer.hidden = !drawer.hidden;
-            if (!drawer.hidden) await loadNotifications();
+            if (!drawer.hidden) {
+                list.hidden = false;
+                subscriptionsPanel.hidden = true;
+                await loadNotifications();
+            }
         });
         settingsButton.addEventListener("click", async () => {
             subscriptionData = await requestJson("api/account/subscriptions/");

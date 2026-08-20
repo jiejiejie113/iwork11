@@ -622,7 +622,8 @@ def test_flow_overview_searches_and_displays_initial_styles():
 
     assert 'v-model.trim="initialStyleSearch"' in flow_view
     assert 'placeholder="搜索初版款号..."' in flow_view
-    assert 'v-for="card in filteredFlowCards"' in flow_view
+    assert 'v-for="card in managedFlowCards"' in flow_view
+    assert 'v-for="card in otherFlowCards"' in flow_view
     assert 'v-for="style in card.initial_styles"' in flow_view
     assert 'style.initial_style_no || \'未设置\'' in flow_view
     assert 'fmtNum(style.qty)' in flow_view
@@ -871,11 +872,12 @@ def test_flow_target_inputs_are_visible_before_editing_in_both_layouts():
 
 
 def test_account_role_controls_managed_flow_filter_and_target_editing():
-    """组长默认只看负责分组且编辑按钮由可信账号职能控制。"""
-    assert "我管理的组" in TEMPLATE
-    assert "全部分组" in TEMPLATE
+    """我管理的分组置顶展示，其余分组带标题分隔，编辑按钮由可信账号职能控制。"""
+    assert "我管理的分组" in TEMPLATE
+    assert "其余分组" in TEMPLATE
+    assert "otherFlowCards" in TEMPLATE
     assert "await loadAccount();" in TEMPLATE
-    assert "managedOnly.value = !account.value.is_admin" in TEMPLATE
+    assert "managedFlowCards" in TEMPLATE
     assert "managedFlowNames.value.includes(detailKey.value)" in TEMPLATE
     assert 'v-if="canEditCurrentFlow && !isEditing"' in TEMPLATE
 

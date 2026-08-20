@@ -26,6 +26,27 @@ def test_notification_client_uses_generic_sse_wakeup_then_refetches_content():
     assert "X-CSRFToken" in SCRIPT
 
 
+def test_notification_list_prefers_unread_and_collapses_read():
+    """未读消息优先展示，已读消息折叠为可展开条目。"""
+    assert "notifications.filter((notification) => !notification.is_read)" in SCRIPT
+    assert "已读消息（" in SCRIPT
+    assert "readExpanded" in SCRIPT
+    assert "data-notification-read-section" in SCRIPT
+
+
+def test_notification_expandable_detail_has_indicator():
+    """仅可展开详情的通知（每日责任摘要）显示查看详情标识。"""
+    assert "查看详情 ›" in SCRIPT
+    assert 'payload.type === "daily_summary"' in SCRIPT
+
+
+def test_subscription_settings_can_return_to_notification_list():
+    """订阅设置面板应提供返回入口且抽屉重新打开时回到通知列表。"""
+    assert "← 返回通知" in SCRIPT
+    assert 'subscriptionsPanel.hidden = true;\n                list.hidden = false;' in SCRIPT
+    assert "保存失败：" in SCRIPT
+
+
 def test_static_url_carries_subpath_prefix():
     """STATIC_URL 必须携带 /iwork/ 前缀，staticfiles 不会把相对路径留给浏览器。"""
     from django.conf import settings

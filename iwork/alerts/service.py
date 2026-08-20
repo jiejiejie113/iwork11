@@ -366,6 +366,7 @@ class AlertService:
                 event.recovered_at = now
                 event.revision += 1
                 event.message = "当日目标已全部填写。"
+                event.payload = payload
                 event.save(using=LOCAL_DB_ALIAS)
                 self._ensure_admin_delivery(event, reset=True)
         return EvaluationResult(

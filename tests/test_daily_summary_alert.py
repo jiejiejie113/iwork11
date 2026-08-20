@@ -101,6 +101,21 @@ def test_daily_summary_recovers_when_all_filled():
     assert event.status == "recovered"
     assert event.recovered_at is not None
     assert event.message == "当日目标已全部填写。"
+    assert event.payload["status_counts"] == {
+        "pending": 0,
+        "overdue": 0,
+        "fulfilled": 0,
+        "fulfilled_late": 1,
+        "waived": 0,
+    }
+    assert event.payload["flows"] == [
+        {
+            "flow": "SO1",
+            "status": "fulfilled_late",
+            "deadline_at": obligation.deadline_at.isoformat(),
+            "leaders": [],
+        }
+    ]
     delivery = NotificationDelivery.objects.using("iwork_local").get(event=event)
     assert delivery.event_revision == event.revision == 2
     assert delivery.status == "pending"
