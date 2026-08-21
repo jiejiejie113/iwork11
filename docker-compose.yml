@@ -23,7 +23,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          python -c "import http.client,sys; conn=http.client.HTTPConnection('127.0.0.1',8000,timeout=5); conn.request('GET','/',headers={'Connection':'close'}); status=conn.getresponse().status; conn.close(); sys.exit(0 if status==200 else 1)"
+          python -c "import http.client,sys; conn=http.client.HTTPConnection('127.0.0.1',8000,timeout=5); conn.request('GET','/',headers={'Host':'iwork','Connection':'close'}); status=conn.getresponse().status; conn.close(); sys.exit(0 if status==200 else 1)"
       interval: 30s
       timeout: 10s
       retries: 3

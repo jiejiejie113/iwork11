@@ -48,3 +48,10 @@ def test_deploy_script_loads_profile_and_central_secrets():
     assert "'--env-file', $Profile" in content
     assert "'--env-file', $SecretsFile" in content
     assert 'down -v' not in content.lower()
+
+
+def test_iwork_healthcheck_uses_an_allowed_host_header():
+    """容器健康检查必须携带生产环境允许的Host，避免正常服务被误判为400。"""
+    content = (ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
+
+    assert "'Host':'iwork'" in content
