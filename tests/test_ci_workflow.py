@@ -56,7 +56,15 @@ def test_ci_workflow_uses_pinned_actions_and_expected_checks() -> None:
     assert "python -m ruff check --no-cache" in content
     assert "--ignore E402,W292 iwork" in content
     assert "docker build" in content
-    assert "ci-iwork:${GITHUB_SHA}" in content
+    assert "ci-iwork:$env:GITHUB_SHA" in content
+    assert "${GITHUB_SHA}" not in content
     assert "清除临时构建上下文中的环境文件" in content
-    assert "清除临时测试工作区中的环境文件" in content
-    assert content.count("Remove-Item -Force") >= 2
+
+
+def test_ci_test_job_preserves_non_secret_environment_profiles() -> None:
+    """测试Job必须保留供安全契约测试读取的无密钥环境配置模板。"""
+    content = _read_workflow()
+    test_job = content.split("  build:", maxsplit=1)[0]
+
+    assert "Get-ChildItem -Path . -Recurse" not in test_job
+    assert "Remove-Item -LiteralPath .env -Force" in test_job

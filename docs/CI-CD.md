@@ -7,7 +7,7 @@
 - GitHub托管Runner运行Python 3.11测试、Ruff和Docker构建。
 - pytest固定加载`iwork.test_settings`，三套数据库均为内存SQLite，缓存和Celery也使用进程内实现。
 - Docker构建不加载`env/production.env`或`D:\DM\dkt-secrets.env`。
-- 测试Job会先删除临时Checkout内全部`.env`文件；构建Job在Compose解析完成后再次删除，再创建镜像构建上下文。
+- 测试Job只删除可能被自动加载的仓库根`.env`，保留经过无密码契约检查的`env/local.env`和`env/production.env`；构建Job在Compose解析完成后删除全部`.env`，再创建镜像构建上下文。
 - 不执行`docker compose up`、`deploy.ps1`、SSH、数据库迁移或服务器健康探测。
 - 首轮不发布GHCR镜像，构建产物只存在于本次临时Runner中。
 

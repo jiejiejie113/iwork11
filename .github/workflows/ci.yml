@@ -28,12 +28,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
-      - name: 清除临时测试工作区中的环境文件
+      - name: 删除临时测试工作区中的根环境文件
         shell: pwsh
-        run: >-
-          Get-ChildItem -Path . -Recurse -Force -File |
-          Where-Object { $_.Name -eq '.env' -or $_.Extension -eq '.env' } |
-          Remove-Item -Force
+        run: if (Test-Path -LiteralPath .env) { Remove-Item -LiteralPath .env -Force }
 
       - name: 配置Python 3.11
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -99,10 +96,10 @@ jobs:
 
       - name: 构建临时镜像
         shell: pwsh
-        run: docker build --pull --tag "ci-iwork:${GITHUB_SHA}" .
+        run: docker build --pull --tag "ci-iwork:$env:GITHUB_SHA" .
 
       - name: 输出构建摘要
         shell: pwsh
         run: |
-          $imageId = docker image inspect "ci-iwork:${GITHUB_SHA}" --format '{{.Id}}'
-          "### iwork CI构建`n`n- Commit: ``${GITHUB_SHA}```n- Image ID: ``$imageId``" >> $env:GITHUB_STEP_SUMMARY
+          $imageId = docker image inspect "ci-iwork:$env:GITHUB_SHA" --format '{{.Id}}'
+          "### iwork CI构建`n`n- Commit: ``$env:GITHUB_SHA```n- Image ID: ``$imageId``" >> $env:GITHUB_STEP_SUMMARY
