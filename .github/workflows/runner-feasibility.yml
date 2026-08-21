@@ -1,0 +1,47 @@
+name: 生产Runner只读可行性验证
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: 验证Docker用户身份与只读访问
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - dkt-prod-validation
+    timeout-minutes: 10
+    steps:
+      - name: 验证执行身份与Docker只读命令
+        shell: powershell
+        run: |
+          chcp 65001 | Out-Null
+          $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $dockerInfo = docker info --format 'Server={{.ServerVersion}};OSType={{.OSType}};Containers={{.Containers}};Running={{.ContainersRunning}}'
+          $containerCount = @(docker ps --format '{{.Names}}').Count
+          $composeVersion = docker compose version
+          "Runner identity: $identity"
+          "Docker info: $dockerInfo"
+          "Running container count: $containerCount"
+          "Docker Compose: $composeVersion"
+
+          if ($identity -ne 'DONGMING\shuju') {
+              throw "Runner未使用预期的DONGMING\shuju身份"
+          }
+          if ($containerCount -lt 1) {
+              throw "Runner未读取到运行中的Docker容器"
+          }
+
+      - name: 验证GitHub只读访问
+        shell: powershell
+        run: |
+          chcp 65001 | Out-Null
+          $remoteHead = git -c credential.interactive=never ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
+          if ($LASTEXITCODE -ne 0 -or -not $remoteHead) {
+              throw "GitHub只读访问失败"
+          }
+          "Remote Keycloak HEAD: $remoteHead"
