@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 验证执行身份与Docker只读命令
-        shell: powershell
+        shell: pwsh
         run: |
           chcp 65001 | Out-Null
           $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -37,7 +37,7 @@ jobs:
           }
 
       - name: 验证GitHub只读访问
-        shell: powershell
+        shell: pwsh
         run: |
           chcp 65001 | Out-Null
           $remoteHead = git -c credential.interactive=never ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
