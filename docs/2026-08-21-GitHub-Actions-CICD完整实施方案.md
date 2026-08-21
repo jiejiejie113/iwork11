@@ -61,12 +61,12 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-21，基础纯CI已经完成。按整个CI/CD交付范围估算，总体约完成30%；纯CI子项目完成100%。
+截至2026-08-21，基础纯CI和生产Runner身份可行性验证已经完成。按整个CI/CD交付范围估算，总体约完成40%；纯CI子项目完成100%。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
 | 0 | 基线与纯CI | 已完成 | 两仓库GitHub托管Runner流水线已跑绿 |
-| 1 | 生产Runner与Docker身份验证 | 未开始 | 服务器尚未安装Runner |
+| 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
 | 2 | GHCR不可变镜像发布 | 未开始 | 当前临时镜像不上传 |
 | 3 | 生产Self-hosted Runner安装 | 未开始 | 需依赖阶段1结论 |
 | 4 | iwork受控部署与回滚 | 未开始 | 不允许提前自动部署 |
@@ -218,7 +218,90 @@ Portal通过：
 - 形成最终运行身份和启动方式决策。
 - 清理临时注册，不遗留重复Runner。
 
-阶段状态：未开始。
+### 5.5 完成记录
+
+状态：已完成。
+
+完成日期：2026-08-21。
+
+实际提交：
+
+| 提交 | 内容 |
+|---|---|
+| `eaacb1f` | 建立完整实施方案和阶段更新规则 |
+| `2868137` | 增加仅允许手工触发的生产Runner只读验证工作流 |
+| `6efd847` | 首轮失败后尝试切换PowerShell 7 |
+| `8cbd12f` | 确认Runner无`pwsh`后改为兼容Windows PowerShell 5.1的ASCII脚本 |
+| `a3abae2` | 隔离非交互Runner与服务器个人Git Credential Manager |
+| `9763566` | 使用Job短期只读`GITHUB_TOKEN`验证私有仓库访问 |
+
+最终远程验证提交：
+
+```text
+9763566170b2ceb1aa3a943675f796c74caecf43
+```
+
+Actions运行：
+
+| Run | 结论 | 发现或证据 |
+|---|---|---|
+| `https://github.com/GuChenkano/iwork/actions/runs/32461218793` | failure | Windows PowerShell 5.1把无BOM UTF-8中文脚本解析为乱码 |
+| `https://github.com/GuChenkano/iwork/actions/runs/32461382917` | failure | Runner进程PATH中没有`pwsh`，不能依赖PowerShell 7 |
+| `https://github.com/GuChenkano/iwork/actions/runs/32461527751` | failure | Docker与身份检查通过；私有仓库匿名访问触发GCM |
+| `https://github.com/GuChenkano/iwork/actions/runs/32461683055` | failure | 禁用GCM后确认私有仓库必须使用短期认证 |
+| `https://github.com/GuChenkano/iwork/actions/runs/32461857232` | success | 身份、Docker、Compose和私有GitHub只读访问全部通过 |
+| `https://github.com/GuChenkano/iwork/actions/runs/32461792210` | success | 最终提交的Python测试、Ruff、迁移检查、PowerShell测试、Compose解析和无密钥Docker构建全部通过 |
+
+最终成功Job实测值：
+
+```text
+Runner identity: DONGMING\shuju
+Docker info: Server=29.4.3;OSType=linux;Containers=16;Running=16
+Running container count: 16
+Docker Compose: Docker Compose version v5.1.3
+Remote Keycloak HEAD: 9763566170b2ceb1aa3a943675f796c74caecf43
+```
+
+网络验证：
+
+- 服务器直接访问GitHub成功，`git ls-remote`约4.8秒。
+- 使用`http://192.168.1.45:8899`代理同样成功，约3.0秒。
+- 当前以直连作为默认路径，代理作为网络异常时的显式回退，不把代理写成镜像或业务应用的强制全局配置。
+
+桌面会话验证：
+
+- 实测时`DONGMING\shuju`的RDP会话为`Disc`状态并已断开约1小时。
+- Docker Desktop与backend仍运行在该用户会话，16个容器保持运行，临时Runner仍能从SSH前台会话读取同一Docker引擎并完成Job。
+- 因此“锁屏或断开远程桌面但不注销”可用；`Disc`状态比单纯锁屏更严格，已经覆盖锁屏对Runner和Docker的影响。
+- 本阶段在RDP断开后重新建立了`DONGMING\shuju`的SSH登录会话，并在该新登录上下文中完成Runner注册、Job接收和Docker读取，证明重新登录后仍可访问同一Docker引擎。
+- 2026-07-21已有生产实测证明注销该用户会使Docker Desktop随会话退出；本阶段不重复制造相同生产故障，正式规范为禁止注销承载Docker的`DONGMING\shuju`会话。
+
+最终身份与常驻方式决策：
+
+- 运行身份固定为`DONGMING\shuju`。
+- 阶段3采用该账号的最高权限计划任务启动Runner包装器；包装器必须等待Docker API可用后再启动Runner。
+- 不采用SYSTEM Runner；`com.docker.service`为Stopped，当前没有证据证明SYSTEM可稳定访问同一Docker Desktop引擎。
+- 不采用需要长期保持SSH或RDP窗口的前台Runner；前台方式只用于本阶段验证。
+- 不优先采用Windows服务保存该用户密码；现有S4U运维任务已经证明计划任务更符合服务器当前Docker运行模型。
+
+实现偏差与理由：
+
+- 原方案要求重新执行注销和登录测试。由于历史生产故障已经证明注销会停止Docker，本阶段使用“当前断开会话实测 + 既有注销故障证据”，避免重复中断16个生产容器。
+- 原计划只写`git ls-remote`，实际仓库为私有仓库。最终Job使用工作流自带的短期只读Token构造内存Authorization Header，不写入GCM、文件或日志。
+- 服务器Runner环境只有Windows PowerShell 5.1，验证脚本正文保持ASCII；中文仅用于Workflow和Step显示名称。
+- GitHub托管Runner提示当前固定的`actions/checkout`和`actions/setup-python`提交仍基于Node.js 20，并被平台强制使用Node.js 24运行。本轮CI成功，该提示不阻断阶段1；阶段2开始前应核对官方新版本Commit并继续固定到40位SHA。
+
+清理与生产零影响证据：
+
+- Runner使用官方`v2.336.0` Windows x64包，SHA-256为`d59123a43003e357b0805b5d0f611d0bd2f65ab67d51bd070dd4e7a0f685c162`。
+- 每个Runner均使用`--ephemeral`，单个Job完成后自动删除`.credentials`和`.runner`并从GitHub注销。
+- 最终GitHub中`dkt-prod-validation-*` Runner数量为0。
+- 已核验并删除`D:\DM\cicd-validation`，没有遗留Runner服务或计划任务。
+- 阶段1临时Workflow在验收后从当前分支删除，避免未来永久Runner使用相同标签时形成可由任意Ref改写的潜在入口；Actions运行和Git历史仍保留审计证据。
+- 清理后仍有16个容器运行，`unhealthy`数量为0。
+- 未读取`D:\DM\dkt-secrets.env`，未修改生产仓库、容器、镜像、数据库或数据卷。
+
+下一阶段入口：允许开始阶段2“GHCR不可变镜像发布”。阶段3永久Runner安装仍必须按本阶段确定的身份和计划任务方式单独实施，不能提前建设生产部署Workflow。
 
 ## 6. 阶段2——GHCR不可变镜像发布
 
@@ -520,15 +603,16 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-下一步只执行阶段1：生产Runner与Docker用户身份可行性验证。
+下一步只执行阶段2：GHCR不可变镜像发布。
 
-阶段1完成前禁止：
+阶段2完成前禁止：
 
-- 注册永久Runner服务。
-- 发布或部署GHCR生产镜像。
+- 注册永久生产Runner或建设生产部署Workflow。
+- 在生产服务器启动任何新GHCR镜像。
 - 修改Docker Desktop服务启动方式。
 - 使用SYSTEM直接执行Docker部署。
 - 清理Portal服务器工作区。
-- 建设可直接修改生产环境的Workflow。
+- 使用`latest`或其他可漂移标签作为生产部署依据。
+- 把生产密钥、环境文件、证书、SQLite或数据库备份放入镜像或Actions产物。
 
-阶段1执行完成后，Agent必须先更新本文档，再决定是否进入阶段2。
+阶段2只允许GitHub托管Runner构建并发布不可变镜像，不连接生产服务器。阶段2执行完成后，Agent必须先更新本文档，再决定是否进入阶段3。
