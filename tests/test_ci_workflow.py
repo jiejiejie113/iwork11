@@ -96,7 +96,7 @@ def test_release_workflow_only_publishes_immutable_iwork_image() -> None:
     assert "contents: read" in content
     assert "ghcr.io/guchenkano/iwork" in lowered
     assert "org.opencontainers.image.revision" in content
-    assert "--format '{{.Digest}}'" in content
+    assert "--format '{{.Manifest.Digest}}'" in content
     assert "[DateTimeOffset]::UtcNow" in content
     assert "duration_seconds" in content
     assert "GITHUB_RUN_ID" in content

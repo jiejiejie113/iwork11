@@ -103,7 +103,7 @@ jobs:
           function Get-RemoteDigest {
               param([string] $ImageReference)
 
-              $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Digest}}' 2>$null
+              $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}' 2>$null
               if ($LASTEXITCODE -ne 0) { return $null }
               $digest = @($digestOutput)[-1].Trim().Trim('"')
               if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
