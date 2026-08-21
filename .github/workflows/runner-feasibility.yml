@@ -38,9 +38,12 @@ jobs:
 
       - name: 验证GitHub只读访问
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           chcp 65001 | Out-Null
-          $remoteHead = git -c credential.helper= -c credential.interactive=never ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
+          $basicCredential = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITHUB_TOKEN"))
+          $remoteHead = git -c credential.helper= -c credential.interactive=never -c "http.extraheader=AUTHORIZATION: basic $basicCredential" ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
           if ($LASTEXITCODE -ne 0 -or -not $remoteHead) {
               throw "GitHub read-only access failed"
           }
