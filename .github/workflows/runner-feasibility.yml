@@ -40,7 +40,7 @@ jobs:
         shell: powershell
         run: |
           chcp 65001 | Out-Null
-          $remoteHead = git -c credential.interactive=never ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
+          $remoteHead = git -c credential.helper= -c credential.interactive=never ls-remote https://github.com/GuChenkano/iwork.git refs/heads/Keycloak
           if ($LASTEXITCODE -ne 0 -or -not $remoteHead) {
               throw "GitHub read-only access failed"
           }
