@@ -234,6 +234,7 @@ Portal通过：
 | `8cbd12f` | 确认Runner无`pwsh`后改为兼容Windows PowerShell 5.1的ASCII脚本 |
 | `a3abae2` | 隔离非交互Runner与服务器个人Git Credential Manager |
 | `9763566` | 使用Job短期只读`GITHUB_TOKEN`验证私有仓库访问 |
+| `378da50` | 写入阶段1完整证据并删除临时验证Workflow，关闭潜在Self-hosted入口 |
 
 最终远程验证提交：
 
