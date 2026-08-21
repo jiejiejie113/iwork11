@@ -1,0 +1,156 @@
+name: iwork GHCR不可变镜像发布
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "iwork-v*"
+
+concurrency:
+  group: ghcr-release-iwork-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-ci:
+    name: 验证同一提交的CI结果
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      run_url: ${{ steps.ci.outputs.run_url }}
+    steps:
+      - name: 验证发布引用与完整SHA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $allowedBranch = $env:GITHUB_REF -eq "refs/heads/Keycloak"
+          $allowedTag = $env:GITHUB_REF.StartsWith("refs/tags/iwork-v", [System.StringComparison]::Ordinal)
+          if (-not ($allowedBranch -or $allowedTag)) {
+              throw "仅允许从Keycloak分支或iwork-v*标签发布"
+          }
+          if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") {
+              throw "发布提交不是完整的40位SHA"
+          }
+
+      - name: 验证同一SHA的纯CI已经成功
+        id: ci
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:GITHUB_SHA&status=completed&per_page=100"
+          $response = gh api $endpoint | ConvertFrom-Json
+          $successfulRun = $response.workflow_runs |
+              Where-Object { $_.conclusion -eq "success" } |
+              Sort-Object -Property created_at -Descending |
+              Select-Object -First 1
+          if (-not $successfulRun) {
+              throw "没有找到同一提交的成功CI，禁止发布镜像"
+          }
+          "run_url=$($successfulRun.html_url)" >> $env:GITHUB_OUTPUT
+          "已确认CI: $($successfulRun.html_url)"
+
+  publish:
+    name: 发布并按Digest复验iwork镜像
+    needs: verify-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/guchenkano/iwork
+      IMAGE_REF: ghcr.io/guchenkano/iwork:${{ github.sha }}
+    steps:
+      - name: 检出已通过CI的提交
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: 清除临时构建上下文中的敏感文件
+        shell: pwsh
+        run: >-
+          Get-ChildItem -Path . -Recurse -Force -File |
+          Where-Object {
+            $_.Name -eq '.env' -or
+            $_.Name -like '.env.*' -or
+            $_.Extension -in @('.env', '.db', '.sqlite', '.sqlite3', '.key', '.pem', '.p12', '.pfx')
+          } |
+          Remove-Item -Force
+
+      - name: 使用短期令牌登录GHCR
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+          if ($LASTEXITCODE -ne 0) { throw "GHCR登录失败" }
+
+      - name: 发布或复用不可变SHA镜像
+        id: image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $startedAt = [DateTimeOffset]::UtcNow
+
+          function Get-RemoteDigest {
+              param([string] $ImageReference)
+
+              $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Digest}}' 2>$null
+              if ($LASTEXITCODE -ne 0) { return $null }
+              $digest = @($digestOutput)[-1].Trim().Trim('"')
+              if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
+                  throw "GHCR返回了无效Digest: $digest"
+              }
+              return $digest
+          }
+
+          function Assert-ImageRevision {
+              param([string] $ImageReference)
+
+              docker pull $ImageReference
+              if ($LASTEXITCODE -ne 0) { throw "按Digest拉取镜像失败: $ImageReference" }
+              $revision = docker image inspect $ImageReference --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+              if ($LASTEXITCODE -ne 0 -or $revision.Trim() -ne $env:GITHUB_SHA) {
+                  throw "镜像OCI revision与当前提交不一致"
+              }
+          }
+
+          $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF
+          $reused = $false
+          if ($digest) {
+              $reused = $true
+              Assert-ImageRevision -ImageReference "$env:IMAGE_NAME@$digest"
+          }
+          else {
+              $createdAt = (git show -s --format=%cI $env:GITHUB_SHA).Trim()
+              docker build --pull `
+                  --label "org.opencontainers.image.source=https://github.com/$env:GITHUB_REPOSITORY" `
+                  --label "org.opencontainers.image.revision=$env:GITHUB_SHA" `
+                  --label "org.opencontainers.image.created=$createdAt" `
+                  --tag $env:IMAGE_REF .
+              if ($LASTEXITCODE -ne 0) { throw "iwork镜像构建失败" }
+              docker push $env:IMAGE_REF
+              if ($LASTEXITCODE -ne 0) { throw "iwork镜像推送失败" }
+              $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF
+              if (-not $digest) { throw "推送后无法解析iwork镜像Digest" }
+              Assert-ImageRevision -ImageReference "$env:IMAGE_NAME@$digest"
+          }
+
+          "digest=$digest" >> $env:GITHUB_OUTPUT
+          "reused=$($reused.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          $durationSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 1)
+          "duration_seconds=$durationSeconds" >> $env:GITHUB_OUTPUT
+          "### iwork GHCR发布`n`n- Commit: ``$env:GITHUB_SHA```n- Image: ``$env:IMAGE_NAME@$digest```n- Reused: ``$reused```n- Duration: ``$durationSeconds seconds```n- CI: ${{ needs.verify-ci.outputs.run_url }}`n- Release: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: 注销GHCR
+        if: always()
+        shell: pwsh
+        run: docker logout ghcr.io
