@@ -181,6 +181,7 @@ $ErrorActionPreference = 'Stop'
 $runnerDirectory = '__RUNNER_DIRECTORY__'
 $statePath = '__STATE_PATH__'
 $deadline = [DateTimeOffset]::Now.AddMinutes(30)
+$unexpectedCleanExitCode = 71
 
 Set-Location -LiteralPath $runnerDirectory
 while ([DateTimeOffset]::Now -lt $deadline) {
@@ -199,6 +200,9 @@ if ([DateTimeOffset]::Now -ge $deadline) {
 & (Join-Path $runnerDirectory 'run.cmd')
 $runnerExitCode = $LASTEXITCODE
 "$(Get-Date -Format o) Runner exited: $runnerExitCode" | Out-File -LiteralPath $statePath -Append -Encoding utf8
+if ($runnerExitCode -eq 0) {
+    exit $unexpectedCleanExitCode
+}
 exit $runnerExitCode
 '@
     $wrapper = $wrapper.Replace('__RUNNER_DIRECTORY__', $RunnerDirectory)

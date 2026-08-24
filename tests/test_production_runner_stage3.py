@@ -93,6 +93,8 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "New-ScheduledTaskTrigger -AtLogOn" in content
     assert "docker info" in content
     assert "run.cmd" in content
+    assert "$unexpectedCleanExitCode = 71" in content
+    assert "if ($runnerExitCode -eq 0)" in content
     assert "Runner registration did not create the .runner configuration file." in content
     assert "Remove-Item -LiteralPath $installDirectory -Recurse -Force" in content
 
