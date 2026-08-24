@@ -1,0 +1,85 @@
+name: iwork production runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: none
+
+concurrency:
+  group: production-runner-validation-iwork
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: 验证iwork Runner与GHCR只读拉取
+    if: >-
+      github.actor == 'GuChenkano' &&
+      github.ref == 'refs/heads/Keycloak'
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - dkt-prod
+      - iwork
+    environment: production-runner-validation
+    timeout-minutes: 12
+    permissions:
+      packages: read
+    env:
+      IMAGE_REF: ghcr.io/guchenkano/iwork@sha256:2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c
+      EXPECTED_REVISION: 51c1911e867c7183eef45b66b7fa6bc35ee8d676
+    steps:
+      - name: 验证执行身份、独立工作目录与Docker
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          chcp 65001 | Out-Null
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          if ($identity -ne 'DONGMING\shuju') {
+              throw "Unexpected runner identity: $identity"
+          }
+
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+          foreach ($forbiddenRoot in @('D:\DM\iwork', 'D:\DM\DTD_nginx')) {
+              if ($workspace.StartsWith($forbiddenRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                  throw "Runner workspace overlaps production repository: $workspace"
+              }
+          }
+
+          $dockerInfo = docker info --format 'Server={{.ServerVersion}};OSType={{.OSType}};Containers={{.Containers}};Running={{.ContainersRunning}}'
+          if ($LASTEXITCODE -ne 0) {
+              throw "Docker API is unavailable"
+          }
+          "Runner identity: $identity"
+          "Runner workspace: $workspace"
+          "Docker info: $dockerInfo"
+
+      - name: 使用短期令牌按Digest拉取并复验镜像
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          chcp 65001 | Out-Null
+          $env:DOCKER_CONFIG = Join-Path $env:RUNNER_TEMP "docker-config-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $env:DOCKER_CONFIG -Force | Out-Null
+          try {
+              $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+              if ($LASTEXITCODE -ne 0) {
+                  throw "GHCR login failed"
+              }
+              docker pull $env:IMAGE_REF
+              if ($LASTEXITCODE -ne 0) {
+                  throw "GHCR digest pull failed"
+              }
+              $revision = docker image inspect $env:IMAGE_REF --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+              if ($LASTEXITCODE -ne 0 -or $revision.Trim() -ne $env:EXPECTED_REVISION) {
+                  throw "OCI revision mismatch"
+              }
+              "Verified immutable image: $env:IMAGE_REF"
+          }
+          finally {
+              docker logout ghcr.io 2>$null | Out-Null
+              Remove-Item -LiteralPath $env:DOCKER_CONFIG -Recurse -Force -ErrorAction SilentlyContinue
+          }
