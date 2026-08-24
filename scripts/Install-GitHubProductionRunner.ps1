@@ -224,26 +224,42 @@ if (Test-Path -LiteralPath $installDirectory) {
 }
 
 Get-VerifiedRunnerPackage -PackagePath $packagePath
-New-Item -ItemType Directory -Path $installDirectory | Out-Null
-Expand-Archive -LiteralPath $packagePath -DestinationPath $installDirectory
-
-Push-Location $installDirectory
 try {
-    & .\config.cmd `
-        --unattended `
-        --url $config.RepositoryUrl `
-        --token $registrationToken `
-        --name $config.RunnerName `
-        --labels $config.Labels `
-        --work $WORK_DIRECTORY `
-        --replace
-    if ($LASTEXITCODE -ne 0) {
-        throw "Runner registration failed with exit code $LASTEXITCODE"
+    New-Item -ItemType Directory -Path $installDirectory | Out-Null
+    Expand-Archive -LiteralPath $packagePath -DestinationPath $installDirectory
+
+    Push-Location $installDirectory
+    try {
+        & .\config.cmd `
+            --unattended `
+            --url $config.RepositoryUrl `
+            --token $registrationToken `
+            --name $config.RunnerName `
+            --labels $config.Labels `
+            --work $WORK_DIRECTORY `
+            --replace
+        if ($LASTEXITCODE -ne 0) {
+            throw "Runner registration failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        $registrationToken = $null
+        Pop-Location
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $installDirectory '.runner') -PathType Leaf)) {
+        throw 'Runner registration did not create the .runner configuration file.'
     }
 }
-finally {
+catch {
     $registrationToken = $null
-    Pop-Location
+    $runnerConfigPath = Join-Path $installDirectory '.runner'
+    if (
+        (Test-Path -LiteralPath $installDirectory -PathType Container) -and
+        -not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)
+    ) {
+        Remove-Item -LiteralPath $installDirectory -Recurse -Force
+    }
+    throw
 }
 
 Write-AdmissionHook -Config $config -HookPath $hookPath
