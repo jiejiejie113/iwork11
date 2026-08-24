@@ -562,14 +562,25 @@ portal: self-hosted, windows, dkt-prod, portal
 
 ### 8.7 2026-08-24本地实施证据
 
-- `python -m pytest -q tests\test_production_runner_stage3.py tests\test_production_deployment_stage4.py`：16项通过。
-- `python -m pytest tests\ -q`：557项通过；仅保留本机`requests`依赖版本告警，不影响测试结论。
+- `python -m pytest -q tests\test_production_runner_stage3.py tests\test_production_deployment_stage4.py`：17项通过。
+- `python -m pytest tests\ -q`：558项通过；仅保留本机`requests`依赖版本告警，不影响测试结论。
 - Ruff按CI口径检查`iwork`及阶段3/4测试：通过。
 - Windows PowerShell 5.1语法解析：三个生产Runner/部署脚本全部通过。
 - 四个GitHub Actions YAML文件解析：通过。
 - 使用非生产占位密钥执行`docker compose --env-file env\local.env config --quiet`：通过。
 - `git diff --check`：通过。
-- 隔离伪Docker测试已覆盖：只读预检不切换容器、部署前容器基线、双服务成功切换、候选验收失败后双镜像回滚及回滚后应用复验、回滚失败显式报警、迁移前数据库备份与SHA-256、备份ACL、共享恢复锁和Runner准入钩子保留。
+- 隔离伪Docker测试已覆盖：预检不切换容器、部署前容器基线、双服务成功切换、候选验收失败后双镜像回滚及回滚后应用复验、回滚失败显式报警、迁移前数据库备份与SHA-256、备份ACL、共享恢复锁和Runner准入钩子保留。
+
+### 8.8 首轮真实预检阻断与修复
+
+- 首轮阶段4实现提交为`b9bb73c6f2b84ca27b3a11047def905c96f417f6`；纯CI运行[`32703867226`](https://github.com/GuChenkano/iwork/actions/runs/32703867226)成功。
+- 同一提交GHCR发布运行[`32704184174`](https://github.com/GuChenkano/iwork/actions/runs/32704184174)成功，新镜像Digest为`sha256:a0174a09a8eef63a7984323e5bb32b914bf5b7c61afbfd2d7334d3c667989e7f`，OCI revision复验一致。
+- 已创建`production-iwork` Environment；实际`protection_rules=[]`且`can_admins_bypass=true`，再次确认当前套餐没有Required Reviewer保护。
+- 服务器曾按`b9bb73c6`安装准入钩子和固定部署脚本，脚本SHA-256为`1475674284b4e5a270628976e62f657bb6a5f0dd8ab9141213664c2247679ff3`；安装时Runner为Online、Idle且没有`Runner.Worker.exe`。
+- 首轮真实预检运行[`32704619681`](https://github.com/GuChenkano/iwork/actions/runs/32704619681)在16秒内失败。准入钩子与Environment已生效，但Windows PowerShell 5.1把GitHub Actions生成的无BOM临时脚本按系统代码页解析，Workflow内联中文字符串导致ParserError。
+- 失败发生在首条Docker命令之前：没有拉取候选镜像，没有创建部署状态/锁/维护标记，没有重建、重启或替换任何生产容器。
+- 修复方式是只把`run: |`内联PowerShell源码改为ASCII；Workflow名称、输入说明和步骤名称仍保留中文，服务器固定脚本继续使用UTF-8 BOM输出中文。新增YAML结构级回归测试，直接断言Windows PowerShell 5.1内联脚本`isascii()`，能够稳定复现并防止同类编码回归。
+- 修复提交必须重新通过纯CI和GHCR发布，并在Runner空闲时重新固定新的ApprovedHeadSha；旧`b9bb73c6`准入不得继续用于后续预检或部署。
 
 阶段状态：进行中。代码、安装器和隔离测试已实现；生产预检、生产切换、真实健康验收和真实回滚尚未执行。
 

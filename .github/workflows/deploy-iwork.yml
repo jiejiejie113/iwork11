@@ -76,16 +76,16 @@ jobs:
           chcp 65001 | Out-Null
 
           if ($env:IMAGE_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') {
-              throw '镜像Digest格式无效。'
+              throw 'Invalid image digest format.'
           }
           if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') {
-              throw 'OCI revision格式无效。'
+              throw 'Invalid OCI revision format.'
           }
           if ($env:EXPECTED_REVISION -cne $env:GITHUB_SHA) {
-              throw "候选镜像revision不是当前批准提交：$env:EXPECTED_REVISION"
+              throw "Candidate revision is not the approved head: $env:EXPECTED_REVISION"
           }
           if ([String]::IsNullOrWhiteSpace($env:CHANGE_DESCRIPTION)) {
-              throw '变更说明不能为空。'
+              throw 'Change description is required.'
           }
 
           function Assert-SuccessfulWorkflowRun {
@@ -116,18 +116,18 @@ jobs:
                       -TimeoutSec 30
               }
               catch {
-                  throw "$Description运行状态查询失败。"
+                  throw "$Description run lookup failed."
               }
               $successfulRun = @($response.workflow_runs | Where-Object {
                   $_.conclusion -eq 'success'
               }) | Select-Object -First 1
               if (-not $successfulRun) {
-                  throw "没有找到当前提交的成功$Description运行。"
+                  throw "No successful $Description run found for the approved revision."
               }
           }
 
-          Assert-SuccessfulWorkflowRun -WorkflowFile 'ci.yml' -Description '纯CI'
-          Assert-SuccessfulWorkflowRun -WorkflowFile 'release.yml' -Description 'GHCR发布'
+          Assert-SuccessfulWorkflowRun -WorkflowFile 'ci.yml' -Description 'CI'
+          Assert-SuccessfulWorkflowRun -WorkflowFile 'release.yml' -Description 'GHCR release'
 
           $mode = if ($env:APPLY -eq 'true') { 'Deploy' } else { 'Preflight' }
           $expectedConfirmation = if (
@@ -143,17 +143,17 @@ jobs:
               'PREFLIGHT IWORK'
           }
           if ($env:CONFIRMATION -cne $expectedConfirmation) {
-              throw "确认文本不匹配，预期值为：$expectedConfirmation"
+              throw "Confirmation mismatch; expected: $expectedConfirmation"
           }
 
           if (-not (Test-Path -LiteralPath $env:DEPLOY_SCRIPT_PATH -PathType Leaf)) {
-              throw "服务器部署脚本不存在：$env:DEPLOY_SCRIPT_PATH"
+              throw "Pinned deployment script is missing: $env:DEPLOY_SCRIPT_PATH"
           }
           $actualScriptHash = (
               Get-FileHash -LiteralPath $env:DEPLOY_SCRIPT_PATH -Algorithm SHA256
           ).Hash.ToLowerInvariant()
           if ($actualScriptHash -cne $env:DEPLOY_SCRIPT_SHA256) {
-              throw "服务器部署脚本SHA-256不匹配：$actualScriptHash"
+              throw "Pinned deployment script SHA-256 mismatch: $actualScriptHash"
           }
 
           $candidateImage = "ghcr.io/guchenkano/iwork@$env:IMAGE_DIGEST"
@@ -180,18 +180,18 @@ jobs:
           try {
               docker pull $candidateImage
               if ($LASTEXITCODE -ne 0) {
-                  throw '候选GHCR镜像拉取失败。'
+                  throw 'Candidate GHCR image pull failed.'
               }
               $labelsJson = docker image inspect `
                   $candidateImage `
                   --format '{{json .Config.Labels}}'
               if ($LASTEXITCODE -ne 0) {
-                  throw '候选镜像OCI标签读取失败。'
+                  throw 'Candidate OCI label inspection failed.'
               }
               $labels = $labelsJson | ConvertFrom-Json
               $actualRevision = [string]$labels.'org.opencontainers.image.revision'
               if ($actualRevision -cne $env:EXPECTED_REVISION) {
-                  throw "候选镜像OCI revision不匹配：$actualRevision"
+                  throw "Candidate OCI revision mismatch: $actualRevision"
               }
 
               $summary = & $env:DEPLOY_SCRIPT_PATH `
@@ -203,48 +203,48 @@ jobs:
                   -ChangeDescription $env:CHANGE_DESCRIPTION `
                   -RunMigrations $env:RUN_MIGRATIONS
               if ($LASTEXITCODE -ne 0) {
-                  throw "服务器部署脚本失败，exit=$LASTEXITCODE"
+                  throw "Pinned deployment script failed; exit=$LASTEXITCODE"
               }
 
               $result = ($summary -join "`n") | ConvertFrom-Json
               @(
-                  '## iwork生产部署结果'
+                  '## iwork production deployment result'
                   ''
-                  "- 模式：$mode"
-                  "- 镜像：$candidateImage"
-                  "- OCI revision：$env:EXPECTED_REVISION"
-                  "- 数据库迁移：$env:RUN_MIGRATIONS"
-                  "- 部署ID：``$deploymentRunId``"
-                  "- 旧Web镜像ID：``$($result.PreviousWebImageId)``"
-                  "- 旧Alert Worker镜像ID：``$($result.PreviousAlertWorkerImageId)``"
-                  "- 耗时：$($result.DurationSeconds)秒"
-                  "- 结果：``$($result.Result)``"
-                  "- 状态文件：``$($result.StateFile)``"
+                  "- Mode: $mode"
+                  "- Image: $candidateImage"
+                  "- OCI revision: $env:EXPECTED_REVISION"
+                  "- Run migrations: $env:RUN_MIGRATIONS"
+                  "- Deployment ID: ``$deploymentRunId``"
+                  "- Previous web image ID: ``$($result.PreviousWebImageId)``"
+                  "- Previous alert worker image ID: ``$($result.PreviousAlertWorkerImageId)``"
+                  "- Duration: $($result.DurationSeconds) seconds"
+                  "- Result: ``$($result.Result)``"
+                  "- State file: ``$($result.StateFile)``"
               ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           }
           catch {
               $stateFile = "D:\DM\cicd-state\iwork\$deploymentRunId.json"
               $failureSummary = @(
-                  '## iwork生产部署失败'
+                  '## iwork production deployment failed'
                   ''
-                  "- 模式：$mode"
-                  "- 镜像：$candidateImage"
-                  "- OCI revision：$env:EXPECTED_REVISION"
-                  "- 部署ID：``$deploymentRunId``"
+                  "- Mode: $mode"
+                  "- Image: $candidateImage"
+                  "- OCI revision: $env:EXPECTED_REVISION"
+                  "- Deployment ID: ``$deploymentRunId``"
               )
               if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
                   $failureState = Get-Content -LiteralPath $stateFile -Raw |
                       ConvertFrom-Json
                   $failureSummary += @(
-                      "- 状态：``$($failureState.Status)``"
-                      "- 旧Web镜像ID：``$($failureState.PreviousWebImageId)``"
-                      "- 旧Alert Worker镜像ID：``$($failureState.PreviousAlertWorkerImageId)``"
-                      "- 自动回滚成功：$($failureState.RollbackSucceeded)"
-                      "- 状态文件：``$stateFile``"
+                      "- Status: ``$($failureState.Status)``"
+                      "- Previous web image ID: ``$($failureState.PreviousWebImageId)``"
+                      "- Previous alert worker image ID: ``$($failureState.PreviousAlertWorkerImageId)``"
+                      "- Rollback succeeded: $($failureState.RollbackSucceeded)"
+                      "- State file: ``$stateFile``"
                   )
               }
               else {
-                  $failureSummary += '- 状态：服务器部署脚本创建状态文件前失败'
+                  $failureSummary += '- Status: failed before the server script created a state file'
               }
               $failureSummary |
                   Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8

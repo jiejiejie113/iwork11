@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import subprocess
 
+import yaml
+
 
 # ======
 # 阶段4文件路径配置
@@ -69,6 +71,14 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
         assert forbidden not in lowered
 
 
+def test_windows_powershell_inline_script_is_ascii_only() -> None:
+    """Windows PowerShell 5.1内联脚本必须为ASCII，避免无BOM临时文件解析失败。"""
+    workflow = yaml.safe_load(DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    inline_script = workflow["jobs"]["deploy"]["steps"][0]["run"]
+
+    assert inline_script.isascii()
+
+
 def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> None:
     """部署工作流必须调用固定服务器脚本，并清理短期GHCR认证。"""
     content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -93,7 +103,7 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "-Actor $env:GITHUB_ACTOR" in content
     assert "-ChangeDescription $env:CHANGE_DESCRIPTION" in content
     assert "GITHUB_STEP_SUMMARY" in content
-    assert "iwork生产部署失败" in content
+    assert "iwork production deployment failed" in content
     assert "RollbackSucceeded" in content
     assert "'${{ inputs.change_description }}'" not in content
 
