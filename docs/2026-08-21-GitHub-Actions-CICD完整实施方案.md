@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-24，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已进入代码与隔离验证，尚未执行生产容器切换或真实生产回滚；阶段5—8尚未开始。当前已完成阶段仍为4/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-24，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已经完成生产预检和首次真实容器切换，两个iwork容器正在运行指定不可变Digest；认证态浏览器验收和修复版受控回滚演练仍待完成，因此阶段4继续标记为进行中。阶段5—8尚未开始。当前已完成阶段仍为4/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -69,7 +69,7 @@
 | 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
-| 4 | iwork受控部署与回滚 | 进行中 | 工作流、固定脚本、准入安装器及隔离回滚测试已实现；生产预检和切换尚未执行 |
+| 4 | iwork受控部署与回滚 | 进行中 | 生产预检和真实切换已成功；待补认证态浏览器验收及修复版受控回滚演练 |
 | 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
@@ -541,12 +541,9 @@ portal: self-hosted, windows, dkt-prod, portal
 
 ### 8.5 尚未完成的真实验收
 
-- 阶段4实现尚未提交和推送，纯CI运行链接、新GHCR Digest与Release运行链接待生成。
-- `production-iwork` Environment尚未创建；创建后仍没有Required Reviewer保护，这是已接受但必须持续披露的平台风险。
-- 服务器准入脚本尚未按阶段4实现提交SHA安装。
-- 生产`apply=false`真实预检尚未执行。
-- 生产容器尚未替换、重启或重建，数据库和物理卷未发生变更。
-- 真实登录页面、业务API、SSE无感续订、通知SSE及告警投递仍需在候选切换后人工验收；当前自动脚本的HTTP检查不能替代这些认证态验收。
+- 真实账号登录、退出、生产详情页面、实时SSE无感续订和通知SSE仍需在已信任当前自定义证书的外部Edge中人工验收。Codex应用内浏览器因不信任当前自定义CA而在导航前返回`ERR_CERT_AUTHORITY_INVALID`，外部Edge控制连接当前未启用；禁止为自动验收绕过浏览器证书安全页。
+- 首轮正式部署实际执行了旧镜像恢复，但PowerShell 5.1误把Compose正常stderr进度判为错误，使状态文件记录为`rollback_failed`。修复版已通过隔离回归测试，仍需一次不依赖故障注入的受控生产回滚演练，才能形成修复版`rolled_back / RollbackSucceeded=true`证据。
+- `production-iwork` Environment已经创建，但实际`protection_rules=[]`且`can_admins_bypass=true`；服务器完整SHA准入仍是当前主要补偿控制。
 - 看门狗尚未识别新的`production_deployment`维护标记；部署期间共享恢复Mutex可阻止看门狗和周重启执行恢复，但仍可能产生短暂健康告警。该兼容改造归入阶段6，在此之前作为已知风险观察。
 - 迁移失败时只自动回滚应用镜像，不自动还原数据库。`run_migrations=true`只允许用于已审查的expand/contract兼容迁移；备份用于受控人工恢复，禁止脚本自动覆盖生产数据库。
 
@@ -562,14 +559,14 @@ portal: self-hosted, windows, dkt-prod, portal
 
 ### 8.7 2026-08-24本地实施证据
 
-- `python -m pytest -q tests\test_production_runner_stage3.py tests\test_production_deployment_stage4.py`：17项通过。
-- `python -m pytest tests\ -q`：558项通过；仅保留本机`requests`依赖版本告警，不影响测试结论。
+- `python -m pytest -q tests\test_production_runner_stage3.py tests\test_production_deployment_stage4.py`：18项通过。
+- `python -m pytest tests\ -q`：559项通过；仅保留本机`requests`依赖版本告警，不影响测试结论。
 - Ruff按CI口径检查`iwork`及阶段3/4测试：通过。
 - Windows PowerShell 5.1语法解析：三个生产Runner/部署脚本全部通过。
 - 四个GitHub Actions YAML文件解析：通过。
 - 使用非生产占位密钥执行`docker compose --env-file env\local.env config --quiet`：通过。
 - `git diff --check`：通过。
-- 隔离伪Docker测试已覆盖：预检不切换容器、部署前容器基线、双服务成功切换、候选验收失败后双镜像回滚及回滚后应用复验、回滚失败显式报警、迁移前数据库备份与SHA-256、备份ACL、共享恢复锁和Runner准入钩子保留。
+- 隔离伪Docker测试已覆盖：预检不切换容器、部署前容器基线、双服务成功切换、Compose退出码为0时允许stderr正常进度、候选验收失败后双镜像回滚及回滚后应用复验、回滚失败显式报警、迁移前数据库备份与SHA-256、备份ACL、共享恢复锁和Runner准入钩子保留。
 
 ### 8.8 首轮真实预检阻断与修复
 
@@ -580,9 +577,27 @@ portal: self-hosted, windows, dkt-prod, portal
 - 首轮真实预检运行[`32704619681`](https://github.com/GuChenkano/iwork/actions/runs/32704619681)在16秒内失败。准入钩子与Environment已生效，但Windows PowerShell 5.1把GitHub Actions生成的无BOM临时脚本按系统代码页解析，Workflow内联中文字符串导致ParserError。
 - 失败发生在首条Docker命令之前：没有拉取候选镜像，没有创建部署状态/锁/维护标记，没有重建、重启或替换任何生产容器。
 - 修复方式是只把`run: |`内联PowerShell源码改为ASCII；Workflow名称、输入说明和步骤名称仍保留中文，服务器固定脚本继续使用UTF-8 BOM输出中文。新增YAML结构级回归测试，直接断言Windows PowerShell 5.1内联脚本`isascii()`，能够稳定复现并防止同类编码回归。
-- 修复提交必须重新通过纯CI和GHCR发布，并在Runner空闲时重新固定新的ApprovedHeadSha；旧`b9bb73c6`准入不得继续用于后续预检或部署。
+- 第一轮编码修复提交`f8378d872e40b835f25636a990f3706b12e5210a`的纯CI运行[`32705048361`](https://github.com/GuChenkano/iwork/actions/runs/32705048361)、GHCR发布运行[`32705409027`](https://github.com/GuChenkano/iwork/actions/runs/32705409027)和生产预检运行[`32705882615`](https://github.com/GuChenkano/iwork/actions/runs/32705882615)均成功；候选Digest为`sha256:9c45624b70a4f3eefc15e4e45761fe5a42a34266d69b3728d86704af72d4f2b7`。
 
-阶段状态：进行中。代码、安装器和隔离测试已实现；生产预检、生产切换、真实健康验收和真实回滚尚未执行。
+### 8.9 首轮正式部署失败、恢复与修复
+
+- 正式部署运行[`32710436612`](https://github.com/GuChenkano/iwork/actions/runs/32710436612)使用`apply=true / run_migrations=false`，在`docker compose up`输出`Container DKT_iwork Recreate`时被Windows PowerShell 5.1误判为终止异常。
+- 根因是固定脚本全局使用`ErrorActionPreference=Stop`，而Docker Compose会把正常进度写入stderr；PowerShell 5.1在原生命令退出码仍为0时先产生`NativeCommandError`。同一误判也发生在自动回滚命令，因此状态文件为`rollback_failed`。
+- 实际运行结果是两个旧镜像均已恢复：Web为`sha256:b9b3410e4b14c79dd58765ef383fedf3c1fa8acb8306df39ae368c4769811125`，Alert Worker为`sha256:c9d28284e3ce0334477e8873cca31e45213a179f08b2ddd9834c3a52bea093a8`；两容器均`healthy`、重启0次，锁与维护标记已清除。
+- 修复提交`76b304acb92b4814f642a5ba98bf8d293ba855c9`只在Docker原生命令调用期间暂时使用`ErrorActionPreference=Continue`并保存退出码，恢复调用方策略后只按退出码判定成败；新增真实Windows PowerShell 5.1原生stderr回归适配器，修复前稳定失败、修复后通过。
+
+### 8.10 修复版发布、正式切换与自动验收
+
+- 修复提交纯CI运行[`32711175088`](https://github.com/GuChenkano/iwork/actions/runs/32711175088)成功；GHCR发布运行[`32711588818`](https://github.com/GuChenkano/iwork/actions/runs/32711588818)成功，Digest为`sha256:428468d2b6f75de18d0a8b7c046634e76818b24fcbddb34abfe188b27e8c2c59`。
+- 服务器在Runner空闲、无`Runner.Worker`、无部署锁和周重启标记时重新固定`ApprovedHeadSha=76b304ac...`；固定部署脚本SHA-256为`f31cb93b69dcb755fa82996078f7713cfb29889a266faf705d174c66ba5b5a25`。
+- 修复版生产预检运行[`32711975445`](https://github.com/GuChenkano/iwork/actions/runs/32711975445)成功；正式部署运行[`32712304952`](https://github.com/GuChenkano/iwork/actions/runs/32712304952)成功，状态文件为`deployed`。
+- `DKT_iwork`与`DKT_iwork_alert_worker`均使用上述完整Digest，底层image ID均为`sha256:3d26cdfa20c07deb64573290c960eb61f2776a22c433e65757d7b75b3efb07f2`，两容器`healthy`、重启0次，OCI revision严格等于`76b304ac...`。
+- Django `check --deploy`无错误，保留4项既有反向代理安全提示；Alert Worker和Realtime Worker均返回`pong`。实时数据、Flow概览、产品概览API返回200，生产详情两类页面返回200，实时SSE立即返回`dashboard_update`，通知SSE在可信只读测试身份下返回200和`retry: 3000`，无身份时稳定返回JSON 401。
+- 新Portal入口返回302到`auth.dituportal.dongming.local/realms/ditu`，回调仍为新Portal；Nginx健康探针返回204。部署后日志未发现Traceback、500或503。
+- 其余14个容器保持原启动时间和健康状态；MySQL、Redis、PostgreSQL、Keycloak、物理卷及服务器生产Git工作区均未重建或切换。部署锁、iwork维护标记和周重启标记均不存在。
+- 本验收证据将在部署后以独立文档提交推送，因此分支HEAD将晚于服务器当前批准的部署提交`76b304ac...`。服务器不自动重钉文档提交，后续smoke或部署应继续fail-closed；只有新的候选提交完成审查、CI和GHCR发布后才能重新批准。
+
+阶段状态：进行中。修复版已经完成真实生产切换和自动验收；剩余认证态外部浏览器验收及修复版受控回滚演练，完成后才能标记阶段4已完成。
 
 ## 9. 阶段5——Portal高风险受控部署与回滚
 
