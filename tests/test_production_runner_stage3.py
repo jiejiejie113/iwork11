@@ -92,6 +92,9 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "-RunLevel Highest" in content
     assert "New-ScheduledTaskTrigger -AtStartup" in content
     assert "New-ScheduledTaskTrigger -AtLogOn" in content
+    assert "-RepetitionInterval (New-TimeSpan -Minutes 1)" in content
+    assert "-RepetitionDuration (New-TimeSpan -Days 9999)" in content
+    assert "@($startupTrigger, $logonTrigger, $recoveryTrigger)" in content
     assert "docker info" in content
     assert "run.cmd" in content
     assert "Runner.Listener.exe" in content

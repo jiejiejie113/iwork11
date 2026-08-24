@@ -305,6 +305,11 @@ $action = New-ScheduledTaskAction `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$wrapperPath`""
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $EXPECTED_IDENTITY
+$recoveryTrigger = New-ScheduledTaskTrigger `
+    -Once `
+    -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionDuration (New-TimeSpan -Days 9999)
 $principal = New-ScheduledTaskPrincipal `
     -UserId $EXPECTED_IDENTITY `
     -LogonType S4U `
@@ -320,7 +325,7 @@ Register-ScheduledTask `
     -TaskPath $TASK_PATH `
     -TaskName $config.TaskName `
     -Action $action `
-    -Trigger @($startupTrigger, $logonTrigger) `
+    -Trigger @($startupTrigger, $logonTrigger, $recoveryTrigger) `
     -Principal $principal `
     -Settings $settings `
     -Description "GitHub Actions production runner for $RunnerRole; workflow_dispatch smoke validation only" `
