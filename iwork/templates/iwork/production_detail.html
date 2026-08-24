@@ -3352,7 +3352,9 @@ createApp({
             }
         }
 
+        const SSE_RECONNECT_WARNING_DELAY_MS = 5000;
         let detailEventSource = null;
+        let detailReconnectWarningTimer = null;
         let latestAppliedSnapshotVersion = null;
         let latestAppliedSnapshotGeneratedAt = null;
         let pendingDetailSnapshot = null;
@@ -3366,6 +3368,10 @@ createApp({
             if (detailEventSource) {
                 detailEventSource.close();
                 detailEventSource = null;
+            }
+            if (detailReconnectWarningTimer !== null) {
+                window.clearTimeout(detailReconnectWarningTimer);
+                detailReconnectWarningTimer = null;
             }
             if (detailRefreshRetryTimer) {
                 clearTimeout(detailRefreshRetryTimer);
@@ -3384,9 +3390,17 @@ createApp({
             latestAppliedSnapshotGeneratedAt = latestResponseGeneratedAt;
             const url = basePath + 'api/dashboard/stream/?mode=notification';
             const connectionGeneration = detailSSEGeneration;
-            detailEventSource = new EventSource(url);
-            detailEventSource.onopen = () => { wsConnected.value = true; };
-            detailEventSource.onmessage = event => {
+            const source = new EventSource(url);
+            detailEventSource = source;
+            source.onopen = () => {
+                if (connectionGeneration !== detailSSEGeneration) return;
+                if (detailReconnectWarningTimer !== null) {
+                    window.clearTimeout(detailReconnectWarningTimer);
+                    detailReconnectWarningTimer = null;
+                }
+                wsConnected.value = true;
+            };
+            source.onmessage = event => {
                 if (connectionGeneration !== detailSSEGeneration) return;
                 try {
                     handleProductionDetailSnapshot(
@@ -3397,11 +3411,30 @@ createApp({
                     console.error('生产详情 SSE 通知解析失败:', error);
                 }
             };
-            detailEventSource.addEventListener('snapshot_unavailable', () => {
+            source.addEventListener('snapshot_unavailable', () => {
+                if (connectionGeneration !== detailSSEGeneration) return;
                 wsConnected.value = false;
             });
-            detailEventSource.onerror = () => {
-                wsConnected.value = false;
+            source.addEventListener('lease_expiring', () => {
+                if (connectionGeneration !== detailSSEGeneration) return;
+                if (detailReconnectWarningTimer !== null) {
+                    window.clearTimeout(detailReconnectWarningTimer);
+                    detailReconnectWarningTimer = null;
+                }
+            });
+            source.onerror = () => {
+                if (connectionGeneration !== detailSSEGeneration) return;
+                if (detailReconnectWarningTimer !== null) return;
+                detailReconnectWarningTimer = window.setTimeout(() => {
+                    detailReconnectWarningTimer = null;
+                    if (
+                        connectionGeneration !== detailSSEGeneration
+                        || source.readyState === EventSource.OPEN
+                    ) {
+                        return;
+                    }
+                    wsConnected.value = false;
+                }, SSE_RECONNECT_WARNING_DELAY_MS);
                 // EventSource 会按浏览器策略自动重连。
             };
         }

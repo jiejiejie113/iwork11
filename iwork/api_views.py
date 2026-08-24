@@ -69,6 +69,8 @@ READ_MODEL = ReadModelQueries()
 # SSE 保活配置
 SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
 SSE_CONNECTION_LEASE_SECONDS = settings.SSE_CONNECTION_LEASE_SECONDS
+# 在授权租约结束前通知前端准备重连，不改变租约的实际截止时间。
+SSE_LEASE_EXPIRING_NOTICE_SECONDS = 1.0
 SSE_NOTIFICATION_POLL_SECONDS = settings.SSE_NOTIFICATION_POLL_SECONDS
 
 
@@ -1547,26 +1549,51 @@ async def dashboard_stream(request):
         Yields:
             str: SSE 数据事件、不可用事件或心跳注释。
         """
-        lease_deadline = asyncio.get_running_loop().time() + SSE_CONNECTION_LEASE_SECONDS
+        loop = asyncio.get_running_loop()
+        lease_started_at = loop.time()
+        lease_deadline = lease_started_at + SSE_CONNECTION_LEASE_SECONDS
+        notice_lead_seconds = min(
+            SSE_LEASE_EXPIRING_NOTICE_SECONDS,
+            SSE_CONNECTION_LEASE_SECONDS / 2,
+        )
+        lease_notice_deadline = lease_deadline - notice_lead_seconds
+        lease_expiring_event = (
+            'event: lease_expiring\n'
+            'data: {"type": "lease_expiring"}\n\n'
+        )
+        lease_notice_sent = False
         last_version = None
         has_attempted_payload = False
         async with broker.subscribe() as notification_queue:
             while True:
-                remaining_lease = lease_deadline - asyncio.get_running_loop().time()
+                now = loop.time()
+                remaining_lease = lease_deadline - now
                 if remaining_lease <= 0:
+                    if not lease_notice_sent:
+                        yield lease_expiring_event
                     return
+                if not lease_notice_sent and now >= lease_notice_deadline:
+                    lease_notice_sent = True
+                    yield lease_expiring_event
+                    continue
                 notification = None
                 if has_attempted_payload:
-                    waiting_for_lease_expiry = (
-                        remaining_lease <= SSE_HEARTBEAT_SECONDS
+                    wait_timeout = min(SSE_HEARTBEAT_SECONDS, remaining_lease)
+                    waiting_for_lease_notice = (
+                        not lease_notice_sent
+                        and lease_notice_deadline - now <= wait_timeout
                     )
+                    if waiting_for_lease_notice:
+                        wait_timeout = max(0, lease_notice_deadline - now)
                     try:
                         notification = await asyncio.wait_for(
                             notification_queue.get(),
-                            timeout=min(SSE_HEARTBEAT_SECONDS, remaining_lease),
+                            timeout=wait_timeout,
                         )
                     except TimeoutError:
-                        if waiting_for_lease_expiry:
+                        if waiting_for_lease_notice:
+                            continue
+                        if remaining_lease <= SSE_HEARTBEAT_SECONDS:
                             return
                         yield ": heartbeat\n\n"
 

@@ -766,9 +766,19 @@ createApp({
         }
 
         // ---- SSE 实时推送 ----
+        const SSE_RECONNECT_WARNING_DELAY_MS = 5000;
         let eventSource = null;
+        let expectedLeaseReconnect = false;
+        let reconnectWarningTimer = null;
         let latestSnapshotVersion = null;
         let latestSnapshotGeneratedAt = null;
+
+        function clearReconnectWarning() {
+            if (reconnectWarningTimer !== null) {
+                window.clearTimeout(reconnectWarningTimer);
+                reconnectWarningTimer = null;
+            }
+        }
 
         function shouldApplyRealtimeSnapshot(msg) {
             const snapshotVersion = String(msg.snapshot_version || '');
@@ -796,15 +806,29 @@ createApp({
 
             latestSnapshotVersion = null;
             latestSnapshotGeneratedAt = null;
-            eventSource = new EventSource(url);
+            expectedLeaseReconnect = false;
+            clearReconnectWarning();
+            const source = new EventSource(url);
+            eventSource = source;
 
-            eventSource.onmessage = async (event) => {
+            source.onopen = () => {
+                if (eventSource !== source) return;
+                clearReconnectWarning();
+                expectedLeaseReconnect = false;
+                wsConnected.value = true;
+                wsStatus.value = '已连接';
+            };
+
+            source.onmessage = async (event) => {
+                if (eventSource !== source) return;
                 if (isPaused.value) return;
                 if (currentView.value !== 'realtime') return;
 
                 try {
                     const msg = JSON.parse(event.data);
                     if (!shouldApplyRealtimeSnapshot(msg)) return;
+                    clearReconnectWarning();
+                    expectedLeaseReconnect = false;
                     if (msg.data) {
                         Object.assign(data, msg.data);
                         // SSE 已携带同版本工单，禁止再发请求造成查询放大。
@@ -838,14 +862,39 @@ createApp({
                 }
             };
 
-            eventSource.addEventListener('snapshot_unavailable', () => {
+            source.addEventListener('snapshot_unavailable', () => {
+                if (eventSource !== source) return;
                 wsConnected.value = false;
                 wsStatus.value = '实时数据暂不可用，等待恢复...';
             });
 
-            eventSource.onerror = () => {
-                wsConnected.value = false;
-                wsStatus.value = '连接断开，自动重连中...';
+            source.addEventListener('lease_expiring', () => {
+                if (eventSource !== source) return;
+                expectedLeaseReconnect = true;
+                clearReconnectWarning();
+                wsStatus.value = '正在续订连接...';
+            });
+
+            source.onerror = () => {
+                if (eventSource !== source) return;
+                if (reconnectWarningTimer !== null) return;
+                if (!expectedLeaseReconnect) {
+                    wsStatus.value = '连接波动，正在尝试恢复...';
+                }
+                reconnectWarningTimer = window.setTimeout(() => {
+                    reconnectWarningTimer = null;
+                    if (
+                        eventSource !== source
+                        || source.readyState === EventSource.OPEN
+                    ) {
+                        return;
+                    }
+                    expectedLeaseReconnect = false;
+                    wsConnected.value = false;
+                    wsStatus.value = source.readyState === EventSource.CLOSED
+                        ? '连接已关闭，请刷新页面或重新登录'
+                        : '连接断开，自动重连中...';
+                }, SSE_RECONNECT_WARNING_DELAY_MS);
             };
         }
 
@@ -919,6 +968,7 @@ createApp({
         });
 
         onUnmounted(() => {
+            clearReconnectWarning();
             if (eventSource) eventSource.close();
             destroyAllCharts();
         });

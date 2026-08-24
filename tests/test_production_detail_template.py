@@ -170,7 +170,22 @@ def test_today_production_detail_uses_lightweight_sse_notifications():
     assert "msg.type !== 'snapshot_published'" in TEMPLATE
     assert '? await refreshDetailSilently()' in TEMPLATE
     assert ': await refreshOverviewSilently();' in TEMPLATE
-    assert 'detailEventSource = new EventSource(url);' in TEMPLATE
+    assert 'const source = new EventSource(url);' in TEMPLATE
+    assert 'detailEventSource = source;' in TEMPLATE
+
+
+def test_production_detail_sse_lease_renewal_avoids_status_flicker():
+    """生产详情正常续租不应立即标记断线，真实故障延迟确认。"""
+    connection = TEMPLATE.split('function connectProductionDetailSSE() {', 1)[1]
+    connection = connection.split('function shouldApplyProductionDetailSnapshot', 1)[0]
+
+    assert 'let detailReconnectWarningTimer = null;' in TEMPLATE
+    assert "source.addEventListener('lease_expiring', () => {" in connection
+    assert 'if (connectionGeneration !== detailSSEGeneration) return;' in connection
+    assert 'if (detailReconnectWarningTimer !== null) return;' in connection
+    assert 'SSE_RECONNECT_WARNING_DELAY_MS' in connection
+    assert 'source.readyState === EventSource.OPEN' in connection
+    assert 'wsConnected.value = false;' in connection
 
 
 def test_production_detail_sse_is_disabled_for_history_and_replaces_timer():
@@ -551,8 +566,8 @@ def test_history_dashboard_auto_builds_snapshots_without_source_controls():
 
 def test_sse_uses_embedded_workorders_without_duplicate_request():
     """SSE 更新直接消费同版本工单，不再次请求工单接口。"""
-    sse_handler = DASHBOARD_TEMPLATE.split('eventSource.onmessage = async (event) => {', 1)[1]
-    sse_handler = sse_handler.split('eventSource.onerror = () => {', 1)[0]
+    sse_handler = DASHBOARD_TEMPLATE.split('source.onmessage = async (event) => {', 1)[1]
+    sse_handler = sse_handler.split('source.onerror = () => {', 1)[0]
 
     assert 'msg.data.workorders || []' in sse_handler
     assert 'api/dashboard/workorders/' not in sse_handler
@@ -566,7 +581,7 @@ def test_sse_rejects_duplicate_or_older_snapshot_events():
     assert 'function shouldApplyRealtimeSnapshot(msg)' in DASHBOARD_TEMPLATE
     assert 'if (!shouldApplyRealtimeSnapshot(msg)) return;' in DASHBOARD_TEMPLATE
     connect_handler = DASHBOARD_TEMPLATE.split('function connectSSE() {', 1)[1]
-    connect_handler = connect_handler.split('eventSource = new EventSource(url);', 1)[0]
+    connect_handler = connect_handler.split('const source = new EventSource(url);', 1)[0]
     assert 'latestSnapshotVersion = null;' in connect_handler
     assert 'latestSnapshotGeneratedAt = null;' in connect_handler
 
@@ -574,7 +589,7 @@ def test_sse_rejects_duplicate_or_older_snapshot_events():
 def test_sse_snapshot_unavailable_event_preserves_data_and_waits_for_recovery():
     """命名的快照不可用事件应标记异常，但保留旧数据和长连接。"""
     unavailable_handler = DASHBOARD_TEMPLATE.split(
-        "eventSource.addEventListener('snapshot_unavailable', () => {",
+        "source.addEventListener('snapshot_unavailable', () => {",
         1,
     )[1]
     unavailable_handler = unavailable_handler.split("});", 1)[0]
@@ -583,6 +598,41 @@ def test_sse_snapshot_unavailable_event_preserves_data_and_waits_for_recovery():
     assert "wsStatus.value = '实时数据暂不可用，等待恢复...';" in unavailable_handler
     assert "Object.assign(data" not in unavailable_handler
     assert "eventSource.close" not in unavailable_handler
+
+
+def test_sse_lease_renewal_delays_disconnection_warning_until_reconnect_fails():
+    """正常租约续订不应误报断线，只有超时未重连才显示告警。"""
+    assert 'const SSE_RECONNECT_WARNING_DELAY_MS = 5000;' in DASHBOARD_TEMPLATE
+    assert 'let expectedLeaseReconnect = false;' in DASHBOARD_TEMPLATE
+    assert 'let reconnectWarningTimer = null;' in DASHBOARD_TEMPLATE
+    assert 'const source = new EventSource(url);' in DASHBOARD_TEMPLATE
+    assert 'eventSource = source;' in DASHBOARD_TEMPLATE
+    assert 'if (eventSource !== source) return;' in DASHBOARD_TEMPLATE
+
+    lease_handler = DASHBOARD_TEMPLATE.split(
+        "source.addEventListener('lease_expiring', () => {",
+        1,
+    )[1].split("});", 1)[0]
+    assert 'expectedLeaseReconnect = true;' in lease_handler
+    assert "wsStatus.value = '正在续订连接...';" in lease_handler
+    assert 'wsConnected.value = false;' not in lease_handler
+
+    assert 'source.onopen = () => {' in DASHBOARD_TEMPLATE
+    open_handler = DASHBOARD_TEMPLATE.split('source.onopen = () => {', 1)[1]
+    open_handler = open_handler.split('};', 1)[0]
+    assert 'clearReconnectWarning();' in open_handler
+    assert 'expectedLeaseReconnect = false;' in open_handler
+    assert 'wsConnected.value = true;' in open_handler
+    assert "wsStatus.value = '已连接';" in open_handler
+
+    error_handler = DASHBOARD_TEMPLATE.split('source.onerror = () => {', 1)[1]
+    error_handler = error_handler.split('};', 1)[0]
+    assert 'if (reconnectWarningTimer !== null) return;' in error_handler
+    assert 'setTimeout' in error_handler
+    assert 'SSE_RECONNECT_WARNING_DELAY_MS' in error_handler
+    assert 'source.readyState === EventSource.CLOSED' in error_handler
+    assert "'连接已关闭，请刷新页面或重新登录'" in error_handler
+    assert "'连接断开，自动重连中...'" in error_handler
 
 
 def test_historical_production_detail_builds_snapshot_and_hides_update_time():
