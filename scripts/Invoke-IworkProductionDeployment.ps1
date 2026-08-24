@@ -56,8 +56,18 @@ function Invoke-DockerCommand {
         [string[]]$Arguments
     )
 
-    $output = & $DockerCommand @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Docker Compose会把正常进度写入stderr。Windows PowerShell 5.1在
+        # ErrorActionPreference=Stop时会先抛出NativeCommandError，导致退出码0
+        # 的成功命令被误判失败，因此这里只按原生命令退出码决定成败。
+        $ErrorActionPreference = 'Continue'
+        $output = & $DockerCommand @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($null -eq $exitCode) {
         $exitCode = 0
     }

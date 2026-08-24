@@ -65,7 +65,7 @@ jobs:
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: 1475674284b4e5a270628976e62f657bb6a5f0dd8ab9141213664c2247679ff3
+      DEPLOY_SCRIPT_SHA256: f31cb93b69dcb755fa82996078f7713cfb29889a266faf705d174c66ba5b5a25
     steps:
       - name: 校验候选镜像并执行预检或部署
         shell: powershell

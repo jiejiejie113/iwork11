@@ -175,6 +175,7 @@ def _run_deployment_script(
     fail_rollback: bool = False,
     run_migrations: bool = False,
     watchdog_uses_shared_mutex: bool = True,
+    emit_compose_progress: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -185,6 +186,7 @@ def _run_deployment_script(
         fail_rollback (bool): 是否让回滚Compose切换失败。
         run_migrations (bool): 是否启用迁移前备份与容器迁移。
         watchdog_uses_shared_mutex (bool): 看门狗是否声明共享恢复锁。
+        emit_compose_progress (bool): 是否模拟Compose在标准错误输出成功进度。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
@@ -198,6 +200,7 @@ def _run_deployment_script(
     secrets = tmp_path / "dkt-secrets.env"
     docker_log = tmp_path / "docker.log"
     fake_docker = tmp_path / "fake-docker.ps1"
+    fake_docker_wrapper = tmp_path / "fake-docker.cmd"
     watchdog_script = tmp_path / "docker-health-watchdog.ps1"
 
     profile.parent.mkdir(parents=True)
@@ -255,7 +258,7 @@ if ($line -like 'cp DKT_mysql:/tmp/iwork-*') {
     return
 }
 if ($line -like 'exec DKT_mysql rm -f*') { return }
-if ($line -like 'compose*up -d --no-build --no-deps iwork alert-worker*') {
+if ($line -like 'compose*up *--no-build --no-deps iwork alert-worker*') {
     $overrideIndexes = @(0..($CommandArgs.Count - 1) | Where-Object {
         $CommandArgs[$_] -eq '-f'
     })
@@ -292,6 +295,24 @@ throw "Unexpected fake docker call: $line"
 """,
         encoding="utf-8",
     )
+    fake_docker_wrapper.write_text(
+        """@echo off
+if \"%~1\"==\"exec\" if \"%~2\"==\"DKT_iwork\" if \"%~3\"==\"python\" exit /b 0
+if \"%~1\"==\"exec\" if \"%~2\"==\"DKT_iwork_alert_worker\" if \"%~3\"==\"celery\" (
+  echo pong
+  exit /b 0
+)
+\"%SYSTEMROOT%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" ^
+  -NoProfile -ExecutionPolicy Bypass -File \"%FAKE_DOCKER_SCRIPT%\" %*
+set \"fakeDockerExitCode=%ERRORLEVEL%\"
+if \"%FAKE_COMPOSE_PROGRESS%\"==\"1\" (
+  echo %* | findstr /C:\"up --no-build --no-deps iwork alert-worker\" >nul
+  if not errorlevel 1 1>&2 echo  Container DKT_iwork Recreate
+)
+exit /b %fakeDockerExitCode%
+""",
+        encoding="ascii",
+    )
 
     env = os.environ.copy()
     env["FAKE_DOCKER_LOG"] = str(docker_log)
@@ -299,6 +320,8 @@ throw "Unexpected fake docker call: $line"
     env["FAKE_CANDIDATE_IMAGE"] = f"ghcr.io/guchenkano/iwork@{CANDIDATE_DIGEST}"
     env["FAKE_FAIL_VALIDATION"] = "1" if fail_validation else "0"
     env["FAKE_FAIL_ROLLBACK"] = "1" if fail_rollback else "0"
+    env["FAKE_COMPOSE_PROGRESS"] = "1" if emit_compose_progress else "0"
+    env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
     web_image_state.write_text("iwork-iwork", encoding="utf-8")
@@ -347,7 +370,7 @@ throw "Unexpected fake docker call: $line"
             "-SecretsFile",
             str(secrets),
             "-DockerCommand",
-            str(fake_docker),
+            str(fake_docker_wrapper if emit_compose_progress else fake_docker),
             "-WatchdogScript",
             str(watchdog_script),
             "-HealthTimeoutSeconds",
@@ -421,6 +444,21 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert state["PreviousContainers"][0]["Health"] == "healthy"
     assert not (paths["lock_root"] / "production-deploy.lock").exists()
     assert not paths["maintenance_file"].exists()
+
+
+def test_deploy_accepts_successful_compose_progress_on_stderr(tmp_path: Path) -> None:
+    """Compose退出码为0时，标准错误中的正常进度不得触发错误回滚。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        emit_compose_progress=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state_file = paths["state_root"] / "stage4-test-1.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["Status"] == "deployed"
+    assert state["RollbackSucceeded"] is False
 
 
 def test_rollback_failure_is_visible_in_job_error_and_state(tmp_path: Path) -> None:
