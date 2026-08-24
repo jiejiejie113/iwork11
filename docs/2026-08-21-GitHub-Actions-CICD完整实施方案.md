@@ -61,14 +61,14 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-21，基础纯CI和生产Runner身份可行性验证已经完成。按整个CI/CD交付范围估算，总体约完成40%；纯CI子项目完成100%。
+截至2026-08-24，阶段0—2已经完成：两仓库纯CI已跑绿，生产Runner身份可行性已验证，三个GHCR不可变镜像已发布并按Digest复验。阶段3—8尚未开始；当前进度按阶段计为3/9，不再使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
 | 0 | 基线与纯CI | 已完成 | 两仓库GitHub托管Runner流水线已跑绿 |
 | 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
-| 2 | GHCR不可变镜像发布 | 未开始 | 当前临时镜像不上传 |
-| 3 | 生产Self-hosted Runner安装 | 未开始 | 需依赖阶段1结论 |
+| 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
+| 3 | 生产Self-hosted Runner安装 | 未开始 | 阶段1身份结论和阶段2不可变镜像已就绪 |
 | 4 | iwork受控部署与回滚 | 未开始 | 不允许提前自动部署 |
 | 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
@@ -108,7 +108,7 @@ Portal：
 
 ### 4.3 提交记录
 
-| 仓库 | 初始CI提交 | 首轮修复提交 | 当前远程HEAD |
+| 仓库 | 初始CI提交 | 首轮修复提交 | 阶段0验收时远程HEAD |
 |---|---|---|---|
 | iwork | `60c01d3` | `75699fb` | `75699fbc96d0fa90bbf2da5ab9a9a9e357ab6ce2` |
 | DTD_nginx | `976bfb5` | `b24e63c` | `b24e63c6dd66f6d078108af389285e472fcbbaf5` |
@@ -346,7 +346,64 @@ ghcr.io/guchenkano/iwork@sha256:<digest>
 - 发布失败不影响现有生产容器。
 - 保留最近若干个稳定Digest用于回滚。
 
-阶段状态：未开始。
+阶段状态：已完成（2026-08-21）。
+
+### 6.5 阶段2实施记录
+
+本阶段已在两个仓库完成GHCR不可变镜像发布能力，且全程仅使用GitHub托管Runner；未连接生产服务器、未运行生产Compose、未读取生产密钥，也未修改任何数据库、Redis或Docker数据卷。
+
+代码提交：
+
+| 仓库 | 分支 | 提交 | 内容 |
+|---|---|---|---|
+| iwork | `Keycloak` | `749f1677f69d2f8c62f2563606e91935a77881cb` | 建设GHCR发布工作流、发布契约测试、Docker上下文排除规则并升级Node.js 24版Action |
+| iwork | `Keycloak` | `51c1911e867c7183eef45b66b7fa6bc35ee8d676` | 按Docker Buildx官方格式修复Manifest Digest解析 |
+| DTD_nginx | `feature/keycloak-migration` | `d28dd28e7948ce288cae44f7c2f7a5b03209f250` | 建设Portal与oauth2-proxy双镜像发布、独立构建上下文和发布契约测试 |
+| DTD_nginx | `feature/keycloak-migration` | `90f470ad3979d3431d92eb02c5071bf9bcfc2060` | 按Docker Buildx官方格式修复Manifest Digest解析 |
+| DTD_nginx | `feature/keycloak-migration` | `8a5d64900ad33b333b14f8e40fabf55cad7b9fc2` | 防止PowerShell函数捕获Docker标准输出并显式记录最终Digest |
+
+最终Actions证据：
+
+| 仓库 | 类型 | 结果 | Actions |
+|---|---|---|---|
+| iwork | 纯CI | 成功 | [32468721436](https://github.com/GuChenkano/iwork/actions/runs/32468721436) |
+| iwork | GHCR Release | 成功 | [32469234186](https://github.com/GuChenkano/iwork/actions/runs/32469234186) |
+| DTD_nginx | 纯CI | 成功 | [32469648291](https://github.com/GuChenkano/DTD_nginx/actions/runs/32469648291) |
+| DTD_nginx | GHCR Release | 成功 | [32469839714](https://github.com/GuChenkano/DTD_nginx/actions/runs/32469839714) |
+
+2026-08-24使用恢复登录后的GitHub CLI重新读取上述四次Actions运行，四次运行均为`completed/success`；iwork两次运行对应提交`51c1911e867c7183eef45b66b7fa6bc35ee8d676`，DTD_nginx两次运行对应提交`8a5d64900ad33b333b14f8e40fabf55cad7b9fc2`。
+
+最终不可变镜像：
+
+```text
+ghcr.io/guchenkano/iwork@sha256:2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c
+ghcr.io/guchenkano/dtd-nginx@sha256:fb46bc0778bd77801ac0dec11a273dbeec2074e5ae51a21eb7897c79bdf0e9f4
+ghcr.io/guchenkano/dtd-oauth2-proxy@sha256:bfccd05a210729cf2d31732360ffa1032affcb014648ef19039dfa94b0da4390
+```
+
+每个Release均完成以下闭环：
+
+- 通过GitHub API确认同一Commit SHA的`ci.yml`已成功。
+- 发布Job单独获得`packages: write`，使用短期`GITHUB_TOKEN`登录GHCR。
+- 以完整40位Commit SHA作为唯一标签，不生成或使用`latest`。
+- 已存在的SHA标签只允许读取并核对OCI revision，不执行覆盖推送。
+- 新镜像推送后解析Manifest Digest，再按Digest拉取并校验`org.opencontainers.image.revision`。
+- Actions摘要记录Commit、镜像、Digest、是否复用、耗时、CI链接和Release链接。
+
+本地与CI验证：
+
+- iwork：`539 passed`；两个PowerShell同步任务测试均为0项失败；Ruff、迁移检查、Compose解析和`git diff --check`通过。
+- DTD_nginx：Django应用测试`72 passed`；离线配置测试`90 passed, 2 skipped, 37 subtests passed`；Ruff、迁移检查、YAML解析和`git diff --check`通过。
+- 两仓库普通CI均完成Windows测试与Ubuntu无密钥Docker构建。
+- Docker构建上下文新增环境文件、数据库、私钥、备份、开发脚本和本地Agent目录排除；oauth2-proxy子上下文只允许Dockerfile进入。
+
+问题与处理：
+
+- 首轮Release使用错误的顶层`.Digest`模板，镜像构建和推送已完成，但推送后无法解析Digest，工作流因此失败。根据Docker Buildx官方文档确认格式对象只公开`.Name`、`.Manifest`和`.Image`，最终修正为`.Manifest.Digest`并重新完成CI与Release。
+- Portal发布函数最初把Docker标准输出捕获进函数返回值，发布与校验虽成功，但日志不能直接检索两个Digest。最终将Docker输出发送到Host流，并显式打印已验证镜像的Digest。
+- 失败运行只发生在GitHub托管Runner，未连接或改变生产环境。失败Commit对应的SHA镜像仅作为历史审计记录，不作为阶段3及后续部署输入。
+
+下一阶段入口：允许开始阶段3“生产Self-hosted Runner安装”。阶段3只能建设Runner运行基础和最小GHCR拉取能力，不能提前执行阶段4或阶段5的生产应用部署。
 
 ## 7. 阶段3——生产Self-hosted Runner安装
 
@@ -604,16 +661,23 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-下一步只执行阶段2：GHCR不可变镜像发布。
+下一步只执行阶段3：生产Self-hosted Runner安装。
 
-阶段2完成前禁止：
+阶段3允许的实施范围：
 
-- 注册永久生产Runner或建设生产部署Workflow。
-- 在生产服务器启动任何新GHCR镜像。
-- 修改Docker Desktop服务启动方式。
-- 使用SYSTEM直接执行Docker部署。
-- 清理Portal服务器工作区。
+- 使用阶段1验证通过的`DONGMING\shuju`身份安装iwork和Portal两个独立Runner。
+- 使用独立目录，不读写或清理`D:\DM\iwork`和`D:\DM\DTD_nginx`生产工作区。
+- 使用最高权限计划任务启动Runner包装器，包装器等待Docker API可用后再启动Runner。
+- 只验证Runner注册、Idle状态、自动恢复和私有GHCR镜像最小拉取能力。
+- 验证Runner不能执行PR代码，不持有个人PAT，不具备修改仓库或GitHub设置的权限。
+
+阶段3完成前禁止：
+
+- 建设或触发阶段4 iwork生产部署Workflow。
+- 建设或触发阶段5 Portal生产部署Workflow。
+- 在生产服务器上用GHCR镜像替换任何当前运行容器。
+- 修改Docker Desktop的运行身份或使用SYSTEM直接执行Docker部署。
 - 使用`latest`或其他可漂移标签作为生产部署依据。
-- 把生产密钥、环境文件、证书、SQLite或数据库备份放入镜像或Actions产物。
+- 把生产密钥、环境文件、证书、SQLite或数据库备份放入Runner工作目录、镜像或Actions产物。
 
-阶段2只允许GitHub托管Runner构建并发布不可变镜像，不连接生产服务器。阶段2执行完成后，Agent必须先更新本文档，再决定是否进入阶段3。
+阶段3完成后，Agent必须在同一阶段提交中写入Runner注册、计划任务恢复、GHCR拉取、权限边界和生产工作区未受影响的实际证据，再决定是否进入阶段4。
