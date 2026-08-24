@@ -47,6 +47,8 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
     assert "'{{json .Config.Labels}}'" in content
     assert "ConvertFrom-Json" in content
     assert "{{ index .Config.Labels" not in content
+    assert "[debug-ghcr-auth]" not in lowered
+    assert "诊断github与ghcr短期令牌授权边界" not in lowered
     assert (
         "ghcr.io/guchenkano/iwork@sha256:"
         "2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c"
