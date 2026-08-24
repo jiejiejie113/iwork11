@@ -229,6 +229,21 @@ if ($ResumeConfiguredRunner) {
     if (-not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)) {
         throw "Configured runner cannot be resumed because .runner is missing: $installDirectory"
     }
+    $existingTask = Get-ScheduledTask `
+        -TaskPath $TASK_PATH `
+        -TaskName $config.TaskName `
+        -ErrorAction SilentlyContinue
+    $listenerPath = Join-Path $installDirectory 'bin\Runner.Listener.exe'
+    $existingListeners = Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'Runner.Listener.exe' -and
+        $_.ExecutablePath -eq $listenerPath
+    }
+    if ($existingTask -or $existingListeners) {
+        throw (
+            'Resume refused: stop the task and listeners only after an external ' +
+            'GitHub busy=false check.'
+        )
+    }
 }
 else {
     if (Test-Path -LiteralPath $installDirectory) {

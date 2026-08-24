@@ -75,6 +75,7 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "[Console]::In.ReadLine()" in content
     assert "ResumeConfiguredRunner" in content
     assert "Configured runner cannot be resumed because .runner is missing" in content
+    assert "Resume refused: stop the task and listeners only after an external" in content
     assert "--unattended" in content
     assert "--replace" in content
     assert r"D:\DM\actions-runner" in content
@@ -93,6 +94,7 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "New-ScheduledTaskTrigger -AtLogOn" in content
     assert "docker info" in content
     assert "run.cmd" in content
+    assert "Runner.Listener.exe" in content
     assert "$unexpectedCleanExitCode = 71" in content
     assert "if ($runnerExitCode -eq 0)" in content
     assert "Runner registration did not create the .runner configuration file." in content
