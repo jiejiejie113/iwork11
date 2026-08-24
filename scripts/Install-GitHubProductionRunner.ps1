@@ -117,8 +117,9 @@ function Get-VerifiedRunnerPackage {
 function Ensure-ScheduledTaskFolder {
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
+    $comTaskPath = $TASK_PATH.TrimEnd('\')
     try {
-        $null = $service.GetFolder($TASK_PATH)
+        $null = $service.GetFolder($comTaskPath)
     }
     catch {
         $rootFolder = $service.GetFolder('\')

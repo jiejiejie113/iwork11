@@ -85,6 +85,8 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "GITHUB_ACTOR" in content
     assert "GITHUB_WORKFLOW_REF" in content
     assert "New-ScheduledTaskPrincipal" in content
+    assert "$comTaskPath = $TASK_PATH.TrimEnd('\\')" in content
+    assert "$service.GetFolder($comTaskPath)" in content
     assert "-LogonType S4U" in content
     assert "-RunLevel Highest" in content
     assert "New-ScheduledTaskTrigger -AtStartup" in content
