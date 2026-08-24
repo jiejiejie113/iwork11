@@ -55,6 +55,62 @@ jobs:
           "Runner workspace: $workspace"
           "Docker info: $dockerInfo"
 
+      - name: 诊断GitHub与GHCR短期令牌授权边界
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          chcp 65001 | Out-Null
+          if ([String]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+              throw "[DEBUG-ghcr-auth] GitHub token is empty"
+          }
+
+          "[DEBUG-ghcr-auth] token_length=$($env:GITHUB_TOKEN.Length)"
+          $apiHeaders = @{
+              Accept = "application/vnd.github+json"
+              Authorization = "Bearer $env:GITHUB_TOKEN"
+              "User-Agent" = "iwork-production-runner-smoke"
+              "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          try {
+              $apiResponse = Invoke-WebRequest `
+                  -UseBasicParsing `
+                  -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY" `
+                  -Headers $apiHeaders
+              "[DEBUG-ghcr-auth] github_api_status=$([int]$apiResponse.StatusCode)"
+          }
+          catch {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+              throw "[DEBUG-ghcr-auth] GitHub API rejected token: status=$statusCode"
+          }
+
+          $basicValue = "$env:GITHUB_ACTOR`:$env:GITHUB_TOKEN"
+          $basicToken = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($basicValue))
+          $ghcrHeaders = @{
+              Accept = "application/json"
+              Authorization = "Basic $basicToken"
+              "User-Agent" = "iwork-production-runner-smoke"
+          }
+          $scope = [Uri]::EscapeDataString("repository:guchenkano/iwork:pull")
+          try {
+              $ghcrResponse = Invoke-WebRequest `
+                  -UseBasicParsing `
+                  -Uri "https://ghcr.io/token?service=ghcr.io&scope=$scope" `
+                  -Headers $ghcrHeaders
+              if ($ghcrResponse.Content -notmatch '"token"') {
+                  throw "[DEBUG-ghcr-auth] GHCR response did not contain a registry token"
+              }
+              "[DEBUG-ghcr-auth] ghcr_token_status=$([int]$ghcrResponse.StatusCode)"
+          }
+          catch {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+              throw "[DEBUG-ghcr-auth] GHCR rejected token: status=$statusCode"
+          }
+          finally {
+              Remove-Variable basicValue, basicToken, ghcrHeaders -ErrorAction SilentlyContinue
+          }
+
       - name: 使用短期令牌按Digest拉取并复验镜像
         shell: powershell
         env:
