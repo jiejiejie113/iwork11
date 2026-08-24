@@ -5,10 +5,14 @@
 | 路径 | 调用场景 | 效果 |
 |------|----------|------|
 | `deploy.ps1` | 单独部署 iwork | 加载 `env/local.env` 或 `env/production.env` 与中央密钥，构建 `DKT_iwork`，重载 Nginx 并执行容器内 HTTP 检查 |
+| `.github/workflows/deploy-iwork.yml` | 生产GHCR受控部署 | 仅在固定生产Runner上调用已安装且哈希固定的部署脚本；预检默认只读，显式确认后同时切换`DKT_iwork`与`DKT_iwork_alert_worker`并在失败时自动回滚 |
+| `scripts/Invoke-IworkProductionDeployment.ps1` | 生产部署深层模块 | 负责Digest/revision复验、共享锁、备份、Compose覆盖、双容器健康验收和自动回滚；必须由`Install-IworkProductionDeployment.ps1`安装到服务器固定目录，禁止从Runner工作区直接调用 |
 | `restart_services.ps1` | 仅需重启应用进程 | 重启 `DKT_iwork`，不操作共享 MySQL、Redis 或数据卷 |
 | `stop_services.ps1` | 临时停止 iwork | 停止 `DKT_iwork`，保留共享基础设施 |
 | `uninstall_services.ps1` | 清理旧 NSSM 部署 | 删除历史 `iwork-django`、`iwork-daphne`、Celery Windows 服务，不操作 Docker 数据 |
 | `..\DTD_nginx\scripts\Rebuild-Local.ps1` | Portal 与 iwork 联合重建 | 推荐入口；从 DTD_nginx 根目录调用 `-Target iwork` 或 `-Target all` |
+
+阶段4当前只完成代码和隔离测试；未完成生产基线记录、固定提交准入安装和真实预检前，部署Workflow不得替换生产容器或声称已完成生产回滚验收。`apply=false`仍会把指定Digest拉入Docker镜像缓存，但不会重建、重启或替换运行容器。
 
 ## 本地部署规则
 
@@ -38,3 +42,5 @@
 - 阶段只在全部验收条件有实际证据时标记为“已完成”；部分完成必须逐项列出未完成内容，禁止仅因代码已提交而标记完成。
 - 发生阻断、回滚或设计调整时也必须更新该文档，不得让代码状态与方案进度脱节。
 - 在该文档所有阶段标记为“已完成”前，后续Agent必须延续维护；不得另建重复的CI/CD总方案替代本文件。
+- 当前GitHub套餐无法启用Environment Required Reviewer和`Keycloak`分支保护；不得把Workflow的`environment`声明视为有效审批。生产准入必须固定人工批准的完整Commit SHA、Workflow路径、actor、仓库、分支和服务器部署脚本SHA-256。
+- 每批准一个新的部署Workflow提交，都必须在Runner空闲时更新服务器准入策略；旧的、已删除或当前不可拉取的GHCR Digest不得作为生产部署输入。

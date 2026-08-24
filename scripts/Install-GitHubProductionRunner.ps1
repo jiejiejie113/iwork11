@@ -289,7 +289,15 @@ else {
     }
 }
 
-Write-AdmissionHook -Config $config -HookPath $hookPath
+if (
+    $ResumeConfiguredRunner -and
+    (Test-Path -LiteralPath $hookPath -PathType Leaf)
+) {
+    Write-Host "保留现有Runner准入钩子：$hookPath"
+}
+else {
+    Write-AdmissionHook -Config $config -HookPath $hookPath
+}
 Set-Content `
     -LiteralPath (Join-Path $installDirectory '.env') `
     -Value "ACTIONS_RUNNER_HOOK_JOB_STARTED=$hookPath" `
@@ -328,7 +336,7 @@ Register-ScheduledTask `
     -Trigger @($startupTrigger, $logonTrigger, $recoveryTrigger) `
     -Principal $principal `
     -Settings $settings `
-    -Description "GitHub Actions production runner for $RunnerRole; workflow_dispatch smoke validation only" `
+    -Description "GitHub Actions生产Runner（$RunnerRole）；准入由固定workflow_dispatch钩子控制" `
     -Force | Out-Null
 Start-ScheduledTask -TaskPath $TASK_PATH -TaskName $config.TaskName
 

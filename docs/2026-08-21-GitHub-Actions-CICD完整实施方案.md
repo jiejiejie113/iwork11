@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-24，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4—8尚未开始；当前完成进度按阶段计为4/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-24，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已进入代码与隔离验证，尚未执行生产容器切换或真实生产回滚；阶段5—8尚未开始。当前已完成阶段仍为4/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -69,7 +69,7 @@
 | 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
-| 4 | iwork受控部署与回滚 | 未开始 | 不允许提前自动部署 |
+| 4 | iwork受控部署与回滚 | 进行中 | 工作流、固定脚本、准入安装器及隔离回滚测试已实现；生产预检和切换尚未执行 |
 | 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
@@ -484,49 +484,94 @@ portal: self-hosted, windows, dkt-prod, portal
 - Docker共有16个运行容器，14个配置健康检查的容器全部为`healthy`，其余2个未配置healthcheck但保持运行；没有启动、替换或重建生产容器。
 - `D:\DM\iwork`工作区干净；`D:\DM\DTD_nginx`只保留既有未跟踪的`docker/certs/`和`docs/待办方案/2026-08-21-DITU-Portal证书重签实施计划.md`，Runner没有清理或覆盖生产工作区。
 
-阶段状态：已完成。阶段4尚未开始。
+阶段状态：已完成。阶段4已进入代码与隔离验证阶段，但尚未切换生产容器。
 
 ## 8. 阶段4——iwork受控部署与自动回滚
 
-### 8.1 工作流输入
+### 8.1 已实现的工作流输入
 
-- 镜像Digest，必填。
-- 目标环境，当前只能是`production`。
-- 是否执行数据库迁移，默认按既有发布规范处理。
-- 变更说明或关联Commit。
+`.github/workflows/deploy-iwork.yml`只允许`workflow_dispatch`，目标环境在Workflow中固定为`production-iwork`，不接受环境名或任意Shell命令输入。实际输入为：
 
-不允许把任意Shell命令作为输入。
+- `image_digest`：完整`sha256:` Digest，必填。
+- `expected_revision`：镜像OCI revision对应的40位Commit SHA，必填。
+- `apply`：默认`false`；关闭时会拉取并验证候选Digest，但不重建、重启或替换运行容器。镜像缓存会增加候选镜像，因此不称为严格零写入。
+- `run_migrations`：默认`false`。
+- `change_description`：1—500字符变更说明。
+- `confirmation`：预检为`PREFLIGHT IWORK`；无迁移部署为`DEPLOY IWORK`；迁移部署为`DEPLOY IWORK WITH MIGRATIONS`。
 
-### 8.2 部署步骤
+每次Actions重试使用`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT`作为独立部署ID，避免覆盖上一次状态、备份和回滚标签。
 
-1. GitHub Environment审批。
-2. 校验镜像Digest和对应CI、release运行状态。
-3. 获取服务器级全局部署锁。
-4. 检查看门狗、Docker周重启和已有维护标记。
-5. 记录当前镜像Digest、Compose解析结果、容器ID、健康状态和重启次数。
-6. 创建有过期时间的维护标记。
-7. 拉取指定GHCR镜像Digest。
-8. 执行`docker compose config --quiet`。
-9. 只更新：
+### 8.2 实际安全边界与平台限制
 
-   - `DKT_iwork`
-   - `DKT_iwork_alert_worker`
+- 当前私有个人仓库套餐不能启用`production-iwork` Environment Required Reviewer，也不能启用`Keycloak`分支保护。因此`environment: production-iwork`目前只是环境标识，不能视为GitHub侧人工审批。
+- 补偿控制由服务器准入钩子提供：只接受`workflow_dispatch`、`GuChenkano/iwork`、`Keycloak`、固定Workflow名称和路径、actor `GuChenkano`，并要求`GITHUB_SHA`严格等于人工批准的完整40位SHA。
+- 每批准一个新的Workflow提交，必须在Runner空闲时使用`Install-IworkProductionDeployment.ps1 -ApprovedHeadSha <SHA>`重新安装准入策略。重新运行Runner恢复安装器时保留已有阶段4钩子，禁止退回smoke-only策略。
+- Workflow固定校验服务器`D:\DM\cicd-tools\Invoke-IworkProductionDeployment.ps1`的SHA-256；服务器脚本和Workflow任一方变化都会拒绝执行。
+- `.gitattributes`固定两个阶段4生产PowerShell脚本为LF，脚本本身保留UTF-8 BOM，避免Windows检出换行转换导致固定SHA-256漂移，同时保证Windows PowerShell 5.1正确读取中文。
+- Workflow只授予`actions: read`和`packages: read`，使用短期`GITHUB_TOKEN`和`RUNNER_TEMP`隔离Docker配置，按完整Digest拉取后删除认证文件；不checkout、不build、不访问生产Git工作区。
+- 候选`expected_revision`必须严格等于当前被服务器准入钩子批准的`GITHUB_SHA`，随后再核对镜像OCI revision；因此不能利用合法旧Digest把生产降级到未批准的历史提交。
+- 部署前通过GitHub Actions API分别确认同一Commit存在成功的`ci.yml`和`release.yml`运行；查询失败、没有成功运行或令牌权限不足均拒绝继续。
 
-10. 禁止重建或删除MySQL、Redis、PostgreSQL、Keycloak和共享卷。
-11. 执行容器健康检查、Django检查、API、页面认证、SSE和Alert Worker验收。
-12. 成功后记录新Digest并释放维护标记和锁。
-13. 失败时恢复旧Digest、重新启动旧容器并复验。
+### 8.3 已实现的部署与回滚步骤
 
-### 8.3 验收标准
+1. 固定脚本执行生产身份、生产Compose、生产环境文件、中央密钥、状态目录和锁目录预检。
+2. 检查看门狗脚本确实声明`Global\DKT-Docker-Recovery`；周重启或既有iwork维护标记存在时拒绝开始。
+3. 获取`Global\DKT-Production-Deploy`、`Global\DKT-Docker-Recovery`和`D:\DM\cicd-locks\production-deploy.lock`三层互斥。
+4. 保存两个现有容器的容器ID、配置镜像、镜像ID、状态、健康状态和重启次数，并建立本地只读回滚标签；回滚不依赖旧GHCR Digest仍可下载。
+5. `run_migrations=true`时先备份`iwork_system`和`iwork_local`，记录SHA-256，并把备份ACL收窄到Runner账号、SYSTEM和管理员。
+6. 创建20分钟有效的`iwork-deployment.json`维护标记。
+7. 生成只包含镜像引用和迁移开关的临时Compose覆盖，运行`docker compose config --quiet`。
+8. 使用`up -d --no-build --no-deps iwork alert-worker`，只切换`DKT_iwork`和`DKT_iwork_alert_worker`，不执行`down`，不触碰共享基础设施或物理卷。
+9. 自动验证两个容器healthy、实际镜像引用、`manage.py check --deploy`、容器内HTTP 200和Alert Worker `pong`。
+10. 任一候选验收失败时，用本地回滚标签恢复两个旧镜像，并再次验证镜像引用、应用HTTP、Django检查和Alert Worker；回滚验证失败时状态明确记录为`rollback_failed`。
+11. 无论成功或失败，都在`finally`释放本进程实际创建的维护标记、文件锁和两个Mutex；未取得文件所有权的并发进程不得删除其他部署的锁或维护标记。状态文件保留Run ID、候选镜像、旧镜像ID、迁移备份和最终结果。
+
+### 8.4 当前生产基线与候选镜像限制
+
+2026-08-24只读基线：
+
+| 项目 | 当前生产值 |
+|---|---|
+| 服务器工作区HEAD | `8e4e74a4ba1eb171b3ad509a486716011d2afe80` |
+| `DKT_iwork`配置镜像 / image ID | `iwork-iwork` / `sha256:b9b3410e4b14c79dd58765ef383fedf3c1fa8acb8306df39ae368c4769811125` |
+| `DKT_iwork_alert_worker`配置镜像 / image ID | `iwork-alert-worker` / `sha256:c9d28284e3ce0334477e8873cca31e45213a179f08b2ddd9834c3a52bea093a8` |
+| Compose项目与服务 | `iwork`；`iwork`、`alert-worker` |
+
+阶段2旧GHCR镜像revision为`51c1911e867c7183eef45b66b7fa6bc35ee8d676`，缺少生产已经部署的`96cd508`和`8e4e74a`两次SSE无感续订修复，禁止部署。阶段4实现提交通过纯CI后必须重新发布当前Commit镜像并使用新Digest。
+
+### 8.5 尚未完成的真实验收
+
+- 阶段4实现尚未提交和推送，纯CI运行链接、新GHCR Digest与Release运行链接待生成。
+- `production-iwork` Environment尚未创建；创建后仍没有Required Reviewer保护，这是已接受但必须持续披露的平台风险。
+- 服务器准入脚本尚未按阶段4实现提交SHA安装。
+- 生产`apply=false`真实预检尚未执行。
+- 生产容器尚未替换、重启或重建，数据库和物理卷未发生变更。
+- 真实登录页面、业务API、SSE无感续订、通知SSE及告警投递仍需在候选切换后人工验收；当前自动脚本的HTTP检查不能替代这些认证态验收。
+- 看门狗尚未识别新的`production_deployment`维护标记；部署期间共享恢复Mutex可阻止看门狗和周重启执行恢复，但仍可能产生短暂健康告警。该兼容改造归入阶段6，在此之前作为已知风险观察。
+- 迁移失败时只自动回滚应用镜像，不自动还原数据库。`run_migrations=true`只允许用于已审查的expand/contract兼容迁移；备份用于受控人工恢复，禁止脚本自动覆盖生产数据库。
+
+### 8.6 阶段验收标准
 
 - 部署只影响iwork两个应用容器。
-- 失败能自动恢复到部署前Digest。
+- 候选失败能自动恢复两个部署前本地镜像，并完成回滚后应用复验。
 - SSE自动重连且无持续403或503。
 - 数据库、Redis和历史数据不重建。
-- 看门狗不会在合法维护窗口内误恢复。
-- Actions摘要包含新旧Digest、耗时和验收结果。
+- 看门狗不会在合法部署锁持有期间执行恢复。
+- Actions摘要包含候选Digest、旧镜像ID、部署ID、耗时和验收结果。
+- 生产预检、真实切换、认证态业务验收和至少一次受控回滚证据全部具备后，阶段4才能标记为已完成。
 
-阶段状态：未开始。
+### 8.7 2026-08-24本地实施证据
+
+- `python -m pytest -q tests\test_production_runner_stage3.py tests\test_production_deployment_stage4.py`：16项通过。
+- `python -m pytest tests\ -q`：557项通过；仅保留本机`requests`依赖版本告警，不影响测试结论。
+- Ruff按CI口径检查`iwork`及阶段3/4测试：通过。
+- Windows PowerShell 5.1语法解析：三个生产Runner/部署脚本全部通过。
+- 四个GitHub Actions YAML文件解析：通过。
+- 使用非生产占位密钥执行`docker compose --env-file env\local.env config --quiet`：通过。
+- `git diff --check`：通过。
+- 隔离伪Docker测试已覆盖：只读预检不切换容器、部署前容器基线、双服务成功切换、候选验收失败后双镜像回滚及回滚后应用复验、回滚失败显式报警、迁移前数据库备份与SHA-256、备份ACL、共享恢复锁和Runner准入钩子保留。
+
+阶段状态：进行中。代码、安装器和隔离测试已实现；生产预检、生产切换、真实健康验收和真实回滚尚未执行。
 
 ## 9. 阶段5——Portal高风险受控部署与回滚
 

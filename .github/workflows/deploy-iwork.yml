@@ -1,0 +1,257 @@
+name: iwork controlled production deployment
+run-name: >-
+  iwork ${{ inputs.apply && 'deploy' || 'preflight' }} ·
+  ${{ inputs.expected_revision }} · ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: GHCR镜像Digest（sha256:加64位小写十六进制）
+        required: true
+        type: string
+      expected_revision:
+        description: 镜像OCI revision（40位Commit SHA）
+        required: true
+        type: string
+      apply:
+        description: 执行生产容器切换；关闭时只拉取并验证镜像，不切换容器
+        required: true
+        default: false
+        type: boolean
+      run_migrations:
+        description: 切换时允许新容器执行数据库迁移
+        required: true
+        default: false
+        type: boolean
+      change_description:
+        description: 本次预检或部署说明
+        required: true
+        type: string
+      confirmation:
+        description: 预检输入PREFLIGHT IWORK；部署按是否迁移输入DEPLOY IWORK或DEPLOY IWORK WITH MIGRATIONS
+        required: true
+        type: string
+
+permissions:
+  contents: none
+
+concurrency:
+  group: production-deploy-iwork
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: iwork生产预检与受控部署
+    if: >-
+      github.actor == 'GuChenkano' &&
+      github.ref == 'refs/heads/Keycloak'
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - dkt-prod
+      - iwork
+    environment: production-iwork
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      packages: read
+    env:
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      APPLY: ${{ inputs.apply }}
+      RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+      CHANGE_DESCRIPTION: ${{ inputs.change_description }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\Invoke-IworkProductionDeployment.ps1
+      DEPLOY_SCRIPT_SHA256: 1475674284b4e5a270628976e62f657bb6a5f0dd8ab9141213664c2247679ff3
+    steps:
+      - name: 校验候选镜像并执行预检或部署
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          chcp 65001 | Out-Null
+
+          if ($env:IMAGE_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') {
+              throw '镜像Digest格式无效。'
+          }
+          if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') {
+              throw 'OCI revision格式无效。'
+          }
+          if ($env:EXPECTED_REVISION -cne $env:GITHUB_SHA) {
+              throw "候选镜像revision不是当前批准提交：$env:EXPECTED_REVISION"
+          }
+          if ([String]::IsNullOrWhiteSpace($env:CHANGE_DESCRIPTION)) {
+              throw '变更说明不能为空。'
+          }
+
+          function Assert-SuccessfulWorkflowRun {
+              param(
+                  [Parameter(Mandatory = $true)]
+                  [string]$WorkflowFile,
+
+                  [Parameter(Mandatory = $true)]
+                  [string]$Description
+              )
+
+              $uri = (
+                  "https://api.github.com/repos/$env:GITHUB_REPOSITORY/" +
+                  "actions/workflows/$WorkflowFile/runs" +
+                  "?head_sha=$env:EXPECTED_REVISION&status=completed&per_page=100"
+              )
+              $headers = @{
+                  Authorization = "Bearer $env:GITHUB_TOKEN"
+                  Accept = 'application/vnd.github+json'
+                  'X-GitHub-Api-Version' = '2022-11-28'
+              }
+              try {
+                  $response = Invoke-RestMethod `
+                      -UseBasicParsing `
+                      -Uri $uri `
+                      -Headers $headers `
+                      -Method Get `
+                      -TimeoutSec 30
+              }
+              catch {
+                  throw "$Description运行状态查询失败。"
+              }
+              $successfulRun = @($response.workflow_runs | Where-Object {
+                  $_.conclusion -eq 'success'
+              }) | Select-Object -First 1
+              if (-not $successfulRun) {
+                  throw "没有找到当前提交的成功$Description运行。"
+              }
+          }
+
+          Assert-SuccessfulWorkflowRun -WorkflowFile 'ci.yml' -Description '纯CI'
+          Assert-SuccessfulWorkflowRun -WorkflowFile 'release.yml' -Description 'GHCR发布'
+
+          $mode = if ($env:APPLY -eq 'true') { 'Deploy' } else { 'Preflight' }
+          $expectedConfirmation = if (
+              $mode -eq 'Deploy' -and
+              $env:RUN_MIGRATIONS -eq 'true'
+          ) {
+              'DEPLOY IWORK WITH MIGRATIONS'
+          }
+          elseif ($mode -eq 'Deploy') {
+              'DEPLOY IWORK'
+          }
+          else {
+              'PREFLIGHT IWORK'
+          }
+          if ($env:CONFIRMATION -cne $expectedConfirmation) {
+              throw "确认文本不匹配，预期值为：$expectedConfirmation"
+          }
+
+          if (-not (Test-Path -LiteralPath $env:DEPLOY_SCRIPT_PATH -PathType Leaf)) {
+              throw "服务器部署脚本不存在：$env:DEPLOY_SCRIPT_PATH"
+          }
+          $actualScriptHash = (
+              Get-FileHash -LiteralPath $env:DEPLOY_SCRIPT_PATH -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($actualScriptHash -cne $env:DEPLOY_SCRIPT_SHA256) {
+              throw "服务器部署脚本SHA-256不匹配：$actualScriptHash"
+          }
+
+          $candidateImage = "ghcr.io/guchenkano/iwork@$env:IMAGE_DIGEST"
+          $deploymentRunId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $env:DOCKER_CONFIG = Join-Path `
+              $env:RUNNER_TEMP `
+              "iwork-deploy-docker-config-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $env:DOCKER_CONFIG -Force | Out-Null
+          $basicValue = "$env:GITHUB_ACTOR`:$env:GITHUB_TOKEN"
+          $encodedAuth = [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes($basicValue)
+          )
+          $dockerConfig = @{
+              auths = @{
+                  'ghcr.io' = @{ auth = $encodedAuth }
+              }
+          } | ConvertTo-Json -Depth 4 -Compress
+          [IO.File]::WriteAllText(
+              (Join-Path $env:DOCKER_CONFIG 'config.json'),
+              $dockerConfig,
+              [Text.UTF8Encoding]::new($false)
+          )
+
+          try {
+              docker pull $candidateImage
+              if ($LASTEXITCODE -ne 0) {
+                  throw '候选GHCR镜像拉取失败。'
+              }
+              $labelsJson = docker image inspect `
+                  $candidateImage `
+                  --format '{{json .Config.Labels}}'
+              if ($LASTEXITCODE -ne 0) {
+                  throw '候选镜像OCI标签读取失败。'
+              }
+              $labels = $labelsJson | ConvertFrom-Json
+              $actualRevision = [string]$labels.'org.opencontainers.image.revision'
+              if ($actualRevision -cne $env:EXPECTED_REVISION) {
+                  throw "候选镜像OCI revision不匹配：$actualRevision"
+              }
+
+              $summary = & $env:DEPLOY_SCRIPT_PATH `
+                  -Mode $mode `
+                  -ImageDigest $env:IMAGE_DIGEST `
+                  -ExpectedRevision $env:EXPECTED_REVISION `
+                  -RunId $deploymentRunId `
+                  -Actor $env:GITHUB_ACTOR `
+                  -ChangeDescription $env:CHANGE_DESCRIPTION `
+                  -RunMigrations $env:RUN_MIGRATIONS
+              if ($LASTEXITCODE -ne 0) {
+                  throw "服务器部署脚本失败，exit=$LASTEXITCODE"
+              }
+
+              $result = ($summary -join "`n") | ConvertFrom-Json
+              @(
+                  '## iwork生产部署结果'
+                  ''
+                  "- 模式：$mode"
+                  "- 镜像：$candidateImage"
+                  "- OCI revision：$env:EXPECTED_REVISION"
+                  "- 数据库迁移：$env:RUN_MIGRATIONS"
+                  "- 部署ID：``$deploymentRunId``"
+                  "- 旧Web镜像ID：``$($result.PreviousWebImageId)``"
+                  "- 旧Alert Worker镜像ID：``$($result.PreviousAlertWorkerImageId)``"
+                  "- 耗时：$($result.DurationSeconds)秒"
+                  "- 结果：``$($result.Result)``"
+                  "- 状态文件：``$($result.StateFile)``"
+              ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          }
+          catch {
+              $stateFile = "D:\DM\cicd-state\iwork\$deploymentRunId.json"
+              $failureSummary = @(
+                  '## iwork生产部署失败'
+                  ''
+                  "- 模式：$mode"
+                  "- 镜像：$candidateImage"
+                  "- OCI revision：$env:EXPECTED_REVISION"
+                  "- 部署ID：``$deploymentRunId``"
+              )
+              if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+                  $failureState = Get-Content -LiteralPath $stateFile -Raw |
+                      ConvertFrom-Json
+                  $failureSummary += @(
+                      "- 状态：``$($failureState.Status)``"
+                      "- 旧Web镜像ID：``$($failureState.PreviousWebImageId)``"
+                      "- 旧Alert Worker镜像ID：``$($failureState.PreviousAlertWorkerImageId)``"
+                      "- 自动回滚成功：$($failureState.RollbackSucceeded)"
+                      "- 状态文件：``$stateFile``"
+                  )
+              }
+              else {
+                  $failureSummary += '- 状态：服务器部署脚本创建状态文件前失败'
+              }
+              $failureSummary |
+                  Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+              throw
+          }
+          finally {
+              Remove-Variable basicValue, encodedAuth, dockerConfig -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $env:DOCKER_CONFIG -Recurse -Force -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
+          }

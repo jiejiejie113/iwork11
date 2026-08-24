@@ -23,10 +23,17 @@ if [ "${IWORK_CONTAINER_ROLE:-web}" = "alert-worker" ]; then
     IWORK_PROCESS_ROLE=celery exec celery -A iwork worker -l info -P solo -Q alerts -n "alerts@%h"
 fi
 
-# Run database migrations
-echo "Running database migrations..."
-IWORK_PROCESS_ROLE=management python manage.py migrate --database=default --noinput
-IWORK_PROCESS_ROLE=management python manage.py migrate --database=iwork_local --noinput
+# 执行数据库迁移
+if [ "${IWORK_RUN_MIGRATIONS:-true}" = "true" ]; then
+    echo "正在执行数据库迁移..."
+    IWORK_PROCESS_ROLE=management python manage.py migrate --database=default --noinput
+    IWORK_PROCESS_ROLE=management python manage.py migrate --database=iwork_local --noinput
+elif [ "${IWORK_RUN_MIGRATIONS}" = "false" ]; then
+    echo "根据部署策略跳过数据库迁移"
+else
+    echo "IWORK_RUN_MIGRATIONS配置值无效：${IWORK_RUN_MIGRATIONS}" >&2
+    exit 64
+fi
 
 # Collect static files
 echo "Collecting static files..."

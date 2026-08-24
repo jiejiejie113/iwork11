@@ -1,1 +1,3 @@
 *.sh text eol=lf
+scripts/Install-IworkProductionDeployment.ps1 text eol=lf
+scripts/Invoke-IworkProductionDeployment.ps1 text eol=lf
