@@ -872,7 +872,6 @@ createApp({
                 if (eventSource !== source) return;
                 expectedLeaseReconnect = true;
                 clearReconnectWarning();
-                wsStatus.value = '正在续订连接...';
             });
 
             source.onerror = () => {

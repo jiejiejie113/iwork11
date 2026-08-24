@@ -614,8 +614,9 @@ def test_sse_lease_renewal_delays_disconnection_warning_until_reconnect_fails():
         1,
     )[1].split("});", 1)[0]
     assert 'expectedLeaseReconnect = true;' in lease_handler
-    assert "wsStatus.value = '正在续订连接...';" in lease_handler
+    assert 'wsStatus.value' not in lease_handler
     assert 'wsConnected.value = false;' not in lease_handler
+    assert '正在续订连接' not in DASHBOARD_TEMPLATE
 
     assert 'source.onopen = () => {' in DASHBOARD_TEMPLATE
     open_handler = DASHBOARD_TEMPLATE.split('source.onopen = () => {', 1)[1]
