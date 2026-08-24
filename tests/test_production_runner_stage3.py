@@ -73,6 +73,8 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "d59123a43003e357b0805b5d0f611d0bd2f65ab67d51bd070dd4e7a0f685c162" in content
     assert "RegistrationTokenFromStdin" in content
     assert "[Console]::In.ReadLine()" in content
+    assert "ResumeConfiguredRunner" in content
+    assert "Configured runner cannot be resumed because .runner is missing" in content
     assert "--unattended" in content
     assert "--replace" in content
     assert r"D:\DM\actions-runner" in content

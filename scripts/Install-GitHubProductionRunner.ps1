@@ -4,8 +4,9 @@ param(
     [ValidateSet('iwork', 'portal')]
     [string]$RunnerRole,
 
-    [Parameter(Mandatory = $true)]
     [switch]$RegistrationTokenFromStdin,
+
+    [switch]$ResumeConfiguredRunner,
 
     [string]$InstallRoot = 'D:\DM\actions-runner',
     [string]$LockRoot = 'D:\DM\cicd-locks',
@@ -207,7 +208,6 @@ exit $runnerExitCode
 Assert-Administrator
 Assert-ExpectedIdentity
 $config = $ROLE_CONFIG[$RunnerRole]
-$registrationToken = Get-RegistrationToken
 
 $installDirectory = Join-Path $InstallRoot $RunnerRole
 $packageDirectory = Join-Path $StateRoot 'packages'
@@ -219,47 +219,54 @@ $statePath = Join-Path $StateRoot "$RunnerRole-runner.log"
 foreach ($directory in @($InstallRoot, $LockRoot, $StateRoot, $PolicyRoot, $packageDirectory)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
-if (Test-Path -LiteralPath $installDirectory) {
-    throw "Runner installation directory already exists: $installDirectory"
+$runnerConfigPath = Join-Path $installDirectory '.runner'
+if ($ResumeConfiguredRunner) {
+    if (-not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)) {
+        throw "Configured runner cannot be resumed because .runner is missing: $installDirectory"
+    }
 }
-
-Get-VerifiedRunnerPackage -PackagePath $packagePath
-try {
-    New-Item -ItemType Directory -Path $installDirectory | Out-Null
-    Expand-Archive -LiteralPath $packagePath -DestinationPath $installDirectory
-
-    Push-Location $installDirectory
+else {
+    if (Test-Path -LiteralPath $installDirectory) {
+        throw "Runner installation directory already exists: $installDirectory"
+    }
+    $registrationToken = Get-RegistrationToken
+    Get-VerifiedRunnerPackage -PackagePath $packagePath
     try {
-        & .\config.cmd `
-            --unattended `
-            --url $config.RepositoryUrl `
-            --token $registrationToken `
-            --name $config.RunnerName `
-            --labels $config.Labels `
-            --work $WORK_DIRECTORY `
-            --replace
-        if ($LASTEXITCODE -ne 0) {
-            throw "Runner registration failed with exit code $LASTEXITCODE"
+        New-Item -ItemType Directory -Path $installDirectory | Out-Null
+        Expand-Archive -LiteralPath $packagePath -DestinationPath $installDirectory
+
+        Push-Location $installDirectory
+        try {
+            & .\config.cmd `
+                --unattended `
+                --url $config.RepositoryUrl `
+                --token $registrationToken `
+                --name $config.RunnerName `
+                --labels $config.Labels `
+                --work $WORK_DIRECTORY `
+                --replace
+            if ($LASTEXITCODE -ne 0) {
+                throw "Runner registration failed with exit code $LASTEXITCODE"
+            }
+        }
+        finally {
+            $registrationToken = $null
+            Pop-Location
+        }
+        if (-not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)) {
+            throw 'Runner registration did not create the .runner configuration file.'
         }
     }
-    finally {
+    catch {
         $registrationToken = $null
-        Pop-Location
+        if (
+            (Test-Path -LiteralPath $installDirectory -PathType Container) -and
+            -not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)
+        ) {
+            Remove-Item -LiteralPath $installDirectory -Recurse -Force
+        }
+        throw
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $installDirectory '.runner') -PathType Leaf)) {
-        throw 'Runner registration did not create the .runner configuration file.'
-    }
-}
-catch {
-    $registrationToken = $null
-    $runnerConfigPath = Join-Path $installDirectory '.runner'
-    if (
-        (Test-Path -LiteralPath $installDirectory -PathType Container) -and
-        -not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)
-    ) {
-        Remove-Item -LiteralPath $installDirectory -Recurse -Force
-    }
-    throw
 }
 
 Write-AdmissionHook -Config $config -HookPath $hookPath
