@@ -93,6 +93,7 @@ static/
 # AI 工具
 .opencode/
 .superpowers/
+.reasonix/
 .claude/settings.local.json
 
 # 本地数据库文件
