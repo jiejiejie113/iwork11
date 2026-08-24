@@ -238,7 +238,7 @@ if ($ResumeConfiguredRunner) {
         $_.Name -eq 'Runner.Listener.exe' -and
         $_.ExecutablePath -eq $listenerPath
     }
-    if ($existingTask -or $existingListeners) {
+    if (($existingTask -and $existingTask.State -ne 'Ready') -or $existingListeners) {
         throw (
             'Resume refused: stop the task and listeners only after an external ' +
             'GitHub busy=false check.'

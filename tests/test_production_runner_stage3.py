@@ -76,6 +76,7 @@ def test_runner_installer_uses_pinned_package_and_s4u_policy_hook() -> None:
     assert "ResumeConfiguredRunner" in content
     assert "Configured runner cannot be resumed because .runner is missing" in content
     assert "Resume refused: stop the task and listeners only after an external" in content
+    assert "$existingTask.State -ne 'Ready'" in content
     assert "--unattended" in content
     assert "--replace" in content
     assert r"D:\DM\actions-runner" in content
