@@ -136,8 +136,13 @@ jobs:
               if ($LASTEXITCODE -ne 0) {
                   throw "GHCR digest pull failed"
               }
-              $revision = docker image inspect $env:IMAGE_REF --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
-              if ($LASTEXITCODE -ne 0 -or $revision.Trim() -ne $env:EXPECTED_REVISION) {
+              $labelsJson = docker image inspect $env:IMAGE_REF --format '{{json .Config.Labels}}'
+              if ($LASTEXITCODE -ne 0) {
+                  throw "OCI labels inspect failed"
+              }
+              $labels = $labelsJson | ConvertFrom-Json
+              $revision = $labels.'org.opencontainers.image.revision'
+              if ([String]::IsNullOrWhiteSpace($revision) -or $revision.Trim() -ne $env:EXPECTED_REVISION) {
                   throw "OCI revision mismatch"
               }
               "Verified immutable image: $env:IMAGE_REF"

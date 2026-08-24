@@ -44,6 +44,9 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
     assert "[Convert]::ToBase64String" in content
     assert "WriteAllText" in content
     assert "org.opencontainers.image.revision" in content
+    assert "'{{json .Config.Labels}}'" in content
+    assert "ConvertFrom-Json" in content
+    assert "{{ index .Config.Labels" not in content
     assert (
         "ghcr.io/guchenkano/iwork@sha256:"
         "2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c"
