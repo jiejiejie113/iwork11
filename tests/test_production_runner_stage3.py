@@ -40,7 +40,9 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
     assert r"DONGMING\shuju" in content
     assert "DOCKER_CONFIG" in content
     assert "RUNNER_TEMP" in content
-    assert "--password-stdin" in content
+    assert "config.json" in content
+    assert "[Convert]::ToBase64String" in content
+    assert "WriteAllText" in content
     assert "org.opencontainers.image.revision" in content
     assert (
         "ghcr.io/guchenkano/iwork@sha256:"
@@ -56,6 +58,7 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
         "actions/checkout",
         "contents: write",
         "packages: write",
+        "docker login",
         "dkt-secrets.env",
         "docker compose",
         "docker run",

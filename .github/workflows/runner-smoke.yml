@@ -120,11 +120,18 @@ jobs:
           chcp 65001 | Out-Null
           $env:DOCKER_CONFIG = Join-Path $env:RUNNER_TEMP "docker-config-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Path $env:DOCKER_CONFIG -Force | Out-Null
-          try {
-              $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
-              if ($LASTEXITCODE -ne 0) {
-                  throw "GHCR login failed"
+          $basicValue = "$env:GITHUB_ACTOR`:$env:GITHUB_TOKEN"
+          $encodedAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($basicValue))
+          $dockerConfig = @{
+              auths = @{
+                  "ghcr.io" = @{
+                      auth = $encodedAuth
+                  }
               }
+          } | ConvertTo-Json -Depth 4 -Compress
+          $configPath = Join-Path $env:DOCKER_CONFIG "config.json"
+          [IO.File]::WriteAllText($configPath, $dockerConfig, [Text.UTF8Encoding]::new($false))
+          try {
               docker pull $env:IMAGE_REF
               if ($LASTEXITCODE -ne 0) {
                   throw "GHCR digest pull failed"
@@ -136,6 +143,6 @@ jobs:
               "Verified immutable image: $env:IMAGE_REF"
           }
           finally {
-              docker logout ghcr.io 2>$null | Out-Null
+              Remove-Variable basicValue, encodedAuth, dockerConfig -ErrorAction SilentlyContinue
               Remove-Item -LiteralPath $env:DOCKER_CONFIG -Recurse -Force -ErrorAction SilentlyContinue
           }
