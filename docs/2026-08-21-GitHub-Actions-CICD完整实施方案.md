@@ -61,14 +61,14 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-24，阶段0—2已经完成：两仓库纯CI已跑绿，生产Runner身份可行性已验证，三个GHCR不可变镜像已发布并按Digest复验。阶段3—8尚未开始；当前进度按阶段计为3/9，不再使用缺少统一权重依据的主观百分比。
+截至2026-08-24，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4—8尚未开始；当前完成进度按阶段计为4/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
 | 0 | 基线与纯CI | 已完成 | 两仓库GitHub托管Runner流水线已跑绿 |
 | 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
-| 3 | 生产Self-hosted Runner安装 | 未开始 | 阶段1身份结论和阶段2不可变镜像已就绪 |
+| 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 未开始 | 不允许提前自动部署 |
 | 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
@@ -444,7 +444,47 @@ portal: self-hosted, windows, dkt-prod, portal
 - 无权运行来自PR的代码。
 - 不修改现有生产仓库工作区。
 
-阶段状态：未开始。
+### 7.4 2026-08-24实际实施记录
+
+已完成：
+
+- iwork Runner安装在`D:\DM\actions-runner\iwork`，名称为`DTDSERVER-iwork-01`，标签为`dkt-prod,iwork`。
+- Portal Runner安装在`D:\DM\actions-runner\portal`，名称为`DTDSERVER-portal-01`，标签为`dkt-prod,portal`。
+- 两个Runner均使用官方Windows x64 `2.336.0`，安装包SHA-256为`d59123a43003e357b0805b5d0f611d0bd2f65ab67d51bd070dd4e7a0f685c162`。
+- 计划任务为`\DITU\GitHub-Runner-iwork`和`\DITU\GitHub-Runner-portal`，使用`DONGMING\shuju`、S4U、最高权限运行，并包含系统启动、用户登录和每分钟重复恢复触发器。
+- 包装器在Docker可用前最长等待30分钟；Runner Listener意外正常退出时返回非零退出码，由计划任务最迟约一分钟恢复。
+- 自动恢复实测通过：iwork Listener从PID `8588`恢复为`25588`；Portal Listener从PID `3700`恢复为`25048`，最终各只有一个Listener。
+- 2026-08-24再次只读复核：两个Listener仍分别为PID `25588`和`25048`，两个计划任务均为`Running`，Docker共有16个容器且`unhealthy=0`。
+- Runner使用独立工作目录，没有覆盖生产代码目录。`D:\DM\iwork`保持干净；`D:\DM\DTD_nginx`原有工作区变更保持原样，没有被Runner清理或覆盖。
+- 两仓库最终只读验收Workflow已经提交并推送：iwork为`0d92ebb71dace965eb135a0df59007f869d98a0f`，Portal为`3bc78f99e48c8b28d5f974d9bf1fc76d7ebd22ab`。
+- 两仓库GitHub托管Runner CI均成功：iwork运行`32687841745`成功，Portal运行`32686181241`成功。
+- 生产Runner准入钩子在Job步骤执行前固定校验`workflow_dispatch`、仓库、分支、Workflow路径和actor `GuChenkano`。
+- 仓库Actions策略只允许GitHub官方Action并要求固定完整Commit SHA；Runner不保存个人PAT，注册Token仅在注册时短暂使用。
+
+问题定位与最终解决：
+
+- iwork只读验收运行`32687141318`和Portal只读验收运行`32687133658`均已通过身份、准入钩子、独立工作区和Docker检查。
+- 两次运行均在登录GHCR时失败，原始错误为`Get "https://ghcr.io/v2/": denied: denied`。
+- 初始原因包含GHCR Package尚未向对应仓库授予GitHub Actions访问权限，不是Runner、Docker或生产应用故障。
+- 2026-08-24 11:56本机`gh auth status`确认`GuChenkano`令牌失效，GitHub API返回`401 Unauthorized`；12:03完成设备授权并增加`write:packages` Scope后，三个私有包均可读取且已关联预期仓库。
+- 授权恢复后重新运行iwork `32688946753`和Portal `32688944735`，身份、准入钩子、独立工作区和Docker检查再次通过，但`docker login ghcr.io`仍返回`denied: denied`，证明本机CLI授权不是生产Workflow失败原因。
+- 用户完成Package网页设置后再次运行iwork `32694845677`和Portal `32694846959`，两次Job日志均明确显示`GITHUB_TOKEN Permissions: Packages: read`，但GHCR登录仍被拒绝；等待约45秒后单独重跑iwork `32694985097`仍失败，已排除仓库默认Workflow Token权限和短暂传播延迟。
+- GitHub官方REST OpenAPI只提供包和版本的读取、删除、恢复接口；公开GraphQL Mutation只发现`deletePackageVersion`，没有修改个人GHCR Package Actions访问关系的接口，因此最终通过Package网页的`Manage Actions access`完成授权。
+- 三个私有Package均向对应仓库授予`Write`角色：发布Job仍用`packages: write`，生产验收与未来部署Job继续收窄为`packages: read`。没有使用具备删除和权限管理能力的`Admin`，Package也未改为公开。
+- 授权完成后确认Workflow短期`GITHUB_TOKEN`可访问GitHub API并可申请具体仓库的GHCR pull Scope；但Docker对通用`/v2/`的`docker login`探测仍返回`denied`。最终不再依赖通用登录探测，而是在`RUNNER_TEMP`内生成仅本次Job使用的隔离Docker配置，直接按完整Digest拉取具体仓库镜像，并在`finally`中删除临时配置。
+- Windows PowerShell 5.1会破坏Docker Go模板中的嵌套引号，导致OCI revision读取失败；Workflow改为读取`{{json .Config.Labels}}`并使用`ConvertFrom-Json`取得`org.opencontainers.image.revision`，未降低校验强度。
+- 用于定位授权边界的`[DEBUG-ghcr-auth]`步骤在问题解决后已从iwork Workflow删除，并增加契约测试防止重新引入；正式短期令牌、隔离Docker配置、固定Digest和revision校验均保留。
+
+最终验收证据：
+
+- iwork首次完整只读验收运行[`32696526599`](https://github.com/GuChenkano/iwork/actions/runs/32696526599)成功，固定Digest拉取和OCI revision均通过。
+- Portal最终只读验收运行[`32697834827`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32697834827)成功，用时1分15秒，Portal与oauth2-proxy两个固定Digest均成功拉取并通过OCI revision校验。
+- 清理临时诊断后的iwork运行[`32698068926`](https://github.com/GuChenkano/iwork/actions/runs/32698068926)成功，用时16秒，证明正式验收链路不依赖诊断步骤。
+- 运行后只读复核服务器：iwork Listener PID为`25588`，Portal Listener PID为`25048`，各只有一个实例；两个计划任务均为`Running`。
+- Docker共有16个运行容器，14个配置健康检查的容器全部为`healthy`，其余2个未配置healthcheck但保持运行；没有启动、替换或重建生产容器。
+- `D:\DM\iwork`工作区干净；`D:\DM\DTD_nginx`只保留既有未跟踪的`docker/certs/`和`docs/待办方案/2026-08-21-DITU-Portal证书重签实施计划.md`，Runner没有清理或覆盖生产工作区。
+
+阶段状态：已完成。阶段4尚未开始。
 
 ## 8. 阶段4——iwork受控部署与自动回滚
 
@@ -661,23 +701,21 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-下一步只执行阶段3：生产Self-hosted Runner安装。
+阶段3已经完成且不存在外部授权阻断。下一步是阶段4“iwork受控部署与自动回滚”，但本次不自动实施阶段4。
 
-阶段3允许的实施范围：
+阶段4开始前必须先形成可审查的最小实施切片：
 
-- 使用阶段1验证通过的`DONGMING\shuju`身份安装iwork和Portal两个独立Runner。
-- 使用独立目录，不读写或清理`D:\DM\iwork`和`D:\DM\DTD_nginx`生产工作区。
-- 使用最高权限计划任务启动Runner包装器，包装器等待Docker API可用后再启动Runner。
-- 只验证Runner注册、Idle状态、自动恢复和私有GHCR镜像最小拉取能力。
-- 验证Runner不能执行PR代码，不持有个人PAT，不具备修改仓库或GitHub设置的权限。
+1. 盘点iwork当前生产Compose、部署脚本、看门狗维护标记和服务器级部署锁协议，只读记录现状。
+2. 明确Workflow输入只接受固定镜像Digest、目标环境、迁移开关和变更说明，不接受任意Shell命令。
+3. 先实现“预检与生成部署计划”路径，验证Digest来源、CI/release状态、Compose解析、当前容器和回滚Digest，不替换生产容器。
+4. 再实现只更新`DKT_iwork`和`DKT_iwork_alert_worker`的部署与健康检查；MySQL、Redis、PostgreSQL、Keycloak和共享卷必须排除。
+5. 设计可重复的失败注入，在隔离或明确批准的维护窗口验证自动恢复旧Digest，禁止通过破坏数据库或删除卷测试回滚。
+6. 阶段4代码、测试和预检通过后，先更新本文档为“实施中”；只有真实部署和回滚验收均有证据后才标记“已完成”。
 
-阶段3完成前禁止：
+阶段4继续沿用以下边界：
 
-- 建设或触发阶段4 iwork生产部署Workflow。
-- 建设或触发阶段5 Portal生产部署Workflow。
-- 在生产服务器上用GHCR镜像替换任何当前运行容器。
-- 修改Docker Desktop的运行身份或使用SYSTEM直接执行Docker部署。
-- 使用`latest`或其他可漂移标签作为生产部署依据。
-- 把生产密钥、环境文件、证书、SQLite或数据库备份放入Runner工作目录、镜像或Actions产物。
-
-阶段3完成后，Agent必须在同一阶段提交中写入Runner注册、计划任务恢复、GHCR拉取、权限边界和生产工作区未受影响的实际证据，再决定是否进入阶段4。
+- Package保持私有，发布Job使用`packages: write`，生产部署Job使用`packages: read`。
+- 生产Runner不保存个人PAT，不运行PR代码，不读取或提交`D:\DM\dkt-secrets.env`。
+- 生产镜像只允许完整Digest，不允许`latest`或其他可漂移标签。
+- 不清理或重置`D:\DM\iwork`和`D:\DM\DTD_nginx`工作区。
+- 未获得明确部署授权前，只能建设、测试和执行只读预检，不能替换生产容器。
