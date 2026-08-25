@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5—8尚未开始。当前已完成阶段为5/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5已进入实施中，候选代码和本地安全验收已完成，但Actions、生产预检、真实切换、六应用验收和回滚演练证据尚未形成。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -70,7 +70,7 @@
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
-| 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
+| 5 | Portal受控部署与回滚 | 进行中 | 候选实现和本地安全验收已完成；生产与真实业务验收待完成 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
@@ -621,6 +621,8 @@ portal: self-hosted, windows, dkt-prod, portal
 
 Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施。
 
+当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，安全审查加固提交为`b59defc`。当前尚无这两个提交对应的GitHub Actions、生产预检、真实切换或回滚证据，因此本阶段只能标记为“进行中”。
+
 ### 9.1 部署前基线
 
 - 记录Portal、Authorizer、oauth2-proxy和Nginx当前镜像Digest。
@@ -640,6 +642,8 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 7. 验证登录、退出、Remote-User、Remote-Groups和应用授权。
 8. 失败时恢复旧Nginx配置和旧镜像Digest。
 
+当前候选版本没有Nginx配置变更，也不执行数据库迁移：脚本会导出当前Nginx有效配置、执行`nginx -t`和graceful reload，并通过`makemigrations --check --dry-run`及`migrate --check`拒绝未同步迁移。由于没有候选Nginx配置或数据库写入，本轮不为形式验收制造配置替换或数据库备份。后续若部署包含Nginx配置或数据库迁移，必须先增加候选配置原子替换/恢复以及经批准的数据库备份流程，否则fail-closed。
+
 首次自动部署不得修改：
 
 - Keycloak Realm和Client。
@@ -656,7 +660,11 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 - 回滚演练通过。
 - 不影响Keycloak用户、组和客户端关系。
 
-阶段状态：未开始。
+每项验收必须记录Actions运行链接、Commit SHA、两个镜像Digest、生产状态文件和具体结果。“真实登录后可用”必须覆盖新旧Portal入口、OIDC登录/退出、Remote-User、Remote-Groups、权限拒绝页及六个应用的页面、API和静态资源，不能以302或容器healthy代替。若无法取得有效浏览器会话，必须明确记录人工验收阻断或由用户作出风险豁免。
+
+阶段5已经实现Portal单仓库部署Mutex、Docker恢复Mutex、共享锁文件和Portal维护标记，作为本阶段局部保护。跨仓库统一锁协议、看门狗消费Portal维护标记、周重启协调、锁超时接管和并发异常验收仍属于阶段6，不得据此提前标记阶段6完成。
+
+阶段状态：进行中。候选实现和本地安全验收已完成；Actions、生产预检、真实切换、六应用验收和回滚演练待完成。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
@@ -790,21 +798,15 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段3已经完成且不存在外部授权阻断。下一步是阶段4“iwork受控部署与自动回滚”，但本次不自动实施阶段4。
+阶段4已经完成。下一步继续阶段5“Portal高风险受控部署与回滚”：
 
-阶段4开始前必须先形成可审查的最小实施切片：
+1. 提交并推送Portal阶段5 Workflow、固定部署脚本、准入安装器和契约测试，等待同一Commit纯CI成功。
+2. 手工发布同一Commit的Portal和oauth2-proxy不可变GHCR镜像，记录完整Digest并复验OCI revision。
+3. Runner空闲时，以`DONGMING\shuju`提升权限重新运行准入安装器，固定新Commit和部署脚本SHA-256；不得读取或输出中央密钥。
+4. 先执行`apply=false`预检，校验Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选和回滚基线，不替换生产容器。
+5. 预检成功后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
+6. 完成新旧入口、OIDC登录/退出、Remote身份头、权限拒绝页和六个应用真实业务验收。
+7. 正式切换稳定后只执行一次受控回滚演练；一轮失败立即停止并分析，不删除演练状态文件重复执行。
+8. 只有Actions、生产切换、真实业务和回滚证据齐全后，才把阶段5更新为“已完成”；否则保持“进行中”并列出剩余项。
 
-1. 盘点iwork当前生产Compose、部署脚本、看门狗维护标记和服务器级部署锁协议，只读记录现状。
-2. 明确Workflow输入只接受固定镜像Digest、目标环境、迁移开关和变更说明，不接受任意Shell命令。
-3. 先实现“预检与生成部署计划”路径，验证Digest来源、CI/release状态、Compose解析、当前容器和回滚Digest，不替换生产容器。
-4. 再实现只更新`DKT_iwork`和`DKT_iwork_alert_worker`的部署与健康检查；MySQL、Redis、PostgreSQL、Keycloak和共享卷必须排除。
-5. 设计可重复的失败注入，在隔离或明确批准的维护窗口验证自动恢复旧Digest，禁止通过破坏数据库或删除卷测试回滚。
-6. 阶段4代码、测试和预检通过后，先更新本文档为“实施中”；只有真实部署和回滚验收均有证据后才标记“已完成”。
-
-阶段4继续沿用以下边界：
-
-- Package保持私有，发布Job使用`packages: write`，生产部署Job使用`packages: read`。
-- 生产Runner不保存个人PAT，不运行PR代码，不读取或提交`D:\DM\dkt-secrets.env`。
-- 生产镜像只允许完整Digest，不允许`latest`或其他可漂移标签。
-- 不清理或重置`D:\DM\iwork`和`D:\DM\DTD_nginx`工作区。
-- 未获得明确部署授权前，只能建设、测试和执行只读预检，不能替换生产容器。
+阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
