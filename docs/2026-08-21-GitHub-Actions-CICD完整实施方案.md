@@ -623,7 +623,7 @@ portal: self-hosted, windows, dkt-prod, portal
 
 Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施。
 
-当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。唯一一次回滚演练又暴露动态镜像标签中的PowerShell变量插值错误，由`5076646db2c4fe233a97756893551da7c7802fc9`修复。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。最新提交的本地目标测试、全量测试、Ruff、PowerShell语法、Actions YAML和`git diff --check`均通过；CI、GHCR发布、精确Digest Runner smoke及迁移后的生产预检也已成功。由于一次性回滚演练已失败且审计标记不得删除或重写，最终切换仍等待风险接受或新的受控回退设计，本阶段保持“进行中”。
+当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和版本化的一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。首次演练暴露动态镜像标签中的PowerShell变量插值错误，由`5076646db2c4fe233a97756893551da7c7802fc9`修复；修复后重跑门禁由`87ce31920aef9ac8cd11b6c64a6c42a5dfd71a99`实现。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。最新提交的本地目标测试、全量测试、Ruff、PowerShell语法、Actions YAML和`git diff --check`均通过；CI、GHCR发布、精确Digest Runner smoke及迁移后的生产预检也已成功。修复后唯一一次重跑在切换入口发现生产Compose项目名不一致并失败，审计记录已永久保留；最终切换等待新的显式风险授权和版本化恢复设计，本阶段保持“进行中”。
 
 ### 9.1 部署前基线
 
@@ -729,6 +729,21 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 2. 用户明确修改阶段5验收标准并接受“没有成功生产回滚演练证据”的剩余风险，授权执行最终普通切换；即使切换和业务验收成功，文档也必须标记为“带风险例外完成”，不能表述为回滚演练通过。
 
 在上述决策产生前，本阶段不得标记为完成，也不执行最终生产切换。
+
+### 9.7 2026-08-25修复后重跑结果与新阻断
+
+用户明确批准保留首次失败证据，并允许对`32821504238-1`执行唯一一次修复后回滚演练重跑。实施和结果如下：
+
+- Portal仓库候选提交为`87ce31920aef9ac8cd11b6c64a6c42a5dfd71a99`；CI运行[`32827003935`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32827003935)和GHCR发布运行[`32827173871`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32827173871)成功。
+- Portal镜像Digest为`sha256:9007bbcfc86794be40b173d8c2b5adc184f11c45a43ab27300bcea31330a6a69`；oauth2-proxy镜像Digest为`sha256:33edf5e00d9b6bb6e0d84b401ac38e5b59032dc6044e879306432c665f67cee0`；固定部署脚本SHA-256为`e7b897f89cd8267022520e90c6daae34eefaff2e33376024f3c2e21dedf92c35`。
+- 服务器仓库以`--ff-only`从`5076646...`快进到`87ce319...`，原有未跟踪`docker/certs/`和证书待办文档保持不变。生产准入重新固定到该提交和脚本哈希。
+- 精确Digest Runner smoke运行[`32827603496`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32827603496)成功；`apply=false`预检运行[`32827734316`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32827734316)成功，状态收据为`preflight_passed`，候选容器、部署锁和维护标记均已清理。
+- 唯一一次修复后重跑运行[`32827854376`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32827854376)失败。不可覆盖的`rollback-drill-v2.json`记录`RunId=32827854376-1`和`Status=failed`；运行收据`32827854376-1.json`保守记录`Status=rollback_failed`和`RollbackSucceeded=false`。v1、原运行收据和v2均不得删除、覆盖或伪造成功。
+- 失败根因不是候选镜像或应用健康，而是部署脚本把Compose项目名固定为`dkt-keycloak`，生产现有Portal、Authorizer和oauth2-proxy容器的实际`com.docker.compose.project`均为`docker`。使用另一个项目执行`compose up`时无法接管相同的固定`container_name`，正式切换命令和自动恢复命令均以退出码1结束。
+- 脚本在调用`compose up`之前已把`switchAttempted`置为真，因此收据按严格失败语义写成`rollback_failed`；但Docker证据确认三个生产容器ID、镜像ID和启动时间与演练前完全一致，候选容器不存在，Keycloak和Nginx容器也未变化。即本轮没有实际替换生产容器，也没有发生需要恢复的数据或基础设施变更。
+- 失败后只读复验确认Portal、Authorizer和oauth2-proxy均为`running/healthy`；Nginx内部健康检查成功；OIDC issuer仍为`https://auth.dituportal.dongming.local/realms/ditu`；新Portal未登录返回302并使用新认证域名与新回调；旧Portal返回307到新Portal。
+
+当前阻断：依据“修复后重跑只允许一次，失败立即停止”的审计规则，不能删除v2、不能第三次触发演练，也不能绕过`Assert-SuccessfulDrillEvidence`执行最终普通部署。继续阶段5需要用户另行明确授权一个新的版本化恢复方案：先修正并验证Compose项目归属，再以新的v3状态文件绑定v1、v2及两个运行收据，且只能再执行一次；或者明确接受没有成功回滚演练证据的风险例外并调整验收标准。当前不采用后者。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
