@@ -621,7 +621,7 @@ portal: self-hosted, windows, dkt-prod, portal
 
 Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施。
 
-当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`，最终标准与规格双轴审查均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。本地Django 97项测试通过（跳过2项），阶段测试36项通过，Ruff、PowerShell语法、Actions YAML、Compose解析和固定脚本哈希校验通过。当前尚无最终提交对应的GitHub Actions、生产预检、真实切换或回滚证据，因此本阶段只能标记为“进行中”。
+当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。本地Django 97项测试通过（跳过2项），离线配置与阶段测试113项通过（跳过2项，另有39个subtests），Ruff、PowerShell语法、Actions YAML和固定脚本哈希校验通过。最新Commit的CI、GHCR发布和Runner smoke已经成功，但生产预检被既有未应用数据库迁移fail-closed阻断，尚未执行真实切换或回滚演练，因此本阶段仍标记为“进行中”。
 
 ### 9.1 部署前基线
 
@@ -664,7 +664,19 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 阶段5已经实现Portal单仓库部署Mutex、Docker恢复Mutex、共享锁文件和Portal维护标记，作为本阶段局部保护。跨仓库统一锁协议、看门狗消费Portal维护标记、周重启协调、锁超时接管和并发异常验收仍属于阶段6，不得据此提前标记阶段6完成。
 
-阶段状态：进行中。候选实现和本地安全验收已完成；Actions、生产预检、真实切换、六应用验收和回滚演练待完成。
+### 9.4 2026-08-25真实Runner与生产预检证据
+
+- 首轮预检运行[`32804677391`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32804677391)在固定部署脚本真正启动前失败。根因是Workflow将`Generic.List[object]`直接splat给Windows PowerShell 5.1，`-Mode`被错误绑定为参数值；没有候选容器、生产切换、锁或维护标记残留。
+- `cdb8bb29622e2d5cce43391b6e8ed65861b24d1f`修复Windows PowerShell 5.1不能将`Generic.List[object]`直接作为参数列表展开的问题，改用命名参数Hashtable splatting；CI运行[`32805144756`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32805144756)和GHCR发布运行[`32805275403`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32805275403)成功。
+- 首次精确Digest smoke运行[`32805447403`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32805447403)在`Set up runner`阶段被旧`ApprovedHeadSha=5f96232...`拒绝，验证强SHA准入确实fail-closed。管理员重新固定`cdb8bb2...`后，smoke运行[`32805565960`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32805565960)成功。
+- 预检运行[`32805679504`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32805679504)在生产切换前失败。根因是候选Compose参数数组把`$ComposeServices`作为嵌套数组元素传入Windows PowerShell 5.1，Docker未收到三个独立服务名；状态收据为`failed_before_switch`，没有候选容器、生产切换、部署锁、维护标记或临时Docker认证目录残留。
+- `473d6ece26c0374a8753dcb51206724d97f4d143`改为逐项展开候选服务参数，并增加Windows PowerShell 5.1动态回归测试。CI运行[`32806376250`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32806376250)、GHCR发布运行[`32806504608`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32806504608)和精确Digest smoke运行[`32806644095`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32806644095)均成功。
+- 当前Portal镜像Digest为`sha256:d4a9e3b82db6952af730378e1c0c91013faf69dd98c7a0c82c64b486df42cd46`；oauth2-proxy镜像Digest为`sha256:2298ca1a29c21b89c6a98181346083308616e28f929a35b81f63fc8b9e21ee57`；两者OCI revision均严格等于`473d6ec...`。服务器准入固定脚本SHA-256为`fd97783a1b672a7540da5ab1e4a5daecd740f76c158ece01184a2047106ebb08`。
+- 修复后的预检运行[`32806781151`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32806781151)已成功越过候选Compose启动、三个候选容器健康检查、Django deploy check和模型同步检查，随后被`python manage.py migrate --check`拒绝。生产当前Portal镜像执行相同检查也返回1，确认不是候选镜像新增故障。
+- 唯一未应用迁移为`apps_registry.0004_alter_registeredapp_slug`。只读检查确认表内6行、最长slug为15、无重复值；迁移SQL会删除既有slug索引、增加唯一约束并重建`varchar_pattern_ops`索引。阶段5当前明确不执行数据库迁移，因此必须在获得生产数据库写入授权并建立PostgreSQL备份、锁影响评估和回滚方案后单独处理，不能通过删除`migrate --check`绕过。
+- 三次生产预检失败均发生在正式切换之前；Portal、Authorizer、oauth2-proxy、Nginx和Keycloak生产容器保持原镜像、原启动时间、healthy且无重启。服务器未跟踪证书和待办文档未被清理或覆盖。
+
+阶段状态：进行中。代码、CI、GHCR发布和精确Digest Runner smoke已完成；当前阻断为生产数据库既有未应用迁移。生产预检、真实切换、六应用验收和回滚演练需在迁移阻断被明确处理后继续。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
