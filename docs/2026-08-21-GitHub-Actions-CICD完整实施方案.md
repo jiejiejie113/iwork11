@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5已完成候选实现、本地安全验收、同Commit纯CI、GHCR发布和精确Digest Runner smoke；生产预检已通过候选容器启动、健康检查、Django deploy check及模型同步检查，目前被生产Portal数据库中既有未应用迁移`apps_registry.0004_alter_registeredapp_slug`阻断，未执行真实切换、六应用验收或回滚演练。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5的历史遗留迁移`apps_registry.0004_alter_registeredapp_slug`已在可验证整库备份、DDL锁超时和定向迁移边界下成功应用；迁移后的CI、GHCR发布、精确Digest Runner smoke及`apply=false`生产预检均已通过。阶段5唯一一次回滚演练在正式切换前因PowerShell镜像标签插值错误失败，错误已修复并完成本地回归、CI、镜像发布和预检证据，但依据“一轮失败立即停止且不得删除标记重跑”的既定约束，尚未执行最终生产切换、六应用验收或第二次演练。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -70,7 +70,7 @@
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
-| 5 | Portal受控部署与回滚 | 进行中 | CI、GHCR发布和Runner smoke已完成；生产预检在数据库迁移检查处fail-closed，未切换生产 |
+| 5 | Portal受控部署与回滚 | 进行中 | 历史迁移和迁移后预检已完成；一次性回滚演练在切换前失败并已修复，最终切换等待风险决策 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
@@ -623,7 +623,7 @@ portal: self-hosted, windows, dkt-prod, portal
 
 Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施。
 
-当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。本地Django 97项测试通过（跳过2项），离线配置与阶段测试113项通过（跳过2项，另有39个subtests），Ruff、PowerShell语法、Actions YAML和固定脚本哈希校验通过。最新Commit的CI、GHCR发布和Runner smoke已经成功，但生产预检被既有未应用数据库迁移fail-closed阻断，尚未执行真实切换或回滚演练，因此本阶段仍标记为“进行中”。
+当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。唯一一次回滚演练又暴露动态镜像标签中的PowerShell变量插值错误，由`5076646db2c4fe233a97756893551da7c7802fc9`修复。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。最新提交的本地目标测试、全量测试、Ruff、PowerShell语法、Actions YAML和`git diff --check`均通过；CI、GHCR发布、精确Digest Runner smoke及迁移后的生产预检也已成功。由于一次性回滚演练已失败且审计标记不得删除或重写，最终切换仍等待风险接受或新的受控回退设计，本阶段保持“进行中”。
 
 ### 9.1 部署前基线
 
@@ -702,6 +702,33 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 3. 只执行`python manage.py migrate apps_registry 0004 --noinput`，不运行不受限制的全库迁移。
 4. 立即复验迁移记录、slug唯一约束、6条业务记录和Portal只读接口；复验通过后才重跑阶段5生产预检。
 5. 数据库写入、备份和迁移仍需用户单独明确授权；本次评估不执行迁移。
+
+### 9.6 2026-08-25迁移执行、失败演练与修复后证据
+
+用户授权后已完成历史遗留迁移和迁移后证据链，执行期间没有重建或重启PostgreSQL、Keycloak、Nginx、Redis或任何物理卷：
+
+- 迁移前再次确认目标表6行、slug无重复、最长15字符，且没有活动事务或目标表锁；数据库约9.8 MB，目标表约64 KB。
+- 已建立整库逻辑备份`D:\DM\backups\portal\DKT_portal-before-apps-registry-0004-20260825-152141.dump`，文件大小110158字节，SHA-256为`2a39a7fedf79924579a1eb5c00bd721037a3ac1934762e1b0116dacb19213f8e`；备份限制ACL并通过`pg_restore --list`结构检查。
+- 仅执行`python manage.py migrate apps_registry 0004 --noinput`，连接级设置`lock_timeout=5s`和`statement_timeout=30s`；迁移耗时2.652秒并成功完成。
+- 迁移后6条应用数据未变化，slug唯一约束已建立，`migrate --check`返回0；相关容器没有重启。
+- 迁移后首轮预检运行[`32821310691`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32821310691)成功，状态为`preflight_passed`，没有候选容器、部署锁或维护标记残留。
+
+唯一一次受控回滚演练运行[`32821504238`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32821504238)在正式生产切换前失败：
+
+- 状态收据`D:\DM\cicd-state\portal\32821504238-1.json`记录`Status=failed_before_switch`和`RollbackSucceeded=false`。
+- 一次性审计标记`D:\DM\cicd-state\portal\rollback-drill-v1.json`记录`Status=failed`；该标记不得删除、修改或用重复运行覆盖。
+- 失败发生在创建本地回滚镜像标签时，PowerShell将`"portal-rollback-$RunId:latest"`中的`$RunId:latest`解析为带作用域的变量名，生成了不完整标签`portal-rollback-`。生产Portal、Authorizer和oauth2-proxy没有切换，Keycloak和Nginx保持原状态，所有相关容器均healthy且无异常重启。
+- 修复将三个动态标签统一改为`${RunId}`显式变量边界，并增加Windows PowerShell 5.1动态回归测试，直接执行真实`New-ReleaseTags`函数验证完整的源镜像与目标标签参数。
+- 修复提交`5076646db2c4fe233a97756893551da7c7802fc9`已推送；本地72项目标测试、114项全量测试（跳过2项，另有39个subtests）、Ruff、迁移检查、PowerShell语法、Actions YAML和`git diff --check`均通过。
+- 同提交CI运行[`32822019243`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32822019243)和GHCR发布运行[`32822211897`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32822211897)成功。Portal Digest为`sha256:5fcd6f867f5b3fd5bee6ca0c778a0ba9d881c72b5f8fe98fe8b9d01313e36fbf`，oauth2-proxy Digest为`sha256:814ac4af3eafb66e0365a267015248f22789038e73fb264664dc80b93bb206eb`。
+- 修复后精确Digest Runner smoke运行[`32822609980`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32822609980)成功；迁移后`apply=false`预检运行[`32822771675`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32822771675)成功。两项均未切换生产业务容器。
+
+当前决策边界：数据库迁移阻断已经解除，候选代码、镜像和生产预检均已通过，但“一次性回滚演练必须成功”这一验收项尚未满足。依据用户此前明确的“一轮失败立即停止且不得重复执行”要求，不能删除失败标记、不能再次触发`rollback_drill=true`，也不把任何后续动作称为“补偿演练”。最终`apply=true / rollback_drill=false`切换之前只能选择并记录以下一种处理：
+
+1. 保持现有验收标准并暂停最终切换，另行设计和审批“部署成功后人工验收失败”的独立受控回退入口；该入口不是重复运行一次性演练，必须使用新的命令、权限、状态文件和审计规则，完成实现与验证后再重新评估是否满足阶段5回滚能力要求。
+2. 用户明确修改阶段5验收标准并接受“没有成功生产回滚演练证据”的剩余风险，授权执行最终普通切换；即使切换和业务验收成功，文档也必须标记为“带风险例外完成”，不能表述为回滚演练通过。
+
+在上述决策产生前，本阶段不得标记为完成，也不执行最终生产切换。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
@@ -835,15 +862,17 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段4已经完成。阶段5“Portal高风险受控部署与回滚”当前停在第4步生产预检：
+阶段4已经完成。阶段5“Portal高风险受控部署与回滚”当前停在最终生产切换决策：
 
 1. 已完成：提交并推送Portal阶段5 Workflow、固定部署脚本、准入安装器和契约测试，同Commit纯CI成功。
 2. 已完成：发布同Commit的Portal和oauth2-proxy不可变GHCR镜像，完整Digest和OCI revision复验通过。
-3. 已完成：服务器准入已固定`473d6ec...`及部署脚本SHA-256，精确Digest Runner smoke成功。
-4. 进行中：`apply=false`预检已完成Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选和回滚基线检查，但被既有未应用迁移`apps_registry.0004_alter_registeredapp_slug`拒绝。先只读确认数据库引擎、迁移来源、当前模型需求和历史部署链路，未经明确授权不执行生产迁移。
-5. 迁移阻断被明确处理且重新预检成功后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
-6. 完成新旧入口、OIDC登录/退出、Remote身份头、权限拒绝页和六个应用真实业务验收。
-7. 正式切换稳定后只执行一次受控回滚演练；一轮失败立即停止并分析，不删除演练状态文件重复执行。
-8. 只有Actions、生产切换、真实业务和回滚证据齐全后，才把阶段5更新为“已完成”；否则保持“进行中”并列出剩余项。
+3. 已完成：服务器准入已固定`5076646...`及修复后的部署脚本SHA-256；CI、GHCR发布和精确Digest Runner smoke成功。
+4. 已完成：对`DKT_portal`建立可验证整库备份，在锁超时边界内定向应用`apps_registry.0004`；数据未变化，唯一约束和迁移状态复验通过。
+5. 已完成：迁移后`apply=false`预检通过Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选、Django和回滚基线检查。
+6. 已停止：唯一一次回滚演练在正式切换前因PowerShell标签插值错误失败；根因已修复并通过完整测试，但失败标记保留且不得重复演练。
+7. 待决策：保持当前验收标准并先增加独立受控回退入口，或由用户明确修改验收标准并接受缺少成功演练证据的风险；不得重复触发一次性演练。
+8. 决策放行后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
+9. 完成新旧入口、OIDC登录/退出、Remote身份头、权限拒绝页和六个应用真实业务验收。
+10. 只有Actions、生产切换、真实业务和成功回滚能力证据齐全后，才把阶段5更新为“已完成”；若用户修改验收标准并接受剩余风险，只能标记为“带风险例外完成”，否则保持“进行中”并列出剩余项。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
