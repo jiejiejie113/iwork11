@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—3已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已经完成生产预检、修复版真实容器切换和自动验收，两个iwork容器正在运行指定不可变Digest；用户明确豁免真实账号浏览器验收，当前只剩一次性修复版受控回滚演练，因此阶段4继续标记为进行中。阶段5—8尚未开始。当前已完成阶段仍为4/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5—8尚未开始。当前已完成阶段为5/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -69,7 +69,7 @@
 | 1 | 生产Runner与Docker身份验证 | 已完成 | `DONGMING\shuju`临时Runner已完成真实只读Job，临时注册与目录已清理 |
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
-| 4 | iwork受控部署与回滚 | 进行中 | 生产预检和真实切换已成功；浏览器验收由用户豁免，待完成一次性修复版受控回滚演练 |
+| 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
 | 5 | Portal受控部署与回滚 | 未开始 | 高风险，晚于iwork实施 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
@@ -540,10 +540,10 @@ portal: self-hosted, windows, dkt-prod, portal
 
 阶段2旧GHCR镜像revision为`51c1911e867c7183eef45b66b7fa6bc35ee8d676`，缺少生产已经部署的`96cd508`和`8e4e74a`两次SSE无感续订修复，禁止部署。阶段4实现提交通过纯CI后必须重新发布当前Commit镜像并使用新Digest。
 
-### 8.5 尚未完成的真实验收
+### 8.5 风险豁免与已知边界
 
 - 真实账号登录、退出、生产详情页面、实时SSE无感续订和通知SSE原计划由已信任当前自定义证书的外部Edge人工验收。用户于2026-08-25明确决定跳过该项；本文记录为风险豁免，不将其表述为“验收通过”。现有自动化页面、API和SSE检查结果继续保留。
-- 首轮正式部署实际执行了旧镜像恢复，但PowerShell 5.1误把Compose正常stderr进度判为错误，使状态文件记录为`rollback_failed`。修复版已通过隔离回归测试，仍需一次不依赖故障注入的受控生产回滚演练，才能形成修复版`rolled_back / RollbackSucceeded=true`证据。
+- 首轮正式部署实际执行了旧镜像恢复，但PowerShell 5.1误把Compose正常stderr进度判为错误，使状态文件记录为`rollback_failed`。修复版随后通过隔离回归测试及唯一一次受控生产回滚演练，已形成`rolled_back / RollbackSucceeded=true`证据，详见8.11节。
 - `production-iwork` Environment已经创建，但实际`protection_rules=[]`且`can_admins_bypass=true`；服务器完整SHA准入仍是当前主要补偿控制。
 - 看门狗尚未识别新的`production_deployment`维护标记；部署期间共享恢复Mutex可阻止看门狗和周重启执行恢复，但仍可能产生短暂健康告警。该兼容改造归入阶段6，在此之前作为已知风险观察。
 - 迁移失败时只自动回滚应用镜像，不自动还原数据库。`run_migrations=true`只允许用于已审查的expand/contract兼容迁移；备份用于受控人工恢复，禁止脚本自动覆盖生产数据库。
@@ -605,11 +605,17 @@ portal: self-hosted, windows, dkt-prod, portal
 - 候选两个容器必须先完成健康、镜像、Django、HTTP和Alert Worker验收，之后才触发明确的受控回滚信号；回滚继续走普通部署失败的同一恢复路径。
 - 只有受控信号和回滚后全部复验同时成功，Workflow才以`rolled_back / RollbackSucceeded=true`返回成功；任何非预期异常或回滚异常均返回失败并永久保留失败记录，按用户要求立即停止分析，不进行第二轮。
 - 演练强制关闭数据库迁移，不停止或重建MySQL、Redis、PostgreSQL及其他应用容器，不删除物理卷；最终应恢复演练前两个iwork镜像。
-- 当前为本地实现与隔离验证阶段；完成纯CI、GHCR发布、生产准入重钉和唯一一次真实演练后，在本节补充Commit、Digest、Actions运行、状态文件与容器复核证据。
+- 实现提交`bb47126`增加一次性受控回滚演练；修复提交`3bf9877779b9bc4c7fb2378d78c4b1e33087fd9f`避免预检误判瞬时健康波动。目标测试24项、全量测试565项、Ruff、PowerShell语法、Actions YAML及`git diff --check`均通过。
 - 首次演练前生产预检运行[`32795142316`](https://github.com/GuChenkano/iwork/actions/runs/32795142316)在候选Digest完整拉取后失败，未进入容器切换且未创建一次性演练记录。根因是Docker解压镜像层期间宿主机I/O/CPU短时争用，使`DKT_iwork_alert_worker`连续三次健康探针超过10秒；镜像拉取完成后的下一轮探针自行恢复，容器重启0次、Redis健康、Celery返回`pong`。
 - 原预检只读取一次当前健康状态，容易把上述已恢复的瞬时状态当成持续故障。修复为在既有180秒严格窗口内等待两个现有容器恢复，再记录部署基线；持续不健康仍然fail-closed。新增隔离测试稳定复现`unhealthy → healthy`，禁止通过忽略健康状态或放宽容器探针绕过。
+- 修复提交的纯CI运行[`32795782056`](https://github.com/GuChenkano/iwork/actions/runs/32795782056)、GHCR发布运行[`32796035903`](https://github.com/GuChenkano/iwork/actions/runs/32796035903)及生产预检运行[`32796265379`](https://github.com/GuChenkano/iwork/actions/runs/32796265379)均成功。候选Digest为`sha256:8974135a40cdb04e1002b257c133944661fd6dd0e8d3607a2a5a45baa97c127c`，服务器准入固定`ApprovedHeadSha=3bf9877779b9bc4c7fb2378d78c4b1e33087fd9f`，部署脚本SHA-256为`e9cd76bc6cc8f63c106d60bbf0e258f65891ee2085e80df4539cdf4c2113805b`。
+- 唯一一次受控回滚演练运行[`32796621375`](https://github.com/GuChenkano/iwork/actions/runs/32796621375)于2026-08-25成功完成，耗时2分13秒；参数为`apply=true / rollback_drill=true / run_migrations=false`，未再次触发。
+- 状态文件`D:\DM\cicd-state\iwork\32796621375-1.json`记录`Status=rolled_back`、`RollbackSucceeded=true`；不可覆盖收据`rollback-drill-v1.json`记录`Status=succeeded`，后续重复演练将按设计fail-closed。
+- 回滚后`DKT_iwork`与`DKT_iwork_alert_worker`均为`running/healthy`、重启0次，底层镜像ID均恢复为演练前`sha256:3d26cdfa20c07deb64573290c960eb61f2776a22c433e65757d7b75b3efb07f2`。运行容器配置镜像为本次部署ID对应的本地只读回滚标签，底层内容与演练前镜像一致。
+- 部署文件锁、iwork维护标记和周重启标记均已清除。MySQL、Redis、PostgreSQL、Keycloak等基础容器保持原有连续运行状态，未重建或重启。
+- 回滚后复验：Django `check --deploy`退出码0，仅保留4项既有反向代理安全提示；首页、实时数据API和Flow概览API均返回200；实时SSE返回200、`text/event-stream`及`dashboard_update`；Alert Worker与Realtime Worker均返回`pong`。
 
-阶段状态：进行中。修复版已经完成真实生产切换和自动验收，真实账号浏览器验收由用户明确豁免；只剩唯一一次修复版受控回滚演练，成功后即可标记阶段4已完成。
+阶段状态：已完成。修复版真实生产切换、自动验收和唯一一次受控回滚演练均已形成生产证据；真实账号浏览器验收由用户明确豁免并保留为已知风险，不表述为验收通过。
 
 ## 9. 阶段5——Portal高风险受控部署与回滚
 
