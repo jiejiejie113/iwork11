@@ -19,6 +19,11 @@ on:
         required: true
         default: false
         type: boolean
+      rollback_drill:
+        description: 仅执行一次受控回滚演练；必须同时启用生产容器切换并关闭迁移
+        required: true
+        default: false
+        type: boolean
       run_migrations:
         description: 切换时允许新容器执行数据库迁移
         required: true
@@ -61,11 +66,12 @@ jobs:
       IMAGE_DIGEST: ${{ inputs.image_digest }}
       EXPECTED_REVISION: ${{ inputs.expected_revision }}
       APPLY: ${{ inputs.apply }}
+      ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
       RUN_MIGRATIONS: ${{ inputs.run_migrations }}
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: f31cb93b69dcb755fa82996078f7713cfb29889a266faf705d174c66ba5b5a25
+      DEPLOY_SCRIPT_SHA256: 576916c44bc627c550204ab23775cc24c08fd252412937c4df1d79262a8d93d6
     steps:
       - name: 校验候选镜像并执行预检或部署
         shell: powershell
@@ -86,6 +92,12 @@ jobs:
           }
           if ([String]::IsNullOrWhiteSpace($env:CHANGE_DESCRIPTION)) {
               throw 'Change description is required.'
+          }
+          if ($env:ROLLBACK_DRILL -eq 'true' -and $env:APPLY -ne 'true') {
+              throw 'Rollback drill requires apply=true.'
+          }
+          if ($env:ROLLBACK_DRILL -eq 'true' -and $env:RUN_MIGRATIONS -eq 'true') {
+              throw 'Rollback drill forbids database migrations.'
           }
 
           function Assert-SuccessfulWorkflowRun {
@@ -130,7 +142,10 @@ jobs:
           Assert-SuccessfulWorkflowRun -WorkflowFile 'release.yml' -Description 'GHCR release'
 
           $mode = if ($env:APPLY -eq 'true') { 'Deploy' } else { 'Preflight' }
-          $expectedConfirmation = if (
+          $expectedConfirmation = if ($env:ROLLBACK_DRILL -eq 'true') {
+              'ROLLBACK DRILL IWORK ONCE'
+          }
+          elseif (
               $mode -eq 'Deploy' -and
               $env:RUN_MIGRATIONS -eq 'true'
           ) {
@@ -201,7 +216,8 @@ jobs:
                   -RunId $deploymentRunId `
                   -Actor $env:GITHUB_ACTOR `
                   -ChangeDescription $env:CHANGE_DESCRIPTION `
-                  -RunMigrations $env:RUN_MIGRATIONS
+                  -RunMigrations $env:RUN_MIGRATIONS `
+                  -RollbackDrill $env:ROLLBACK_DRILL
               if ($LASTEXITCODE -ne 0) {
                   throw "Pinned deployment script failed; exit=$LASTEXITCODE"
               }
@@ -214,6 +230,7 @@ jobs:
                   "- Image: $candidateImage"
                   "- OCI revision: $env:EXPECTED_REVISION"
                   "- Run migrations: $env:RUN_MIGRATIONS"
+                  "- Rollback drill: $env:ROLLBACK_DRILL"
                   "- Deployment ID: ``$deploymentRunId``"
                   "- Previous web image ID: ``$($result.PreviousWebImageId)``"
                   "- Previous alert worker image ID: ``$($result.PreviousAlertWorkerImageId)``"
@@ -230,6 +247,7 @@ jobs:
                   "- Mode: $mode"
                   "- Image: $candidateImage"
                   "- OCI revision: $env:EXPECTED_REVISION"
+                  "- Rollback drill: $env:ROLLBACK_DRILL"
                   "- Deployment ID: ``$deploymentRunId``"
               )
               if (Test-Path -LiteralPath $stateFile -PathType Leaf) {

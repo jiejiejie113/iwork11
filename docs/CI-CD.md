@@ -2,7 +2,7 @@
 
 ## 阶段0纯CI基线
 
-本节记录阶段0只建设持续集成时的安全基线。当前GHCR、生产Self-hosted Runner和阶段4受控部署的实际进度，以[GitHub Actions、生产Runner与受控部署完整实施方案](2026-08-21-GitHub-Actions-CICD完整实施方案.md)为唯一基线；阶段4代码已经存在，但尚未切换生产容器。
+本节记录阶段0只建设持续集成时的安全基线。当前GHCR、生产Self-hosted Runner和阶段4受控部署的实际进度，以[GitHub Actions、生产Runner与受控部署完整实施方案](2026-08-21-GitHub-Actions-CICD完整实施方案.md)为唯一基线；阶段4已经完成修复版生产切换和自动验收，正在执行一次性受控回滚演练。
 
 - GitHub托管Runner运行Python 3.11测试、Ruff和Docker构建。
 - pytest固定加载`iwork.test_settings`，三套数据库均为内存SQLite，缓存和Celery也使用进程内实现。
@@ -47,4 +47,5 @@ docker build --pull --tag ci-iwork:local .
 - 每批准新的部署Workflow提交，都必须在Runner空闲时重新安装服务器准入策略。未经该步骤的新提交即使已推送，也应被生产Runner拒绝。
 - 旧的、已删除或当前不可拉取的GHCR Digest不得作为部署输入；阶段2旧iwork镜像缺少当前生产SSE修复，明确禁止重新部署。
 - `run_migrations`默认关闭；开启时必须完成数据库兼容性审查和备份。自动回滚只恢复应用镜像，不自动覆盖生产数据库。
-- 当前只完成代码和隔离测试。生产`apply=false`预检、真实容器切换、认证态页面/API/SSE验收和真实回滚证据齐全前，不得宣称阶段4或生产部署已完成。
+- `rollback_drill`默认关闭；只有`apply=true`、`run_migrations=false`且确认词严格为`ROLLBACK DRILL IWORK ONCE`时才允许执行。服务器使用不可覆盖的一次性记录拒绝重复演练，成功、失败或中断后都不会自动重试。
+- 修复版生产预检、真实容器切换和自动验收已经完成。用户于2026-08-25明确豁免真实账号浏览器验收；一次性受控回滚演练形成真实`rolled_back / RollbackSucceeded=true`证据前，阶段4仍不得标记为完成。

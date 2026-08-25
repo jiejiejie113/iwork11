@@ -21,6 +21,8 @@ param(
 
     [ValidateSet('true', 'false')]
     [string]$RunMigrations = 'false',
+    [ValidateSet('true', 'false')]
+    [string]$RollbackDrill = 'false',
     [string]$ExpectedIdentity = 'DONGMING\shuju',
     [string]$IworkRoot = 'D:\DM\iwork',
     [string]$StateRoot = 'D:\DM\cicd-state\iwork',
@@ -48,7 +50,9 @@ $PROFILE_FILE = Join-Path $IworkRoot 'env\production.env'
 $DEPLOYMENT_LOCK_FILE = Join-Path $LockRoot 'production-deploy.lock'
 $EXPECTED_CONTAINERS = @('DKT_iwork', 'DKT_iwork_alert_worker')
 $RUN_MIGRATIONS_ENABLED = $RunMigrations -eq 'true'
+$ROLLBACK_DRILL_ENABLED = $RollbackDrill -eq 'true'
 $WATCHDOG_RECOVERY_MUTEX = 'Global\DKT-Docker-Recovery'
+$ROLLBACK_DRILL_FILE = Join-Path $StateRoot 'rollback-drill-v1.json'
 
 function Invoke-DockerCommand {
     param(
@@ -123,6 +127,12 @@ function Assert-PreflightInputs {
     if ($Actor -cne 'GuChenkano') {
         throw "部署触发账号不正确：$Actor"
     }
+    if ($ROLLBACK_DRILL_ENABLED -and $Mode -ne 'Deploy') {
+        throw '受控回滚演练只能使用Deploy模式。'
+    }
+    if ($ROLLBACK_DRILL_ENABLED -and $RUN_MIGRATIONS_ENABLED) {
+        throw '受控回滚演练禁止执行数据库迁移。'
+    }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     if ($identity -ine $ExpectedIdentity) {
@@ -152,6 +162,12 @@ function Assert-PreflightInputs {
     }
     if (Test-Path -LiteralPath $WeeklyMaintenanceFile -PathType Leaf) {
         throw "Docker周重启维护标记存在，拒绝开始iwork部署：$WeeklyMaintenanceFile"
+    }
+    if (
+        $ROLLBACK_DRILL_ENABLED -and
+        (Test-Path -LiteralPath $ROLLBACK_DRILL_FILE -PathType Leaf)
+    ) {
+        throw "受控回滚演练已经执行或启动过，拒绝重复执行：$ROLLBACK_DRILL_FILE"
     }
 }
 
@@ -226,6 +242,29 @@ function Write-JsonAtomic {
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function New-RollbackDrillAttempt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Value
+    )
+
+    $json = $Value | ConvertTo-Json -Depth 8
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+    $stream = [IO.File]::Open(
+        $ROLLBACK_DRILL_FILE,
+        [IO.FileMode]::CreateNew,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::None
+    )
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+    }
+    finally {
+        $stream.Dispose()
     }
 }
 
@@ -374,6 +413,21 @@ function Assert-DeployedImage {
     }
 }
 
+function Assert-ContainerImageId {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedImageId
+    )
+
+    $actualImageId = Get-ContainerImageId -ContainerName $ContainerName
+    if ($actualImageId -cne $ExpectedImageId) {
+        throw "容器底层镜像ID未恢复：$ContainerName；actual=$actualImageId"
+    }
+}
+
 function Assert-IworkApplication {
     $null = Invoke-DockerCommand -Arguments @(
         'exec', 'DKT_iwork', 'python', 'manage.py', 'check', '--deploy'
@@ -517,6 +571,9 @@ function Invoke-Deploy {
     $switchAttempted = $false
     $ownsLockFile = $false
     $ownsMaintenanceFile = $false
+    $ownsDrillAttempt = $false
+    $controlledRollbackRequested = $false
+    $drillAttempt = $null
 
     try {
         $productionMutex = Enter-DeploymentMutex -Name $ProductionMutexName
@@ -544,6 +601,25 @@ function Invoke-Deploy {
         $null = Invoke-DockerCommand -Arguments @('tag', $previousWebImageId, $webRollbackTag)
         $null = Invoke-DockerCommand -Arguments @('tag', $previousAlertImageId, $alertRollbackTag)
 
+        if ($ROLLBACK_DRILL_ENABLED) {
+            $drillAttempt = [ordered]@{
+                Version = 1
+                RunId = $RunId
+                Actor = $Actor
+                Status = 'started'
+                CandidateImage = $candidateImage
+                ExpectedRevision = $ExpectedRevision
+                PreviousWebImageId = $previousWebImageId
+                PreviousAlertWorkerImageId = $previousAlertImageId
+                StartedAt = [DateTimeOffset]::UtcNow.ToString('o')
+                CompletedAt = $null
+                StateFile = $stateFile
+                Error = $null
+            }
+            New-RollbackDrillAttempt -Value $drillAttempt
+            $ownsDrillAttempt = $true
+        }
+
         $state = [ordered]@{
             RunId = $RunId
             Actor = $Actor
@@ -552,6 +628,7 @@ function Invoke-Deploy {
             CandidateImage = $candidateImage
             ExpectedRevision = $ExpectedRevision
             RunMigrations = $RUN_MIGRATIONS_ENABLED
+            RollbackDrill = $ROLLBACK_DRILL_ENABLED
             ChangeDescription = $ChangeDescription
             PreviousWebImageId = $previousWebImageId
             PreviousAlertWorkerImageId = $previousAlertImageId
@@ -609,6 +686,11 @@ function Invoke-Deploy {
             -ExpectedImage $candidateImage
         Assert-IworkApplication
 
+        if ($ROLLBACK_DRILL_ENABLED) {
+            $controlledRollbackRequested = $true
+            throw '受控回滚演练触发'
+        }
+
         $state.Status = 'deployed'
         $state.CompletedAt = [DateTimeOffset]::UtcNow.ToString('o')
         Write-JsonAtomic -Path $stateFile -Value $state
@@ -643,6 +725,12 @@ function Invoke-Deploy {
                 Assert-DeployedImage `
                     -ContainerName 'DKT_iwork_alert_worker' `
                     -ExpectedImage $alertRollbackTag
+                Assert-ContainerImageId `
+                    -ContainerName 'DKT_iwork' `
+                    -ExpectedImageId $previousWebImageId
+                Assert-ContainerImageId `
+                    -ContainerName 'DKT_iwork_alert_worker' `
+                    -ExpectedImageId $previousAlertImageId
                 Assert-IworkApplication
                 $state.Status = 'rolled_back'
                 $state.RollbackSucceeded = $true
@@ -662,6 +750,42 @@ function Invoke-Deploy {
             $state.DeploymentError = $deploymentError.Exception.Message
             Write-JsonAtomic -Path $stateFile -Value $state
         }
+
+        if ($ownsDrillAttempt) {
+            $drillSucceeded = (
+                $controlledRollbackRequested -and
+                $null -ne $state -and
+                $state.Status -eq 'rolled_back' -and
+                $state.RollbackSucceeded
+            )
+            $drillAttempt.Status = if ($drillSucceeded) { 'succeeded' } else { 'failed' }
+            $drillAttempt.CompletedAt = [DateTimeOffset]::UtcNow.ToString('o')
+            $drillAttempt.Error = if ($drillSucceeded) {
+                $null
+            }
+            else {
+                $deploymentError.Exception.Message
+            }
+            Write-JsonAtomic -Path $ROLLBACK_DRILL_FILE -Value $drillAttempt
+
+            if ($drillSucceeded) {
+                return [pscustomobject]@{
+                    Mode = 'Deploy'
+                    RunId = $RunId
+                    CandidateImage = $candidateImage
+                    Result = 'rolled_back'
+                    RollbackDrill = $true
+                    StateFile = $stateFile
+                    PreviousWebImageId = $previousWebImageId
+                    PreviousAlertWorkerImageId = $previousAlertImageId
+                    DurationSeconds = [Math]::Round(
+                        ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds,
+                        1
+                    )
+                } | ConvertTo-Json -Compress
+            }
+        }
+
         if ($null -ne $state -and $state.Status -eq 'rollback_failed') {
             throw (
                 '候选部署失败，且自动回滚失败：' +

@@ -111,6 +111,21 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert f"DEPLOY_SCRIPT_SHA256: {script_hash}" in content
 
 
+def test_deploy_workflow_requires_explicit_one_time_rollback_drill() -> None:
+    """受控回滚演练必须显式确认、禁止迁移，并传给固定部署脚本。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "rollback_drill:" in content
+    assert "ROLLBACK_DRILL: ${{ inputs.rollback_drill }}" in content
+    assert "ROLLBACK DRILL IWORK ONCE" in content
+    assert "$env:ROLLBACK_DRILL -eq 'true' -and $env:APPLY -ne 'true'" in content
+    assert (
+        "$env:ROLLBACK_DRILL -eq 'true' -and $env:RUN_MIGRATIONS -eq 'true'"
+        in content
+    )
+    assert "-RollbackDrill $env:ROLLBACK_DRILL" in content
+
+
 def test_policy_installer_pins_workflow_commit_and_server_script() -> None:
     """生产策略安装器必须固定Workflow提交与服务器部署脚本哈希。"""
     content = POLICY_INSTALLER_PATH.read_text(encoding="utf-8-sig")
@@ -171,6 +186,8 @@ def _run_deployment_script(
     tmp_path: Path,
     *,
     mode: str,
+    rollback_drill: bool = False,
+    existing_rollback_drill_marker: bool = False,
     fail_validation: bool = False,
     fail_rollback: bool = False,
     run_migrations: bool = False,
@@ -182,6 +199,8 @@ def _run_deployment_script(
     Args:
         tmp_path (Path): pytest隔离临时目录。
         mode (str): 部署脚本模式。
+        rollback_drill (bool): 是否执行一次性受控回滚演练。
+        existing_rollback_drill_marker (bool): 是否预置既有演练记录。
         fail_validation (bool): 是否让部署后Django检查失败。
         fail_rollback (bool): 是否让回滚Compose切换失败。
         run_migrations (bool): 是否启用迁移前备份与容器迁移。
@@ -206,6 +225,11 @@ def _run_deployment_script(
     profile.parent.mkdir(parents=True)
     state_root.mkdir()
     lock_root.mkdir()
+    if existing_rollback_drill_marker:
+        (state_root / "rollback-drill-v1.json").write_text(
+            '{"Status":"failed","RunId":"previous-attempt"}\n',
+            encoding="utf-8",
+        )
     (iwork_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     profile.write_text("DKT_ENVIRONMENT=production\n", encoding="utf-8")
     secrets.write_text("TEST_ONLY=1\n", encoding="utf-8")
@@ -351,6 +375,8 @@ exit /b %fakeDockerExitCode%
             CANDIDATE_REVISION,
             "-RunMigrations",
             str(run_migrations).lower(),
+            "-RollbackDrill",
+            str(rollback_drill).lower(),
             "-RunId",
             "stage4-test-1",
             "-Actor",
@@ -459,6 +485,104 @@ def test_deploy_accepts_successful_compose_progress_on_stderr(tmp_path: Path) ->
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "deployed"
     assert state["RollbackSucceeded"] is False
+
+
+def test_controlled_rollback_drill_restores_both_previous_images(
+    tmp_path: Path,
+) -> None:
+    """受控演练应复用真实回滚路径，并把成功证据写入状态文件。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        rollback_drill=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["Result"] == "rolled_back"
+    assert summary["RollbackDrill"] is True
+
+    docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+    assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
+    assert "iwork-web-rollback:stage4-test-1" in docker_calls
+    assert "iwork-alert-worker-rollback:stage4-test-1" in docker_calls
+    assert docker_calls.count("inspect dkt_iwork --format {{.image}}") >= 2
+    assert docker_calls.count("inspect dkt_iwork_alert_worker --format {{.image}}") >= 2
+
+    state_file = paths["state_root"] / "stage4-test-1.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["Status"] == "rolled_back"
+    assert state["RollbackSucceeded"] is True
+    assert state["RollbackDrill"] is True
+    assert state["DeploymentError"] == "受控回滚演练触发"
+
+    drill_file = paths["state_root"] / "rollback-drill-v1.json"
+    drill = json.loads(drill_file.read_text(encoding="utf-8"))
+    assert drill["Status"] == "succeeded"
+    assert drill["RunId"] == "stage4-test-1"
+    assert drill["PreviousWebImageId"].startswith("sha256:")
+    assert drill["PreviousAlertWorkerImageId"].startswith("sha256:")
+    assert not (paths["lock_root"] / "production-deploy.lock").exists()
+    assert not paths["maintenance_file"].exists()
+
+
+def test_controlled_rollback_drill_rejects_every_repeated_attempt(
+    tmp_path: Path,
+) -> None:
+    """一次性演练记录存在时，必须在切换容器前拒绝再次执行。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        rollback_drill=True,
+        existing_rollback_drill_marker=True,
+    )
+
+    assert result.returncode != 0
+    assert "拒绝重复执行" in result.stderr
+    assert not paths["docker_log"].exists()
+    drill_file = paths["state_root"] / "rollback-drill-v1.json"
+    drill = json.loads(drill_file.read_text(encoding="utf-8"))
+    assert drill == {"Status": "failed", "RunId": "previous-attempt"}
+
+
+def test_controlled_rollback_drill_stops_after_unexpected_failure(
+    tmp_path: Path,
+) -> None:
+    """演练中出现非受控异常时应回滚但返回失败，并永久保留失败记录。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        rollback_drill=True,
+        fail_validation=True,
+    )
+
+    assert result.returncode != 0
+    state_file = paths["state_root"] / "stage4-test-1.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["Status"] == "rolled_back"
+    assert state["RollbackSucceeded"] is True
+
+    drill_file = paths["state_root"] / "rollback-drill-v1.json"
+    drill = json.loads(drill_file.read_text(encoding="utf-8"))
+    assert drill["Status"] == "failed"
+    assert "Injected Django validation failure" in drill["Error"]
+
+
+def test_controlled_rollback_drill_rejects_database_migrations(
+    tmp_path: Path,
+) -> None:
+    """受控回滚演练不得执行不可自动回滚的数据库迁移。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        rollback_drill=True,
+        run_migrations=True,
+    )
+
+    assert result.returncode != 0
+    assert "禁止执行数据库迁移" in result.stderr
+    assert not paths["docker_log"].exists()
+    assert not (paths["state_root"] / "rollback-drill-v1.json").exists()
 
 
 def test_rollback_failure_is_visible_in_job_error_and_state(tmp_path: Path) -> None:
