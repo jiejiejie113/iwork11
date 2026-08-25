@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5已进入实施中，候选代码和本地安全验收已完成，但Actions、生产预检、真实切换、六应用验收和回滚演练证据尚未形成。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5已完成候选实现、本地安全验收、同Commit纯CI、GHCR发布和精确Digest Runner smoke；生产预检已通过候选容器启动、健康检查、Django deploy check及模型同步检查，目前被生产Portal数据库中既有未应用迁移`apps_registry.0004_alter_registeredapp_slug`阻断，未执行真实切换、六应用验收或回滚演练。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -70,7 +70,7 @@
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
-| 5 | Portal受控部署与回滚 | 进行中 | 候选实现和本地安全验收已完成；生产与真实业务验收待完成 |
+| 5 | Portal受控部署与回滚 | 进行中 | CI、GHCR发布和Runner smoke已完成；生产预检在数据库迁移检查处fail-closed，未切换生产 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
@@ -678,6 +678,29 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 阶段状态：进行中。代码、CI、GHCR发布和精确Digest Runner smoke已完成；当前阻断为生产数据库既有未应用迁移。生产预检、真实切换、六应用验收和回滚演练需在迁移阻断被明确处理后继续。
 
+### 9.5 历史未应用迁移评估
+
+2026-08-25通过生产`DKT_kc_portal`容器做只读核验，未读取密码或完整连接串，未执行任何数据库写入：
+
+- Portal默认库实际引擎为PostgreSQL，数据库为`DKT_portal`，Docker内部主机为`postgres:5432`。
+- `django_migrations`中`apps_registry`只有`0001`、`0002`和`0003`；最后一次Portal业务迁移应用时间为2026-06-15，不存在`0004`的已应用记录。
+- `0004`由提交`23da925f84ae2c27a014d9e64011c34e3246ae81`于2026-06-26引入，同一提交把`RegisteredApp.slug`从普通`SlugField(32)`改为`unique=True`。因此它是进入仓库约两个月但生产从未应用的历史遗留迁移，不是本次候选镜像新生成的迁移。
+- 同期变更记录明确把该约束归类为代码Bug修复；此后模型、迁移链和架构规范均未撤销或替代这项唯一性要求。
+- 生产表当前有6条应用记录，slug分别为`design-progress`、`dsm`、`fabric`、`gitea`、`iwork`和`pattern`；最长15个字符，无重复值，字段为非空`varchar(32)`。
+- 当前数据库只有slug普通索引和`varchar_pattern_ops`索引，没有唯一约束；而当前Django模型、`/apps/{slug}` Keycloak Group、`app:{slug}`授权资源及数据库驱动的Nginx路由都把slug当作全局唯一业务标识。
+- Portal管理API存在直接赋值后调用`save()`的路径，没有统一调用`full_clean()`；因此只在Django模型上声明`unique=True`不足以阻止所有重复写入，数据库唯一约束仍是必要的最终边界。
+- `sqlmigrate`确认该迁移会在一个事务中删除旧slug索引，添加唯一约束，再重建`varchar_pattern_ops`索引；不改写slug值，不增删业务行。
+
+判断：该迁移属于历史遗留，但当前仍然需要执行。删除迁移、`--fake`标记已应用或移除生产预检都会使代码声明的唯一性与数据库实际约束继续不一致，不予采用。由于当前仅6行且无重复，数据转换风险低；主要生产风险是PostgreSQL执行DDL时的短时表锁和极端情况下的回滚处理。
+
+执行前必须单独完成：
+
+1. 对`DKT_portal`建立可验证恢复的逻辑备份，至少包含`django_migrations`和`apps_registry_registeredapp`，并记录备份时点。
+2. 在维护窗口再次只读检查重复slug、活动会话和表锁，设置受控的`lock_timeout`和`statement_timeout`，获取不到锁时fail-closed，不无限等待。
+3. 只执行`python manage.py migrate apps_registry 0004 --noinput`，不运行不受限制的全库迁移。
+4. 立即复验迁移记录、slug唯一约束、6条业务记录和Portal只读接口；复验通过后才重跑阶段5生产预检。
+5. 数据库写入、备份和迁移仍需用户单独明确授权；本次评估不执行迁移。
+
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
 ### 10.1 全局锁
@@ -810,13 +833,13 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段4已经完成。下一步继续阶段5“Portal高风险受控部署与回滚”：
+阶段4已经完成。阶段5“Portal高风险受控部署与回滚”当前停在第4步生产预检：
 
-1. 提交并推送Portal阶段5 Workflow、固定部署脚本、准入安装器和契约测试，等待同一Commit纯CI成功。
-2. 手工发布同一Commit的Portal和oauth2-proxy不可变GHCR镜像，记录完整Digest并复验OCI revision。
-3. Runner空闲时，以`DONGMING\shuju`提升权限重新运行准入安装器，固定新Commit和部署脚本SHA-256；不得读取或输出中央密钥。
-4. 先执行`apply=false`预检，校验Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选和回滚基线，不替换生产容器。
-5. 预检成功后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
+1. 已完成：提交并推送Portal阶段5 Workflow、固定部署脚本、准入安装器和契约测试，同Commit纯CI成功。
+2. 已完成：发布同Commit的Portal和oauth2-proxy不可变GHCR镜像，完整Digest和OCI revision复验通过。
+3. 已完成：服务器准入已固定`473d6ec...`及部署脚本SHA-256，精确Digest Runner smoke成功。
+4. 进行中：`apply=false`预检已完成Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选和回滚基线检查，但被既有未应用迁移`apps_registry.0004_alter_registeredapp_slug`拒绝。先只读确认数据库引擎、迁移来源、当前模型需求和历史部署链路，未经明确授权不执行生产迁移。
+5. 迁移阻断被明确处理且重新预检成功后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
 6. 完成新旧入口、OIDC登录/退出、Remote身份头、权限拒绝页和六个应用真实业务验收。
 7. 正式切换稳定后只执行一次受控回滚演练；一轮失败立即停止并分析，不删除演练状态文件重复执行。
 8. 只有Actions、生产切换、真实业务和回滚证据齐全后，才把阶段5更新为“已完成”；否则保持“进行中”并列出剩余项。
