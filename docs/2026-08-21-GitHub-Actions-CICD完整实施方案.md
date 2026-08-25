@@ -484,7 +484,7 @@ portal: self-hosted, windows, dkt-prod, portal
 - Docker共有16个运行容器，14个配置健康检查的容器全部为`healthy`，其余2个未配置healthcheck但保持运行；没有启动、替换或重建生产容器。
 - `D:\DM\iwork`工作区干净；`D:\DM\DTD_nginx`只保留既有未跟踪的`docker/certs/`和`docs/待办方案/2026-08-21-DITU-Portal证书重签实施计划.md`，Runner没有清理或覆盖生产工作区。
 
-阶段状态：已完成。阶段4已进入代码与隔离验证阶段，但尚未切换生产容器。
+阶段状态：已完成。阶段4后续已完成真实生产切换、自动验收和唯一一次受控回滚演练，证据见第8节。
 
 ## 8. 阶段4——iwork受控部署与自动回滚
 
@@ -680,7 +680,7 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 ### 9.5 历史未应用迁移评估
 
-2026-08-25通过生产`DKT_kc_portal`容器做只读核验，未读取密码或完整连接串，未执行任何数据库写入：
+2026-08-25通过生产`DKT_kc_portal`容器做只读核验，未读取密码或完整连接串，未执行任何数据库写入。核验使用Django`showmigrations`、数据库连接与约束内省、重复值只读聚合以及`sqlmigrate`预览：
 
 - Portal默认库实际引擎为PostgreSQL，数据库为`DKT_portal`，Docker内部主机为`postgres:5432`。
 - `django_migrations`中`apps_registry`只有`0001`、`0002`和`0003`；最后一次Portal业务迁移应用时间为2026-06-15，不存在`0004`的已应用记录。
@@ -695,7 +695,7 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 执行前必须单独完成：
 
-1. 对`DKT_portal`建立可验证恢复的逻辑备份，至少包含`django_migrations`和`apps_registry_registeredapp`，并记录备份时点。
+1. 对`DKT_portal`建立可验证恢复的整库逻辑备份；如果只做定向备份，必须同时包含`django_migrations`和`apps_registry_registeredapp`的表结构、约束、索引及数据，并记录备份时点。
 2. 在维护窗口再次只读检查重复slug、活动会话和表锁，设置受控的`lock_timeout`和`statement_timeout`，获取不到锁时fail-closed，不无限等待。
 3. 只执行`python manage.py migrate apps_registry 0004 --noinput`，不运行不受限制的全库迁移。
 4. 立即复验迁移记录、slug唯一约束、6条业务记录和Portal只读接口；复验通过后才重跑阶段5生产预检。
