@@ -621,7 +621,7 @@ portal: self-hosted, windows, dkt-prod, portal
 
 Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施。
 
-当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`1eedea7`；本地Django 97项测试通过（跳过2项），阶段测试36项通过，Ruff、PowerShell语法、Actions YAML、Compose解析和固定脚本哈希校验通过。当前尚无最终提交对应的GitHub Actions、生产预检、真实切换或回滚证据，因此本阶段只能标记为“进行中”。
+当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`1b47784`；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据。本地Django 97项测试通过（跳过2项），阶段测试36项通过，Ruff、PowerShell语法、Actions YAML、Compose解析和固定脚本哈希校验通过。当前尚无最终提交对应的GitHub Actions、生产预检、真实切换或回滚证据，因此本阶段只能标记为“进行中”。
 
 ### 9.1 部署前基线
 
