@@ -193,6 +193,8 @@ def _run_deployment_script(
     run_migrations: bool = False,
     watchdog_uses_shared_mutex: bool = True,
     emit_compose_progress: bool = False,
+    transient_alert_unhealthy_checks: int = 0,
+    health_timeout_seconds: int = 2,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -206,6 +208,8 @@ def _run_deployment_script(
         run_migrations (bool): 是否启用迁移前备份与容器迁移。
         watchdog_uses_shared_mutex (bool): 看门狗是否声明共享恢复锁。
         emit_compose_progress (bool): 是否模拟Compose在标准错误输出成功进度。
+        transient_alert_unhealthy_checks (int): 告警Worker暂时不健康的检查次数。
+        health_timeout_seconds (int): 等待容器恢复健康的超时秒数。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
@@ -271,6 +275,22 @@ if ($line -like 'inspect DKT_iwork*--format {{.Config.Image}}*') {
     return
 }
 if ($line -like 'inspect DKT_iwork*--format {{json .State}}*') {
+    if (
+        $line -like 'inspect DKT_iwork_alert_worker*' -and
+        [int]$env:FAKE_TRANSIENT_ALERT_UNHEALTHY_CHECKS -gt 0
+    ) {
+        $checkCount = [int](
+            Get-Content -LiteralPath $env:FAKE_HEALTH_CHECK_COUNTER -Raw
+        )
+        if ($checkCount -lt [int]$env:FAKE_TRANSIENT_ALERT_UNHEALTHY_CHECKS) {
+            Set-Content `
+                -LiteralPath $env:FAKE_HEALTH_CHECK_COUNTER `
+                -Value ($checkCount + 1) `
+                -NoNewline
+            '{\"Running\":true,\"Status\":\"running\",\"Health\":{\"Status\":\"unhealthy\"}}'
+            return
+        }
+    }
     '{\"Running\":true,\"Status\":\"running\",\"Health\":{\"Status\":\"healthy\"}}'
     return
 }
@@ -345,6 +365,9 @@ exit /b %fakeDockerExitCode%
     env["FAKE_FAIL_VALIDATION"] = "1" if fail_validation else "0"
     env["FAKE_FAIL_ROLLBACK"] = "1" if fail_rollback else "0"
     env["FAKE_COMPOSE_PROGRESS"] = "1" if emit_compose_progress else "0"
+    env["FAKE_TRANSIENT_ALERT_UNHEALTHY_CHECKS"] = str(
+        transient_alert_unhealthy_checks
+    )
     env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
@@ -352,6 +375,9 @@ exit /b %fakeDockerExitCode%
     alert_image_state.write_text("iwork-alert-worker", encoding="utf-8")
     env["FAKE_WEB_IMAGE_STATE"] = str(web_image_state)
     env["FAKE_ALERT_IMAGE_STATE"] = str(alert_image_state)
+    health_check_counter = tmp_path / "health-check-counter.txt"
+    health_check_counter.write_text("0", encoding="ascii")
+    env["FAKE_HEALTH_CHECK_COUNTER"] = str(health_check_counter)
     identity = subprocess.run(  # noqa: S603 - 固定调用Windows系统whoami
         [str(WHOAMI_EXE)],
         capture_output=True,
@@ -400,7 +426,7 @@ exit /b %fakeDockerExitCode%
             "-WatchdogScript",
             str(watchdog_script),
             "-HealthTimeoutSeconds",
-            "2",
+            str(health_timeout_seconds),
             "-ProductionMutexName",
             f"Local\\iwork-stage4-production-{tmp_path.name}",
             "-RecoveryMutexName",
@@ -441,6 +467,24 @@ def test_preflight_validates_candidate_without_mutating_containers(tmp_path: Pat
     assert list(paths["state_root"].iterdir()) == []
     assert list(paths["lock_root"].iterdir()) == []
     assert not paths["maintenance_file"].exists()
+
+
+def test_preflight_waits_for_transient_alert_worker_health_recovery(
+    tmp_path: Path,
+) -> None:
+    """镜像拉取造成短时探针超时时，预检应在严格时限内等待恢复。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        transient_alert_unhealthy_checks=1,
+        health_timeout_seconds=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+    assert docker_calls.count(
+        "inspect dkt_iwork_alert_worker --format {{json .state}}"
+    ) >= 2
 
 
 def test_deploy_switches_both_services_and_records_rollback_state(

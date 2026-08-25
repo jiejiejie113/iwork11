@@ -186,6 +186,7 @@ function Invoke-Preflight {
         throw "候选镜像OCI revision不匹配：$actualRevision"
     }
 
+    Wait-IworkReleaseHealthy
     $containerBaseline = foreach ($containerName in $EXPECTED_CONTAINERS) {
         Assert-ContainerHealthy -ContainerName $containerName
         Get-ContainerBaseline -ContainerName $containerName

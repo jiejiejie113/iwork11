@@ -606,6 +606,8 @@ portal: self-hosted, windows, dkt-prod, portal
 - 只有受控信号和回滚后全部复验同时成功，Workflow才以`rolled_back / RollbackSucceeded=true`返回成功；任何非预期异常或回滚异常均返回失败并永久保留失败记录，按用户要求立即停止分析，不进行第二轮。
 - 演练强制关闭数据库迁移，不停止或重建MySQL、Redis、PostgreSQL及其他应用容器，不删除物理卷；最终应恢复演练前两个iwork镜像。
 - 当前为本地实现与隔离验证阶段；完成纯CI、GHCR发布、生产准入重钉和唯一一次真实演练后，在本节补充Commit、Digest、Actions运行、状态文件与容器复核证据。
+- 首次演练前生产预检运行[`32795142316`](https://github.com/GuChenkano/iwork/actions/runs/32795142316)在候选Digest完整拉取后失败，未进入容器切换且未创建一次性演练记录。根因是Docker解压镜像层期间宿主机I/O/CPU短时争用，使`DKT_iwork_alert_worker`连续三次健康探针超过10秒；镜像拉取完成后的下一轮探针自行恢复，容器重启0次、Redis健康、Celery返回`pong`。
+- 原预检只读取一次当前健康状态，容易把上述已恢复的瞬时状态当成持续故障。修复为在既有180秒严格窗口内等待两个现有容器恢复，再记录部署基线；持续不健康仍然fail-closed。新增隔离测试稳定复现`unhealthy → healthy`，禁止通过忽略健康状态或放宽容器探针绕过。
 
 阶段状态：进行中。修复版已经完成真实生产切换和自动验收，真实账号浏览器验收由用户明确豁免；只剩唯一一次修复版受控回滚演练，成功后即可标记阶段4已完成。
 
