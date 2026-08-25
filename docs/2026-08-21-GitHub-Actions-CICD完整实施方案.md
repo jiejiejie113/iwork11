@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5的历史遗留迁移`apps_registry.0004_alter_registeredapp_slug`已在可验证整库备份、DDL锁超时和定向迁移边界下成功应用；迁移后的CI、GHCR发布、精确Digest Runner smoke及`apply=false`生产预检均已通过。阶段5唯一一次回滚演练在正式切换前因PowerShell镜像标签插值错误失败，错误已修复并完成本地回归、CI、镜像发布和预检证据，但依据“一轮失败立即停止且不得删除标记重跑”的既定约束，尚未执行最终生产切换、六应用验收或第二次演练。阶段6—8尚未开始。当前已完成阶段仍为5/9，不使用缺少统一权重依据的主观百分比。
+截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过；真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页仍因当前自定义证书未被内置浏览器信任而待人工验收，且尚未获得本阶段单独风险豁免。因此阶段5保持“进行中（生产交付完成，浏览器验收待补）”，阶段6—8尚未开始，当前已完成阶段仍为5/9。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -70,7 +70,7 @@
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
-| 5 | Portal受控部署与回滚 | 进行中 | 历史迁移和迁移后预检已完成；一次性回滚演练在切换前失败并已修复，最终切换等待风险决策 |
+| 5 | Portal受控部署与回滚 | 进行中 | v3回滚演练与最终生产切换已完成；仅剩真实账号浏览器业务验收或明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
@@ -625,6 +625,8 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 当前候选实现已经包含：仅手工触发的Workflow输入门禁、完整Portal和oauth2-proxy Digest校验、OCI revision校验、同Commit CI/release/Runner smoke证据校验、隔离候选容器、Portal/Authorizer/oauth2-proxy受控切换、Keycloak/Nginx不变性检查、状态收据、失败自动回滚和版本化的一次性回滚演练门禁。首轮提交为`3c159ef`，多轮安全审查加固收口于`5f96232`；真实Windows PowerShell 5.1预检随后暴露两项参数边界缺陷，分别由`cdb8bb2`和`473d6ec`修复。首次演练暴露动态镜像标签中的PowerShell变量插值错误，由`5076646db2c4fe233a97756893551da7c7802fc9`修复；修复后重跑门禁由`87ce31920aef9ac8cd11b6c64a6c42a5dfd71a99`实现。最终标准与规格复审均无代码推送阻断；Runner smoke通过运行标题精确绑定本次Commit和两个镜像Digest，旧镜像验收不能充当新部署证据，Runner临时GHCR认证的生成、写入和严格清理处于同一`try/finally`边界。最新提交的本地目标测试、全量测试、Ruff、PowerShell语法、Actions YAML和`git diff --check`均通过；CI、GHCR发布、精确Digest Runner smoke及迁移后的生产预检也已成功。修复后唯一一次重跑在切换入口发现生产Compose项目名不一致并失败，审计记录已永久保留；最终切换等待新的显式风险授权和版本化恢复设计，本阶段保持“进行中”。
 
+2026-08-25后续状态勘误：上段末尾是v2失败后的历史快照。用户随后批准独立v3恢复方案，Compose归属修复、v3演练和最终生产切换均已完成；当前实际状态以9.8节为准。
+
 ### 9.1 部署前基线
 
 - 记录Portal、Authorizer、oauth2-proxy和Nginx当前镜像Digest。
@@ -744,6 +746,36 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 - 失败后只读复验确认Portal、Authorizer和oauth2-proxy均为`running/healthy`；Nginx内部健康检查成功；OIDC issuer仍为`https://auth.dituportal.dongming.local/realms/ditu`；新Portal未登录返回302并使用新认证域名与新回调；旧Portal返回307到新Portal。
 
 当前阻断：依据“修复后重跑只允许一次，失败立即停止”的审计规则，不能删除v2、不能第三次触发演练，也不能绕过`Assert-SuccessfulDrillEvidence`执行最终普通部署。继续阶段5需要用户另行明确授权一个新的版本化恢复方案：先修正并验证Compose项目归属，再以新的v3状态文件绑定v1、v2及两个运行收据，且只能再执行一次；或者明确接受没有成功回滚演练证据的风险例外并调整验收标准。当前不采用后者。
+
+### 9.8 2026-08-25 v3恢复演练与最终生产交付
+
+用户批准“小范围问题直接修复并重跑，大型问题停止汇报”，并明确授权新的版本化v3恢复演练。v3不是删除或重跑v1/v2：它使用独立输入、确认词和`rollback-drill-v3.json`，同时绑定v2失败Run ID、v1/v2状态文件及两个运行收据的固定SHA-256，且只允许登记一次。
+
+修复和验证：
+
+- Portal修复提交为`254cb2d63c4c75761dc9797c894afb323ac45b82`。正式Compose项目从错误的`dkt-keycloak`修正为生产实际项目`docker`；切换前严格核对三个容器的Compose project、service、working directory和基础Compose文件，正式Compose命令从`D:\DM\DTD_nginx\docker`执行。
+- 原生命令失败输出增加敏感关键词整行脱敏、URI userinfo、Bearer/Basic凭据脱敏及2000字符限长；不会把Token、Cookie、数据库连接串或密钥写入Actions摘要和部署收据。
+- v3固定绑定`32827854376-1`及四份既有生产审计文件的真实哈希。测试同时验证当前生产基线必须与v2收据的`Previous`一致、任何证据改写均fail-closed、v3重复登记被拒、最终部署必须取得v3成功状态和`rolled_back / RollbackSucceeded=true`收据。
+- 本地目标测试25项、Django测试72项、离线配置测试122项（跳过2项，另有39个subtests）、Ruff、迁移一致性、PowerShell语法、Actions YAML及`git diff --check`全部通过；规范与规格双轴审查均无P1/P2阻断。
+- 同提交CI运行[`32830823323`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32830823323)成功；GHCR发布运行[`32831012581`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32831012581)成功。Portal Digest为`sha256:6c5cf71b39b5b1937215bddd50d2555710abb7e41baa3e46d2dc5d4102c2b41a`，oauth2-proxy Digest为`sha256:143756a92516220d1915678f69650343cb91c46b248df597266acca8c4a72065`，两者OCI revision均严格等于`254cb2d...`。
+- 服务器仓库通过`git merge --ff-only`从`87ce319...`快进到`254cb2d...`，原有未跟踪`docker/certs/`和证书待办文档保持不变；生产准入固定脚本SHA-256为`3836bcb32f849d664fe9fbffcab16c23ca372dfd5465bcb5cbde6af064a225df`。
+- 精确Digest Runner smoke运行[`32831345663`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32831345663)成功；`apply=false`预检运行[`32831471732`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32831471732)成功。预检后生产三容器ID、镜像和启动时间仍与v2演练前基线一致，四份v1/v2审计哈希未变，v3不存在，候选容器、锁和维护标记均已清理。
+
+唯一一次v3恢复演练运行[`32831639384`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32831639384)成功：
+
+- `D:\DM\cicd-state\portal\rollback-drill-v3.json`记录`Status=succeeded`，SHA-256为`3935a5027548c02fb339a7b344a95078bf3da82e07820d9afb28be48fb390d3e`。
+- 运行收据`32831639384-1.json`记录`Status=rolled_back`和`RollbackSucceeded=true`，SHA-256为`bb45f5ce71eb1c381b84a2805b684d9e59c99d8259ea5538856bed4f57d6d3e3`。
+- Portal、Authorizer和oauth2-proxy均恢复演练前镜像并为healthy；Keycloak和Nginx的容器ID、启动时间及健康状态未变化。v1/v2四份证据哈希保持原值，且无候选容器、锁或维护标记残留。
+
+最终生产部署运行[`32831954325`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32831954325)成功：
+
+- 收据`D:\DM\cicd-state\portal\32831954325-1.json`记录`Status=deployed`，SHA-256为`5caabfc9174eb70ee20ce78c46aac0afef6e35811d79302cfd32cdf4f854b6b5`。
+- `DKT_kc_portal`与`DKT_kc_authorizer`使用固定Portal Digest，`DKT_kc_oauth2proxy`使用固定proxy Digest；三者均为`running/healthy`、重启次数0，OCI revision均为`254cb2d...`。
+- `DKT_kc_keycloak`和`DKT_kc_nginx`未重建；Portal数据库、MySQL、Redis、网络和物理卷未重建或删除。iwork及Alert Worker保持`running/healthy`、重启次数0。
+- 新Portal未登录请求返回302到`auth.dituportal.dongming.local/realms/ditu`，回调严格使用新Portal；旧Portal和旧认证入口返回单次307，`dkt` Realm路径正确映射为`ditu`，`master`路径保持不变；discovery issuer严格等于新认证地址。
+- iwork生产详情内部真实请求返回200；SSE返回200、`text/event-stream`和非stale的`snapshot_published`事件。六个应用入口未登录请求均进入新认证地址，未发现旧认证域名或跳转循环。
+
+剩余人工验收：内置浏览器访问新Portal时因当前自定义证书未被该浏览器信任，返回`ERR_CERT_AUTHORITY_INVALID`；安全规则禁止自动绕过证书警告。用户已决定证书后续单独重签，但尚未对阶段5的真实账号浏览器验收作单独风险豁免。因此真实登录/退出、Remote-User、Remote-Groups、权限拒绝页，以及六个应用登录后的页面、API和静态资源仍需在新证书安装后人工验收。自动化生产交付和回滚能力已经完成，本阶段保持“进行中（生产交付完成，浏览器验收待补）”。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
@@ -877,17 +909,16 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段4已经完成。阶段5“Portal高风险受控部署与回滚”当前停在最终生产切换决策：
+阶段4已经完成。阶段5的代码、CI、不可变镜像、精确Digest Runner smoke、生产预检、唯一v3恢复演练和最终生产切换均已完成；当前只剩真实账号浏览器业务验收：
 
-1. 已完成：提交并推送Portal阶段5 Workflow、固定部署脚本、准入安装器和契约测试，同Commit纯CI成功。
-2. 已完成：发布同Commit的Portal和oauth2-proxy不可变GHCR镜像，完整Digest和OCI revision复验通过。
-3. 已完成：服务器准入已固定`5076646...`及修复后的部署脚本SHA-256；CI、GHCR发布和精确Digest Runner smoke成功。
-4. 已完成：对`DKT_portal`建立可验证整库备份，在锁超时边界内定向应用`apps_registry.0004`；数据未变化，唯一约束和迁移状态复验通过。
-5. 已完成：迁移后`apply=false`预检通过Actions证据、Digest、OCI revision、Compose、当前容器、隔离候选、Django和回滚基线检查。
-6. 已停止：唯一一次回滚演练在正式切换前因PowerShell标签插值错误失败；根因已修复并通过完整测试，但失败标记保留且不得重复演练。
-7. 待决策：保持当前验收标准并先增加独立受控回退入口，或由用户明确修改验收标准并接受缺少成功演练证据的风险；不得重复触发一次性演练。
-8. 决策放行后，在维护窗口只切换Portal、Authorizer和oauth2-proxy；不得重建Keycloak、Nginx基础容器、数据库、Redis、网络或物理卷。
-9. 完成新旧入口、OIDC登录/退出、Remote身份头、权限拒绝页和六个应用真实业务验收。
-10. 只有Actions、生产切换、真实业务和成功回滚能力证据齐全后，才把阶段5更新为“已完成”；若用户修改验收标准并接受剩余风险，只能标记为“带风险例外完成”，否则保持“进行中”并列出剩余项。
+1. 已完成：Portal修复提交`254cb2d...`通过本地全套测试、双轴审查、CI和GHCR发布。
+2. 已完成：服务器准入固定到`254cb2d...`及部署脚本SHA-256；服务器仓库安全快进且保留未跟踪证书材料。
+3. 已完成：精确Digest Runner smoke和`apply=false`生产预检成功。
+4. 已完成：独立v3状态文件绑定并保留v1/v2失败证据；唯一一次v3恢复演练成功，形成`rolled_back / RollbackSucceeded=true`收据。
+5. 已完成：最终生产部署成功，Portal、Authorizer和oauth2-proxy使用批准Digest并healthy；Keycloak、Nginx、数据库、Redis、网络和物理卷未重建。
+6. 已完成：新旧入口、OIDC issuer、六应用未登录路由、iwork生产详情和SSE自动化验收。
+7. 待完成：补发并安装可被验收浏览器信任、且SAN包含新Portal和新认证域名的自定义证书；该证书工作继续沿用既有证书待办方案。
+8. 待完成：使用真实账号验证登录、退出、Remote-User、Remote-Groups、无权限页和六应用登录后的页面/API/静态资源。若用户明确豁免本项，则文档必须记录豁免范围，不能表述为实际验收通过。
+9. 上述浏览器验收完成或取得明确风险豁免后，将阶段5标记为“已完成”，再开始阶段6的跨仓库锁与运维任务协调。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
