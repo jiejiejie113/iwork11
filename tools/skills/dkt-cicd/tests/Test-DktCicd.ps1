@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -12,6 +12,12 @@ $imageDigest = 'sha256:' + ('1' * 64)
 $portalDigest = 'sha256:' + ('2' * 64)
 $proxyDigest = 'sha256:' + ('3' * 64)
 $script:passed = 0
+$engineExecutable = if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    'powershell.exe'
+}
+else {
+    'pwsh'
+}
 
 function Assert-True {
     param(
@@ -46,10 +52,17 @@ function Invoke-SkillProcess {
         [switch]$PreserveState,
         [switch]$LogFailure,
         [switch]$Concurrent,
-        [switch]$InvalidPortalDigests
+        [switch]$InvalidPortalDigests,
+        [switch]$MismatchedReleaseDigest,
+        [string]$ExistingStateDirectory
     )
 
-    $stateDirectory = Join-Path $env:TEMP ('dkt-cicd-test-' + [Guid]::NewGuid().ToString('N'))
+    $stateDirectory = if ([String]::IsNullOrWhiteSpace($ExistingStateDirectory)) {
+        Join-Path $env:TEMP ('dkt-cicd-test-' + [Guid]::NewGuid().ToString('N'))
+    }
+    else {
+        $ExistingStateDirectory
+    }
     New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
     $env:DKT_CICD_FAKE_STATE_DIR = $stateDirectory
     $env:DKT_CICD_FAKE_REVISION = $revision
@@ -58,11 +71,13 @@ function Invoke-SkillProcess {
     $env:DKT_CICD_FAKE_LOG_FAILURE = if ($LogFailure) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_CONCURRENT = if ($Concurrent) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_INVALID_PORTAL_DIGESTS = if ($InvalidPortalDigests) { '1' } else { '0' }
+    $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST = if ($MismatchedReleaseDigest) { '1' } else { '0' }
+    $env:DKT_CICD_CONFIRMATION_STATE_ROOT = Join-Path $stateDirectory 'confirmations'
 
     $allArguments = @(
         '-NoLogo', '-NoProfile', '-File', $scriptPath
     ) + $Arguments + @('-GhExecutable', $fakeGhPath, '-OutputJson')
-    $output = @(& pwsh @allArguments 2>&1)
+    $output = @(& $engineExecutable @allArguments 2>&1)
     $exitCode = $LASTEXITCODE
     $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
     $result = [pscustomobject]@{
@@ -94,6 +109,11 @@ $statusRouting = Invoke-SkillProcess -Arguments @(
 ) -Mode success -PreserveState
 $statusRoutingLog = Get-Content -LiteralPath (Join-Path $statusRouting.StateDirectory 'arguments.log') -Raw
 Assert-True -Condition ($statusRoutingLog.Contains('release.yml')) -Message '状态查询应按 WorkflowKind 路由'
+$statusRoutingJson = $statusRouting.Output | ConvertFrom-Json
+Assert-True -Condition (
+    $statusRoutingJson.Digests -contains $portalDigest -and
+    $statusRoutingJson.Digests -contains $proxyDigest
+) -Message 'Release 状态查询必须返回已发布的完整 Digest'
 Remove-TestStateDirectory -Path $statusRouting.StateDirectory
 
 $logResult = Invoke-SkillProcess -Arguments @(
@@ -164,6 +184,58 @@ Assert-True -Condition (
     $ambiguousDispatch.Output.Contains('禁止重复触发')
 ) -Message '并发候选 Run 歧义必须停止关联并禁止重试'
 
+$mismatchedDigest = Invoke-SkillProcess -Arguments @(
+    '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
+    '-ImageDigest', $imageDigest, '-ChangeDescription', 'Digest 绑定验收'
+) -Mode success -MismatchedReleaseDigest
+Assert-True -Condition (
+    $mismatchedDigest.ExitCode -eq 1 -and
+    $mismatchedDigest.Output.Contains('发布产物')
+) -Message '预检 Digest 必须与同 Commit 的 Release 产物完全一致'
+
+$mismatchedPortalDigests = Invoke-SkillProcess -Arguments @(
+    '-Action', 'preflight', '-Service', 'portal', '-Revision', $revision,
+    '-PortalDigest', $portalDigest, '-ProxyDigest', $proxyDigest,
+    '-ChangeDescription', 'Portal Digest 绑定验收'
+) -Mode success -MismatchedReleaseDigest
+Assert-True -Condition (
+    $mismatchedPortalDigests.ExitCode -eq 1 -and
+    $mismatchedPortalDigests.Output.Contains('发布产物')
+) -Message 'Portal 两个 Digest 都必须与同 Commit 的 Release 产物完全一致'
+
+$directDeploy = Invoke-SkillProcess -Arguments @(
+    '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
+    '-ImageDigest', $imageDigest, '-ChangeDescription', '离线验收',
+    '-ApprovalText', "DEPLOY IWORK $revision"
+) -Mode queued -PreserveState
+Assert-True -Condition (
+    $directDeploy.ExitCode -eq 1 -and
+    $directDeploy.Output.Contains('预览')
+) -Message '未先生成本次预览时，即使确认词正确也不得触发部署'
+Assert-True -Condition (
+    -not (Test-Path -LiteralPath (Join-Path $directDeploy.StateDirectory 'deploy-iwork.yml.dispatched'))
+) -Message '直接提供确认词不得触发部署 Workflow'
+Remove-TestStateDirectory -Path $directDeploy.StateDirectory
+
+$changedPreview = Invoke-SkillProcess -Arguments @(
+    '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
+    '-ImageDigest', $imageDigest, '-ChangeDescription', '原始预览'
+) -Mode success -PreserveState
+$changedConfirmation = Invoke-SkillProcess -Arguments @(
+    '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
+    '-ImageDigest', $imageDigest, '-ChangeDescription', '已被修改',
+    '-ApprovalText', "DEPLOY IWORK $revision"
+) -Mode queued -PreserveState -ExistingStateDirectory $changedPreview.StateDirectory
+Assert-True -Condition (
+    $changedConfirmation.ExitCode -eq 1 -and
+    $changedConfirmation.Output.Contains('参数') -and
+    $changedConfirmation.Output.Contains('预览')
+) -Message '确认前修改任一预览参数必须失败关闭'
+Assert-True -Condition (
+    -not (Test-Path -LiteralPath (Join-Path $changedPreview.StateDirectory 'deploy-iwork.yml.dispatched'))
+) -Message '参数变化不得触发部署 Workflow'
+Remove-TestStateDirectory -Path $changedPreview.StateDirectory
+
 $previewResult = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ChangeDescription', '离线验收'
@@ -173,18 +245,20 @@ $previewJson = $previewResult.Output | ConvertFrom-Json
 Assert-True -Condition ($previewJson.Status -eq 'confirmation_required') -Message '必须返回确认预览'
 Assert-True -Condition ($previewJson.RequiredApprovalText -eq "DEPLOY IWORK $revision") -Message 'iwork 确认词应绑定 Commit'
 Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $previewResult.StateDirectory 'deploy-iwork.yml.dispatched'))) -Message '未确认不得触发部署'
-Remove-TestStateDirectory -Path $previewResult.StateDirectory
 
 $deployResult = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ChangeDescription', '离线验收',
     '-ApprovalText', "DEPLOY IWORK $revision"
-) -Mode queued -PreserveState
+) -Mode queued -PreserveState -ExistingStateDirectory $previewResult.StateDirectory
 Assert-True -Condition ($deployResult.ExitCode -eq 0) -Message '精确确认后应允许触发假部署'
 Assert-True -Condition (Test-Path -LiteralPath (Join-Path $deployResult.StateDirectory 'deploy-iwork.yml.dispatched')) -Message '假部署应被记录为已触发'
 $deployLog = Get-Content -LiteralPath (Join-Path $deployResult.StateDirectory 'arguments.log') -Raw
 Assert-True -Condition ($deployLog.Contains('apply=true')) -Message '部署必须传 apply=true'
 Assert-True -Condition ($deployLog.Contains('confirmation=DEPLOY IWORK')) -Message '应传 Workflow 原生确认词'
+Assert-True -Condition (
+    -not (Get-ChildItem -LiteralPath (Join-Path $deployResult.StateDirectory 'confirmations') -Filter '*.json' -ErrorAction SilentlyContinue)
+) -Message '确认预览必须在使用后单次消费，禁止重复触发'
 Remove-TestStateDirectory -Path $deployResult.StateDirectory
 
 $portalPreview = Invoke-SkillProcess -Arguments @(
@@ -221,9 +295,18 @@ $productionJson = $productionStatus.Output | ConvertFrom-Json
 Assert-True -Condition ($productionJson.EvidenceScope.Contains('not live Docker health')) -Message '不得把 Actions 证据冒充实时容器健康'
 
 [Environment]::SetEnvironmentVariable('DKT_CICD_TEST_MODE', $null, 'Process')
-$overrideOutput = @(& pwsh -NoLogo -NoProfile -File $scriptPath `
-    -Action status -Service iwork -GhExecutable $fakeGhPath -OutputJson 2>&1)
-$overrideExitCode = $LASTEXITCODE
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    # Windows PowerShell 5.1会把预期的子进程stderr包装成NativeCommandError；
+    # 此处只收集失败输出并在后续显式断言退出码。
+    $ErrorActionPreference = 'Continue'
+    $overrideOutput = @(& $engineExecutable -NoLogo -NoProfile -File $scriptPath `
+        -Action status -Service iwork -GhExecutable $fakeGhPath -OutputJson 2>&1)
+    $overrideExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
 Assert-True -Condition (
     $overrideExitCode -ne 0 -and
     (($overrideOutput | ForEach-Object { [string]$_ }) -join "`n").Contains('仅允许离线测试使用')

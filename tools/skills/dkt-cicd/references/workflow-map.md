@@ -15,6 +15,8 @@
 - CI 和发布均只针对固定远程分支当前完整 Commit SHA。
 - 发布前必须存在同一 Commit 的成功 CI；发布 Workflow 也会再次验证。
 - 部署前必须存在同一 Commit 的成功 CI 和发布，并使用发布得到的完整 GHCR Digest。
+- 预检和部署会读取同一Commit的成功Release日志并重新提取Digest；输入Digest必须逐项
+  完全一致，不能只通过格式校验。
 - Portal 部署 Workflow 还会验证同一 Commit 和两个 Digest 的成功 Runner smoke。
 - iwork 的现有 Runner smoke 使用固定历史 Digest/Revision，不是当前分支的动态发布入口，
   Skill 不把它作为当前版本的通用 smoke 命令。
@@ -38,7 +40,8 @@
 - 有迁移：`DEPLOY IWORK WITH MIGRATIONS <Revision>`
 
 用户逐字确认后，Skill 向 Workflow 传递其原生确认词 `DEPLOY IWORK` 或
-`DEPLOY IWORK WITH MIGRATIONS`。
+`DEPLOY IWORK WITH MIGRATIONS`。确认前必须先生成参数绑定的本地预览状态；该状态15分钟
+有效、单次消费，参数变化或直接携带确认词都将失败关闭。
 
 ### Portal 预检/部署
 
@@ -57,6 +60,8 @@ Portal 部署会同时影响认证入口，确认预览固定返回：
 `DEPLOY PORTAL AND AUTHENTICATION <Revision>`
 
 用户逐字确认后，Skill 向 Workflow 传递其原生确认词 `DEPLOY PORTAL`。
+Portal同样要求先生成15分钟有效的单次预览状态，不能复用其他Commit、Digest或变更说明
+对应的确认。
 
 ## 回滚边界
 

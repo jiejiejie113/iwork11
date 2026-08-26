@@ -19,7 +19,10 @@ description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwo
   不需要生产确认。
 - `deploy` 是生产变更。必须先不带 `-ApprovalText` 调用一次以生成确认预览，向用户
   展示服务、仓库、分支、Commit、Digest、环境、迁移开关和变更说明；只接受用户在
-  看到本次预览后给出的精确确认词。不得把更早的笼统授权视为本次确认。
+  看到本次预览后给出的精确确认词。预览状态与全部参数绑定、15分钟有效且只能消费一次；
+  不得直接携带确认词跳过预览，也不得把更早的笼统授权视为本次确认。
+- `preflight`与`deploy`会从同一Commit的成功Release日志重新提取Digest，并与输入逐项
+  精确比较；仅格式正确但不属于该Release产物的Digest必须失败关闭。
 - Portal 同时影响 Portal、oauth2-proxy 与认证入口，使用比 iwork 更强的确认词。
 - 不把 `queued`、`in_progress` 当作成功。仅 `status=completed` 且
   `conclusion=success` 才可报告成功。
@@ -49,4 +52,4 @@ description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwo
 每次触发或查询后至少汇报：服务、Workflow、状态、结论、Commit、Run 链接和耗时。
 GHCR 发布或部署还要汇报完整 Digest；失败时列出失败 Job/Step，并仅按需展示已经脱敏的
 失败日志。若脚本返回 `confirmation_required`，先向用户展示返回的预览和精确确认词，
-不要自行补全或代替用户确认。
+不要自行补全或代替用户确认；超过15分钟或参数变化后必须重新生成预览。

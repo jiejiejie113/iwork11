@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-13
+> 最后更新：2026-08-26
 
 ---
 
@@ -836,3 +836,35 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 - 按生产线概览始终展示全部可见分组；当前账号负责的分组置顶归入“我管理的分组”，
   其余分组在下方单独展示，搜索条件同时作用于两个区域。
 - 分组展示顺序不得影响目标写入权限；目标编辑仍以当前请求身份和有效Flow分配判断。
+
+---
+
+## 14. GitHub Actions生产交付门禁
+
+### 14.1 Skill版本与安装
+
+- `dkt-cicd`版本化源码固定存放于`tools/skills/dkt-cicd`，用户目录
+  `%USERPROFILE%\.agents\skills\dkt-cicd`仅为安装副本。
+- 修改Skill后必须运行`scripts/Install-DktCicdSkill.ps1`，并通过
+  `tests/test_install_dkt_cicd_skill.ps1`验证文件清单和SHA-256一致。
+- Skill脚本和测试必须同时通过PowerShell 7与Windows PowerShell 5.1解析及行为测试；
+  对预期非零的子进程调用应显式检查退出码，不能依赖不同版本对stderr的默认处理差异。
+- Skill只能使用当前Windows用户已经登录的`gh`，不得读取或保存Token、Cookie、私钥或
+  `dkt-secrets.env`。
+
+### 14.2 Commit与Digest绑定
+
+- CI、GHCR发布、生产预检和部署只接受`Keycloak`远程分支当前完整Commit。
+- 生产预检和部署必须重新读取同一Commit的成功Release日志；iwork输入Digest必须与
+  `ghcr.io/guchenkano/iwork`发布产物完全一致。
+- 只校验`sha256:`格式不构成有效准入，Release日志缺失、Digest不唯一或不一致时必须
+  fail-closed。
+
+### 14.3 生产两段确认
+
+- `deploy`第一次调用必须不带确认词，只生成并展示服务、仓库、分支、Commit、Digest、
+  环境、迁移开关和变更说明。
+- 本地确认状态与完整预览指纹绑定，有效期15分钟且只能消费一次；参数变化、状态缺失、
+  状态损坏、过期或直接携带确认词时均不得触发Workflow。
+- iwork确认词必须绑定完整Commit；确认只是防误操作门禁，不能替代Workflow actor、分支、
+  固定脚本哈希及服务器强SHA准入。

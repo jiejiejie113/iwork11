@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
@@ -63,6 +63,17 @@ $RUN_DISCOVERY_TIMEOUT_SECONDS = 45
 $RUN_DISCOVERY_INTERVAL_SECONDS = 2
 $RUN_DISCOVERY_SETTLE_SECONDS = if ($env:DKT_CICD_TEST_MODE -ceq '1') { 0 } else { 4 }
 $DISPATCH_MUTEX_NAME = 'Local\DKT-CICD-Skill-Dispatch'
+$CONFIRMATION_MUTEX_NAME = 'Local\DKT-CICD-Skill-Confirmation'
+$CONFIRMATION_MAX_AGE_MINUTES = 15
+$CONFIRMATION_STATE_ROOT = if (
+    $env:DKT_CICD_TEST_MODE -ceq '1' -and
+    -not [String]::IsNullOrWhiteSpace($env:DKT_CICD_CONFIRMATION_STATE_ROOT)
+) {
+    [IO.Path]::GetFullPath($env:DKT_CICD_CONFIRMATION_STATE_ROOT)
+}
+else {
+    Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'DKT-CICD\pending-confirmations'
+}
 
 if ($GhExecutable -cne 'gh') {
     $allowedTestRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\tests'))
@@ -90,6 +101,95 @@ function Protect-SensitiveText {
     $redacted = $redacted -replace '(?i)((?:password|cookie|secret)\s*[:=]\s*)\S+', '$1[REDACTED]'
     $redacted = $redacted -replace '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1[REDACTED]@'
     return $redacted
+}
+
+function Get-PreviewFingerprint {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Preview)
+
+    $previewJson = $Preview | ConvertTo-Json -Depth 8 -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($previewJson)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Save-ConfirmationPreview {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Preview,
+        [Parameter(Mandatory = $true)][string]$RequiredApprovalText
+    )
+
+    New-Item -ItemType Directory -Path $CONFIRMATION_STATE_ROOT -Force | Out-Null
+    $statePath = Join-Path $CONFIRMATION_STATE_ROOT "$ServiceName.json"
+    $tempPath = "$statePath.$([Guid]::NewGuid().ToString('N')).tmp"
+    $createdAt = [DateTimeOffset]::UtcNow
+    $state = [ordered]@{
+        Service = $ServiceName
+        Fingerprint = Get-PreviewFingerprint -Preview $Preview
+        RequiredApprovalText = $RequiredApprovalText
+        CreatedAt = $createdAt.ToString('o')
+        ExpiresAt = $createdAt.AddMinutes($CONFIRMATION_MAX_AGE_MINUTES).ToString('o')
+    }
+    try {
+        $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tempPath -Encoding UTF8
+        Move-Item -LiteralPath $tempPath -Destination $statePath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempPath) {
+            Remove-Item -LiteralPath $tempPath -Force
+        }
+    }
+}
+
+function Use-ConfirmationPreview {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Preview,
+        [Parameter(Mandatory = $true)][string]$RequiredApprovalText
+    )
+
+    $confirmationMutex = [Threading.Mutex]::new($false, $CONFIRMATION_MUTEX_NAME)
+    $mutexAcquired = $false
+    try {
+        $mutexAcquired = $confirmationMutex.WaitOne([TimeSpan]::FromSeconds(5))
+        if (-not $mutexAcquired) {
+            throw '无法取得生产确认状态锁，已停止部署触发。'
+        }
+        $statePath = Join-Path $CONFIRMATION_STATE_ROOT "$ServiceName.json"
+        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+            throw '未找到本次生产部署预览，请先不带确认词生成并展示完整预览。'
+        }
+        try {
+            $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            throw '生产确认状态无法读取，已失败关闭；请重新生成完整预览。'
+        }
+        $expectedFingerprint = Get-PreviewFingerprint -Preview $Preview
+        if (
+            [string]$state.Service -cne $ServiceName -or
+            [string]$state.Fingerprint -cne $expectedFingerprint -or
+            [string]$state.RequiredApprovalText -cne $RequiredApprovalText
+        ) {
+            throw '当前参数与已展示的生产部署预览不一致，已停止触发；请重新生成完整预览。'
+        }
+        if ([DateTimeOffset]::Parse([string]$state.ExpiresAt) -lt [DateTimeOffset]::UtcNow) {
+            Remove-Item -LiteralPath $statePath -Force
+            throw '生产部署预览已超过15分钟有效期，请重新生成完整预览。'
+        }
+        Remove-Item -LiteralPath $statePath -Force
+    }
+    finally {
+        if ($mutexAcquired) {
+            $confirmationMutex.ReleaseMutex()
+        }
+        $confirmationMutex.Dispose()
+    }
 }
 
 function Invoke-GhCommand {
@@ -138,7 +238,9 @@ function ConvertFrom-GhJson {
     if ([String]::IsNullOrWhiteSpace($result.Output)) {
         return @()
     }
-    return @($result.Output | ConvertFrom-Json)
+    $parsed = $result.Output | ConvertFrom-Json
+    # Windows PowerShell 5.1会把JSON数组作为一个Object[]对象返回；显式写入管道以逐项展开。
+    Write-Output $parsed
 }
 
 function Get-ServiceNames {
@@ -304,6 +406,7 @@ function Assert-SuccessfulWorkflowForRevision {
     if ($successful.Count -eq 0) {
         throw "没有找到同一 Commit 的成功$Description，已停止触发。"
     }
+    return $successful[0]
 }
 
 function Assert-PortalSmokeEvidence {
@@ -522,7 +625,17 @@ try {
             }
             foreach ($run in @(Get-WorkflowRuns -ServiceName $serviceName -Workflow $workflow -Count $Limit)) {
                 $details = Get-RunDetails -ServiceName $serviceName -Id ([long]$run.databaseId)
-                $result += ConvertTo-RunResult -ServiceName $serviceName -Run $details
+                $digests = if (
+                    $WorkflowKind -eq 'release' -and
+                    $details.status -eq 'completed' -and
+                    $details.conclusion -eq 'success'
+                ) {
+                    @(Get-RunDigests -ServiceName $serviceName -Id ([long]$run.databaseId))
+                }
+                else {
+                    @()
+                }
+                $result += ConvertTo-RunResult -ServiceName $serviceName -Run $details -Digests $digests
             }
         }
         Complete-Result -Value $result
@@ -582,7 +695,7 @@ try {
             -ServiceName $Service `
             -Workflow $config.CiWorkflow `
             -ExpectedRevision $resolvedRevision `
-            -Description '纯 CI'
+            -Description '纯 CI' | Out-Null
         $dispatchResult = Invoke-WorkflowDispatch `
             -ServiceName $Service `
             -Workflow $config.ReleaseWorkflow `
@@ -612,8 +725,8 @@ try {
         -ServiceName $Service `
         -Workflow $config.CiWorkflow `
         -ExpectedRevision $resolvedRevision `
-        -Description '纯 CI'
-    Assert-SuccessfulWorkflowForRevision `
+        -Description '纯 CI' | Out-Null
+    $releaseRun = Assert-SuccessfulWorkflowForRevision `
         -ServiceName $Service `
         -Workflow $config.ReleaseWorkflow `
         -ExpectedRevision $resolvedRevision `
@@ -633,6 +746,10 @@ try {
     if ($Service -eq 'iwork') {
         if ($ImageDigest -cnotmatch $DIGEST_PATTERN) {
             throw 'iwork 必须提供有效的 -ImageDigest。'
+        }
+        $publishedDigests = @(Get-RunDigests -ServiceName $Service -Id ([long]$releaseRun.databaseId))
+        if ($publishedDigests.Count -ne 1 -or $publishedDigests[0] -cne $ImageDigest) {
+            throw 'iwork 输入 Digest 与同一 Commit 的成功 GHCR 发布产物不一致，已停止触发。'
         }
         $preview['ImageDigest'] = $ImageDigest
         $inputs = @{
@@ -666,6 +783,14 @@ try {
         if ($RunMigrations) {
             throw 'Portal Workflow 不接受数据库迁移开关。'
         }
+        $publishedDigests = @(Get-RunDigests -ServiceName $Service -Id ([long]$releaseRun.databaseId))
+        if (
+            $publishedDigests.Count -ne 2 -or
+            $publishedDigests[0] -cne $PortalDigest -or
+            $publishedDigests[1] -cne $ProxyDigest
+        ) {
+            throw 'Portal 输入 Digest 与同一 Commit 的成功 GHCR 发布产物不一致，已停止触发。'
+        }
         Assert-PortalSmokeEvidence `
             -ExpectedRevision $resolvedRevision `
             -ExpectedPortalDigest $PortalDigest `
@@ -688,13 +813,27 @@ try {
         $requiredApproval = "DEPLOY PORTAL AND AUTHENTICATION $resolvedRevision"
     }
 
-    if ($Action -eq 'deploy' -and $ApprovalText -cne $requiredApproval) {
-        Complete-Result -ExitCode 4 -Value ([ordered]@{
-            Status = 'confirmation_required'
-            Preview = $preview
-            RequiredApprovalText = $requiredApproval
-            Message = '请先向用户展示完整预览，并要求其逐字确认本次确认词。'
-        })
+    if ($Action -eq 'deploy') {
+        if ([String]::IsNullOrWhiteSpace($ApprovalText)) {
+            Save-ConfirmationPreview `
+                -ServiceName $Service `
+                -Preview $preview `
+                -RequiredApprovalText $requiredApproval
+            Complete-Result -ExitCode 4 -Value ([ordered]@{
+                Status = 'confirmation_required'
+                Preview = $preview
+                RequiredApprovalText = $requiredApproval
+                PreviewExpiresInMinutes = $CONFIRMATION_MAX_AGE_MINUTES
+                Message = '请先向用户展示完整预览，并要求其逐字确认本次确认词。'
+            })
+        }
+        if ($ApprovalText -cne $requiredApproval) {
+            throw '生产部署确认词不匹配，已停止触发。'
+        }
+        Use-ConfirmationPreview `
+            -ServiceName $Service `
+            -Preview $preview `
+            -RequiredApprovalText $requiredApproval
     }
 
     $dispatchResult = Invoke-WorkflowDispatch `

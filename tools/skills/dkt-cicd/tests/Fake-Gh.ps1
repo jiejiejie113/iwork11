@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArguments
 )
@@ -25,6 +25,7 @@ $mode = if ($env:DKT_CICD_FAKE_MODE) { $env:DKT_CICD_FAKE_MODE } else { 'success
 $logFailure = $env:DKT_CICD_FAKE_LOG_FAILURE -ceq '1'
 $concurrentDispatch = $env:DKT_CICD_FAKE_CONCURRENT -ceq '1'
 $invalidPortalDigests = $env:DKT_CICD_FAKE_INVALID_PORTAL_DIGESTS -ceq '1'
+$mismatchedReleaseDigest = $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST -ceq '1'
 $argumentLog = Join-Path $stateDirectory 'arguments.log'
 Add-Content -LiteralPath $argumentLog -Value ($RemainingArguments -join [char]31) -Encoding UTF8
 
@@ -159,14 +160,33 @@ if ($RemainingArguments.Count -ge 3 -and
             Write-Error '模拟完整日志读取失败'
             exit 2
         }
-        Write-Output "ghcr.io/guchenkano/iwork@$imageDigest"
-        if ($invalidPortalDigests) {
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$portalDigest"
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$proxyDigest"
+        $runId = [long]$RemainingArguments[2]
+        $effectiveImageDigest = if ($mismatchedReleaseDigest -and $runId -eq 102) {
+            'sha256:' + ('9' * 64)
         }
         else {
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$portalDigest"
-            Write-Output "ghcr.io/guchenkano/dtd-oauth2-proxy@$proxyDigest"
+            $imageDigest
+        }
+        $effectivePortalDigest = if ($mismatchedReleaseDigest -and $runId -eq 102) {
+            'sha256:' + ('8' * 64)
+        }
+        else {
+            $portalDigest
+        }
+        $effectiveProxyDigest = if ($mismatchedReleaseDigest -and $runId -eq 102) {
+            'sha256:' + ('7' * 64)
+        }
+        else {
+            $proxyDigest
+        }
+        Write-Output "ghcr.io/guchenkano/iwork@$effectiveImageDigest"
+        if ($invalidPortalDigests) {
+            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectivePortalDigest"
+            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectiveProxyDigest"
+        }
+        else {
+            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectivePortalDigest"
+            Write-Output "ghcr.io/guchenkano/dtd-oauth2-proxy@$effectiveProxyDigest"
         }
         exit 0
     }

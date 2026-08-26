@@ -1,12 +1,19 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [string]$SourcePath = (Join-Path $PSScriptRoot '..\tools\skills\dkt-cicd'),
-    [string]$DestinationPath = (Join-Path $env:USERPROFILE '.agents\skills\dkt-cicd'),
+    [string]$SourcePath,
+    [string]$DestinationPath,
     [switch]$TestMode
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([String]::IsNullOrWhiteSpace($SourcePath)) {
+    $SourcePath = Join-Path $PSScriptRoot '..\tools\skills\dkt-cicd'
+}
+if ([String]::IsNullOrWhiteSpace($DestinationPath)) {
+    $DestinationPath = Join-Path $env:USERPROFILE '.agents\skills\dkt-cicd'
+}
 
 function Get-SkillManifest {
     <#
