@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-26，阶段0—5已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力均已形成生产证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6现已开始，阶段7—8尚未开始，当前已完成阶段为6/9。
+截至2026-08-26，阶段0—6已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7—8尚未开始，当前已完成阶段为7/9。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -71,7 +71,7 @@
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
-| 6 | 跨仓库部署锁与运维任务协调 | 进行中 | 本地实现与隔离验收完成，待提交、推送并安装生产准入策略后做只读预检 |
+| 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
 
@@ -547,7 +547,7 @@ portal: self-hosted, windows, dkt-prod, portal
 - 真实账号登录、退出、生产详情页面、实时SSE无感续订和通知SSE原计划由已信任当前自定义证书的外部Edge人工验收。用户于2026-08-25明确决定跳过该项；本文记录为风险豁免，不将其表述为“验收通过”。现有自动化页面、API和SSE检查结果继续保留。
 - 首轮正式部署实际执行了旧镜像恢复，但PowerShell 5.1误把Compose正常stderr进度判为错误，使状态文件记录为`rollback_failed`。修复版随后通过隔离回归测试及唯一一次受控生产回滚演练，已形成`rolled_back / RollbackSucceeded=true`证据，详见8.11节。
 - `production-iwork` Environment已经创建，但实际`protection_rules=[]`且`can_admins_bypass=true`；服务器完整SHA准入仍是当前主要补偿控制。
-- 看门狗尚未识别新的`production_deployment`维护标记；部署期间共享恢复Mutex可阻止看门狗和周重启执行恢复，但仍可能产生短暂健康告警。该兼容改造归入阶段6，在此之前作为已知风险观察。
+- 阶段4完成时，看门狗尚未识别新的`production_deployment`维护标记；该风险已在阶段6通过双Schema维护标记校验、共享恢复Mutex和隔离回归测试关闭。
 - 迁移失败时只自动回滚应用镜像，不自动还原数据库。`run_migrations=true`只允许用于已审查的expand/contract兼容迁移；备份用于受控人工恢复，禁止脚本自动覆盖生产数据库。
 
 ### 8.6 阶段验收标准
@@ -666,7 +666,7 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 
 每项验收必须记录Actions运行链接、Commit SHA、两个镜像Digest、生产状态文件和具体结果。“真实登录后可用”必须覆盖新旧Portal入口、OIDC登录/退出、Remote-User、Remote-Groups、权限拒绝页及六个应用的页面、API和静态资源，不能以302或容器healthy代替。若无法取得有效浏览器会话，必须明确记录人工验收阻断或由用户作出风险豁免。
 
-阶段5已经实现Portal单仓库部署Mutex、Docker恢复Mutex、共享锁文件和Portal维护标记，作为本阶段局部保护。跨仓库统一锁协议、看门狗消费Portal维护标记、周重启协调、锁超时接管和并发异常验收仍属于阶段6，不得据此提前标记阶段6完成。
+阶段5完成时只实现了Portal单仓库部署Mutex、Docker恢复Mutex、共享锁文件和Portal维护标记，属于当时的局部保护。跨仓库统一锁协议、看门狗消费Portal维护标记、周重启协调、锁超时接管和并发异常验收随后已在阶段6完成。
 
 ### 9.4 2026-08-25真实Runner与生产预检证据
 
@@ -814,6 +814,11 @@ D:\DM\cicd-locks\production-deploy.lock
 - 周重启、看门狗和部署任务不会重复操作同一容器。
 - 所有锁事件都有日志和Run ID可追溯。
 
+本阶段的并发触发、异常退出和运维互斥验收使用隔离目录、独立PowerShell进程、伪GitHub Run
+解析器及假维护标记完成，不操作生产容器、生产锁或真实计划任务。生产环境只执行准入安装、
+Runner smoke和`apply=false`预检。真实生产部署并发、强制终止生产Runner、真实周重启及故障注入
+属于阶段8验收范围；阶段6标记完成不表示这些生产破坏性场景已经执行。
+
 ### 10.4 实际实现
 
 两个仓库共用字节完全一致的`ProductionCoordination.psm1`，锁Schema固定为
@@ -881,7 +886,45 @@ Docker恢复Mutex和新的统一协调锁后，才允许对字段可信且已过
 原先错误地用Portal字段解释iwork部署标记，现已按两个真实Schema分别校验。DITU已完成
 正式切换，因此旧Keycloak认证地址不再作为健康检查回退，DITU discovery失败时严格失败。
 
-阶段状态：进行中（2026-08-26；本地代码与隔离验收完成，生产安装及只读预检待完成）。
+### 10.6 生产安装与只读预检证据
+
+2026-08-26在`192.168.0.97`完成生产准入安装和只读预检，未执行真实部署：
+
+- 服务器GitHub CLI为`2.98.0`，使用`DONGMING\shuju`桌面账号完成GitHub设备授权；
+  `gh auth status`确认账号为`GuChenkano`，并分别成功只读访问Portal与iwork的
+  `actions/runs`接口。授权Token未输出或写入仓库。
+- 两个生产仓库均使用`git pull --ff-only`安全快进：Portal固定到
+  `3bcc7a114e9df4e354db5e84af4d125a1b4d8ae0`，iwork固定到
+  `73417ff196098ed606a5354d4d101087d65359bb`。Portal既有的`docker/certs/`、
+  `docs/iwork看板操作手册.md`和证书待办方案三项未跟踪内容原样保留；iwork工作区保持干净。
+- Portal安装器将准入策略固定到上述Portal提交，部署脚本SHA-256为
+  `ba6b5c5d95213840169e6e076af13997e7f4fbbac45ac04d91a6b25c2406a830`；
+  iwork安装器固定到上述iwork提交，部署脚本SHA-256为
+  `7320713f6f9b0c445eb371ccf7c9f0926cfa020c88478ff1926453c59d44d7cd`；
+  两套已安装协调模块SHA-256均为
+  `39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3`。
+- Portal准入固定仓库`GuChenkano/DTD_nginx`、分支`feature/keycloak-migration`、actor
+  `GuChenkano`及`.github/workflows/runner-smoke.yml`、
+  `.github/workflows/deploy-portal.yml`；iwork准入固定仓库`GuChenkano/iwork`、分支
+  `Keycloak`、actor `GuChenkano`及`.github/workflows/runner-smoke.yml`、
+  `.github/workflows/deploy-iwork.yml`。Workflow名称和完整`GITHUB_WORKFLOW_REF`由安装后的
+  Job started Hook校验，浏览器输入不能覆盖。
+- Portal Runner smoke运行
+  [`32924939296`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32924939296)成功，
+  验证当前Portal和oauth2-proxy固定Digest及OCI revision；iwork Runner smoke运行
+  [`32924942094`](https://github.com/GuChenkano/iwork/actions/runs/32924942094)成功，
+  验证Runner身份、隔离工作目录、Docker和GHCR只读拉取能力。
+- Portal `apply=false`生产预检运行
+  [`32925115404`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32925115404)成功；
+  iwork `apply=false / run_migrations=false`生产预检运行
+  [`32925118718`](https://github.com/GuChenkano/iwork/actions/runs/32925118718)成功。
+  两次预检均未切换业务容器、未执行数据库迁移、未创建维护窗口。
+- 收尾复核确认两个Runner均已空闲，`production-deploy.lock`、Portal/iwork部署维护标记和
+  Docker周重启维护标记均不存在，没有候选容器残留。Portal、Authorizer、oauth2-proxy、
+  iwork及Alert Worker保持原启动时长并为`healthy`，两个服务器Git工作区状态与快进前边界一致。
+
+阶段状态：已完成（2026-08-26；代码、隔离测试、双轴复审、CI、GHCR、生产准入安装、
+Runner smoke及`apply=false`生产预检全部完成；未执行真实部署或故障注入）。
 
 ## 11. 阶段7——`dkt-cicd` Skill
 
@@ -978,7 +1021,7 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段5已经完成。真实账号浏览器业务验收按用户2026-08-26明确决定记录为风险豁免，不再阻断后续阶段；阶段6已经开始：
+阶段5和阶段6已经完成。真实账号浏览器业务验收按用户2026-08-26明确决定记录为风险豁免，不再阻断后续阶段：
 
 1. 已完成：Portal修复提交`254cb2d...`通过本地全套测试、双轴审查、CI和GHCR发布。
 2. 已完成：服务器准入固定到`254cb2d...`及部署脚本SHA-256；服务器仓库安全快进且保留未跟踪证书材料。
@@ -988,7 +1031,9 @@ gh run view --log-failed
 6. 已完成：新旧入口、OIDC issuer、六应用未登录路由、iwork生产详情和SSE自动化验收。
 7. 风险豁免：真实账号浏览器验收未执行，不表述为实际通过；证书工作继续沿用既有待办方案。
 8. 已完成：统一跨仓库锁、维护标记、看门狗、周重启和异常恢复协议，并完成本地隔离测试及双轴复审。
-9. 下一步：提交并推送两个仓库，等待CI；Runner空闲且生产无锁时只安装新准入策略与固定脚本，
-   再执行`apply=false`生产预检。不得用真实部署并发、删除锁文件、故障注入或真实周重启模拟恢复。
+9. 已完成：服务器安全快进两个批准提交，保留Portal既有未跟踪文件；生产准入脚本和协调模块按固定哈希安装。
+10. 已完成：Portal与iwork的Runner smoke及`apply=false`生产预检成功；收尾无锁、无维护标记、无候选容器残留，业务容器保持`healthy`。
+11. 下一步：进入阶段7，开发并验收`dkt-cicd` Skill。阶段7只封装查询、触发、监控、确认和汇报，
+    不把生产部署逻辑或密钥移入Skill；阶段8的真实部署、故障注入、并发锁和24小时观察仍不得提前执行。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
