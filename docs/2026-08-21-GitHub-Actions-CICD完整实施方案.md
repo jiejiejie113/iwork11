@@ -976,9 +976,16 @@ gh run view --log-failed
 
 ### 11.5 实际交付
 
-2026-08-26已安装以下用户级Skill，不读取或复制本机`gh`凭据：
+2026-08-26已将Skill源码纳入iwork Git版本管理，并安装到用户级技能目录；安装过程不读取或复制本机`gh`凭据：
 
 ```text
+版本化源码：
+C:\Users\lipengfei\ZCodeProject\iwork\tools\skills\dkt-cicd
+
+幂等安装入口：
+C:\Users\lipengfei\ZCodeProject\iwork\scripts\Install-DktCicdSkill.ps1
+
+安装副本：
 C:\Users\lipengfei\.agents\skills\dkt-cicd\SKILL.md
 C:\Users\lipengfei\.agents\skills\dkt-cicd\agents\openai.yaml
 C:\Users\lipengfei\.agents\skills\dkt-cicd\references\workflow-map.md
@@ -1009,7 +1016,7 @@ SKILL.md
 f1f0102f015440dcb2ad714957daa25baa457fdb63e8f1ce3bf15676d236d9aa
 
 scripts\Invoke-DktCicd.ps1
-6ec59855202e40d2420ee60528c670e0ed2d4496aa079a0b87e97222de49128c
+523d29e4c1d5e4f5ee9e8d33ee3c67a7fbd18476a052d82be821319cad400d65
 ```
 
 ### 11.6 验收证据
@@ -1054,8 +1061,11 @@ scripts\Invoke-DktCicd.ps1
   Workflow，不在Skill中直接SSH执行。
 - iwork `runner-smoke.yml`仍固定历史Revision/Digest，不是当前分支动态入口；Skill未把它
   暴露为当前版本通用smoke，避免错误验收。
-- Skill安装在用户级目录，不属于iwork Git仓库；本阶段Git提交只追踪本文档，实际安装树
-  通过上述完整路径、测试和主入口哈希留证。
+- 原“Skill只安装在用户目录、本阶段Git只追踪文档”的结论已修正：用户目录仍是运行时
+  安装副本，但完整源码已纳入
+  `tools/skills/dkt-cicd`。`scripts/Install-DktCicdSkill.ps1`使用暂存目录、逐文件SHA-256
+  校验和失败恢复完成幂等安装；`tests/test_install_dkt_cicd_skill.ps1`验证首次安装、文件
+  清单一致与重复安装不变。后续禁止只修改用户目录而不提交仓库版本源。
 
 阶段状态：已完成（2026-08-26；Skill安装、离线行为测试、真实只读查询、生产确认不触发
 验收及独立前向测试全部完成；没有提前执行阶段8的真实Workflow和生产动作）。

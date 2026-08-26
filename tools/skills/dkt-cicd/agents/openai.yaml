@@ -1,0 +1,4 @@
+interface:
+  display_name: "DKT CI/CD"
+  short_description: "安全触发、监控并汇报 DKT GitHub Actions"
+  default_prompt: "Use $dkt-cicd to 查看 iwork CI 状态并汇报失败步骤。"

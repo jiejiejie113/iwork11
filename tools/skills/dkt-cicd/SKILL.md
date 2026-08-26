@@ -1,0 +1,52 @@
+---
+name: dkt-cicd
+description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwork 与 DITU Portal 的 GitHub Actions CI、GHCR 发布和受控生产部署。适用于用户询问这两个仓库的 CI/CD 状态或明确要求触发相应 Workflow；不负责实现部署逻辑、管理 GitHub 凭据或直接操作生产容器。
+---
+
+# DKT CI/CD
+
+使用本 Skill 时，先根据用户意图选择服务和动作，再调用
+`scripts/Invoke-DktCicd.ps1`。详细仓库、分支、Workflow 和确认契约见
+[references/workflow-map.md](references/workflow-map.md)。
+
+## 边界
+
+- 复用当前 Windows 用户已登录的 `gh`；只检查登录是否可用，不读取或保存 Token、
+  `.git-credentials`、Cookie、私钥或 `dkt-secrets.env`。
+- Skill 只做参数校验、Workflow 触发、监控和结果汇报。构建、部署、数据库迁移、
+  健康检查和自动回滚继续由版本化 Workflow 与服务器固定脚本执行。
+- 查询状态和失败日志可直接执行。CI 与 GHCR 发布可在用户明确要求后直接触发，
+  不需要生产确认。
+- `deploy` 是生产变更。必须先不带 `-ApprovalText` 调用一次以生成确认预览，向用户
+  展示服务、仓库、分支、Commit、Digest、环境、迁移开关和变更说明；只接受用户在
+  看到本次预览后给出的精确确认词。不得把更早的笼统授权视为本次确认。
+- Portal 同时影响 Portal、oauth2-proxy 与认证入口，使用比 iwork 更强的确认词。
+- 不把 `queued`、`in_progress` 当作成功。仅 `status=completed` 且
+  `conclusion=success` 才可报告成功。
+
+## 动作路由
+
+| 用户意图 | 脚本动作 |
+|---|---|
+| 查看最近 Actions/CI 状态 | `status -WorkflowKind ci`；全部 Workflow 使用默认值 `all` |
+| 查看某次失败日志 | `failed-log -RunId <id>` |
+| 运行测试或纯 CI | `ci` |
+| 构建并发布不可变 GHCR 镜像 | `release` |
+| 仅拉取、复验生产候选镜像 | `preflight` |
+| 部署到生产 | `deploy`，严格执行两段确认 |
+| 查看生产交付证据 | `production-status` |
+| 回滚上一次部署 | `rollback`，当前必须失败关闭并说明缺少独立手工回滚 Workflow |
+
+默认添加 `-OutputJson`，以便稳定解析结果。需要等待运行结束时添加 `-Wait`。例如：
+
+```powershell
+& "$env:USERPROFILE\.agents\skills\dkt-cicd\scripts\Invoke-DktCicd.ps1" `
+    -Action status -Service iwork -OutputJson
+```
+
+## 汇报
+
+每次触发或查询后至少汇报：服务、Workflow、状态、结论、Commit、Run 链接和耗时。
+GHCR 发布或部署还要汇报完整 Digest；失败时列出失败 Job/Step，并仅按需展示已经脱敏的
+失败日志。若脚本返回 `confirmation_required`，先向用户展示返回的预览和精确确认词，
+不要自行补全或代替用户确认。

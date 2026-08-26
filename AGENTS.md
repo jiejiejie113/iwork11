@@ -44,3 +44,4 @@
 - 在该文档所有阶段标记为“已完成”前，后续Agent必须延续维护；不得另建重复的CI/CD总方案替代本文件。
 - 当前GitHub套餐无法启用Environment Required Reviewer和`Keycloak`分支保护；不得把Workflow的`environment`声明视为有效审批。生产准入必须固定人工批准的完整Commit SHA、Workflow路径、actor、仓库、分支和服务器部署脚本SHA-256。
 - 每批准一个新的部署Workflow提交，都必须在Runner空闲时更新服务器准入策略；旧的、已删除或当前不可拉取的GHCR Digest不得作为生产部署输入。
+- `dkt-cicd` Skill的Git版本源固定为`tools/skills/dkt-cicd`，`%USERPROFILE%\.agents\skills\dkt-cicd`仅是安装副本。修改Skill后必须运行`scripts/Install-DktCicdSkill.ps1`并验证逐文件SHA-256一致，禁止只改用户目录而不提交版本源。

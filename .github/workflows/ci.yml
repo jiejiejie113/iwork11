@@ -65,6 +65,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "同步脚本测试失败" }
           & ./tests/test_install_production_orders_sync_task.ps1
           if ($LASTEXITCODE -ne 0) { throw "计划任务脚本测试失败" }
+          & ./tests/test_install_dkt_cicd_skill.ps1
+          if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill安装测试失败" }
+          & ./tools/skills/dkt-cicd/tests/Test-DktCicd.ps1
+          if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill行为测试失败" }
 
   build:
     name: 无密钥Docker构建
