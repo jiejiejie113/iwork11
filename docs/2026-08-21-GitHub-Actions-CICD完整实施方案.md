@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-26，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill，真实生产部署仍留在阶段8执行。阶段0—7共8个阶段已完成，阶段8尚未开始。
+截至2026-08-26，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill，阶段8已开始执行iwork端到端验收。阶段0—7共8个阶段已完成，阶段8进行中。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -73,7 +73,7 @@
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
-| 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
+| 8 | 端到端验收与观察 | 进行中 | iwork新Commit纯CI成功；GHCR首次发布暴露清单最终一致性缺陷，已修复待复验 |
 
 ## 4. 已完成：阶段0——基线与纯CI
 
@@ -1079,6 +1079,29 @@ scripts\Invoke-DktCicd.ps1
 
 ## 12. 阶段8——端到端验收与稳定观察
 
+### 12.1 首轮iwork CI与GHCR发布
+
+2026-08-26阶段8正式开始：
+
+- 阶段7提交及阶段8门禁修复推送后，iwork远程`Keycloak`指向
+  `b0ca01b24295fe89be3832a631f1df3ccb55381b`。
+- Skill手工触发的纯CI运行
+  [`32940305292`](https://github.com/GuChenkano/iwork/actions/runs/32940305292)成功；同Commit的
+  push触发运行`32940297739`因Workflow并发策略被正常取消，没有重复执行结果。
+- Skill的45秒Run发现窗口未及时看到已经提交的手工CI和Release运行，均按设计失败关闭；
+  后续只查询并监控已存在Run，没有重复触发。该延迟作为阶段8观察项保留。
+- GHCR发布运行
+  [`32940662133`](https://github.com/GuChenkano/iwork/actions/runs/32940662133)完成镜像构建与推送，
+  日志产生Digest`sha256:4ad72cbb57414918ae522d06753e3a91685a19e7ee9162f0cf9491c402a86002`，
+  但推送后立即执行的`imagetools inspect`尚未读取到清单，运行因此失败；未将失败Run或其
+  Digest作为成功发布证据。
+- 根因是GHCR推送后清单短暂最终一致，而非构建、权限或推送失败。修复为仅在`docker push`
+  成功后对Digest解析执行6次、每次间隔5秒的有界重试；发布前复用检查仍为单次，构建、
+  推送、Digest格式及OCI revision失败继续立即停止。目标Workflow测试已先红后绿。
+
+当前仍需对修复Commit重新执行CI、GHCR发布、生产只拉取预检和后续生产验收；不得复用首轮
+失败Release作为前置证据。
+
 按以下顺序执行，不得跳级：
 
 1. 通过Skill手工触发iwork纯CI并监控到成功。
@@ -1103,7 +1126,8 @@ scripts\Invoke-DktCicd.ps1
 - Skill自然语言场景验收通过。
 - 24小时观察无持续异常。
 
-阶段状态：未开始。
+阶段状态：进行中（2026-08-26；iwork纯CI成功，GHCR首轮失败已定位并修复，尚未形成新的
+成功Release或执行生产预检/部署）。
 
 ## 13. 全局风险控制
 
@@ -1136,7 +1160,8 @@ scripts\Invoke-DktCicd.ps1
 10. 已完成：Portal与iwork的Runner smoke及`apply=false`生产预检成功；收尾无锁、无维护标记、无候选容器残留，业务容器保持`healthy`。
 11. 已完成：安装并验收`dkt-cicd` Skill；72个离线断言、真实只读Actions查询、Digest提取、
     高等级生产确认门禁和独立前向测试通过，阶段7没有触发真实Workflow。
-12. 下一步：进入阶段8，按顺序通过Skill触发iwork纯CI、发布GHCR镜像并执行只拉取预检；
-    后续真实部署、故障注入、并发锁验收和24小时观察继续使用独立维护窗口及明确生产确认。
+12. 进行中：阶段8的iwork纯CI已成功；GHCR首轮发布失败已修复，下一步对修复Commit重新执行
+    CI、GHCR发布和只拉取预检。后续真实部署、故障注入、并发锁验收和24小时观察继续使用
+    独立维护窗口及明确生产确认。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。

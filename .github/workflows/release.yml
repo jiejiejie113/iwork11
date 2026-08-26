@@ -101,15 +101,26 @@ jobs:
           $startedAt = [DateTimeOffset]::UtcNow
 
           function Get-RemoteDigest {
-              param([string] $ImageReference)
+              param(
+                  [string] $ImageReference,
+                  [int] $Attempts = 1,
+                  [int] $DelaySeconds = 5
+              )
 
-              $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}' 2>$null
-              if ($LASTEXITCODE -ne 0) { return $null }
-              $digest = @($digestOutput)[-1].Trim().Trim('"')
-              if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
-                  throw "GHCR返回了无效Digest: $digest"
+              for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+                  $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}' 2>$null
+                  if ($LASTEXITCODE -eq 0) {
+                      $digest = @($digestOutput)[-1].Trim().Trim('"')
+                      if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
+                          throw "GHCR返回了无效Digest: $digest"
+                      }
+                      return $digest
+                  }
+                  if ($attempt -lt $Attempts) {
+                      Start-Sleep -Seconds $DelaySeconds
+                  }
               }
-              return $digest
+              return $null
           }
 
           function Assert-ImageRevision {
@@ -139,7 +150,7 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "iwork镜像构建失败" }
               docker push $env:IMAGE_REF
               if ($LASTEXITCODE -ne 0) { throw "iwork镜像推送失败" }
-              $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF
+              $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF -Attempts 6 -DelaySeconds 5
               if (-not $digest) { throw "推送后无法解析iwork镜像Digest" }
               Assert-ImageRevision -ImageReference "$env:IMAGE_NAME@$digest"
           }

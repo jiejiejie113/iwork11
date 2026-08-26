@@ -105,6 +105,17 @@ def test_release_workflow_only_publishes_immutable_iwork_image() -> None:
     assert "docker pull" in content
     assert "docker logout ghcr.io" in content
     assert "persist-credentials: false" in content
+    assert "[int] $Attempts = 1" in content
+    assert "for ($attempt = 1; $attempt -le $Attempts; $attempt++)" in content
+    assert "Start-Sleep -Seconds $DelaySeconds" in content
+    assert (
+        "Get-RemoteDigest -ImageReference $env:IMAGE_REF -Attempts 6 -DelaySeconds 5"
+        in content
+    )
+    assert content.count("-Attempts 6 -DelaySeconds 5") == 1
+    assert content.index("docker push $env:IMAGE_REF") < content.index(
+        "Get-RemoteDigest -ImageReference $env:IMAGE_REF -Attempts 6 -DelaySeconds 5"
+    )
     assert action_uses
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_uses)
 
