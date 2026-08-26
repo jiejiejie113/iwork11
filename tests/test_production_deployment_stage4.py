@@ -3,7 +3,9 @@
 import hashlib
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import subprocess
 
 import yaml
@@ -14,16 +16,21 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "deploy-iwork.yml"
 DEPLOY_SCRIPT_PATH = ROOT / "scripts" / "Invoke-IworkProductionDeployment.ps1"
+COORDINATION_MODULE_PATH = ROOT / "scripts" / "ProductionCoordination.psm1"
 POLICY_INSTALLER_PATH = ROOT / "scripts" / "Install-IworkProductionDeployment.ps1"
 RUNNER_INSTALLER_PATH = ROOT / "scripts" / "Install-GitHubProductionRunner.ps1"
 START_SCRIPT_PATH = ROOT / "start.sh"
 GIT_ATTRIBUTES_PATH = ROOT / ".gitattributes"
 CANDIDATE_DIGEST = "sha256:" + "1" * 64
 CANDIDATE_REVISION = "2" * 40
+DEPLOYMENT_RUN_ID = "123456-1"
 SYSTEM_ROOT = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
 WHOAMI_EXE = SYSTEM_ROOT / "System32" / "whoami.exe"
 POWERSHELL_EXE = (
     SYSTEM_ROOT / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+)
+EXPECTED_COORDINATION_MODULE_SHA256 = (
+    "39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3"
 )
 
 
@@ -83,7 +90,7 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     """部署工作流必须调用固定服务器脚本，并清理短期GHCR认证。"""
     content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert r"D:\DM\cicd-tools" in content
+    assert r"D:\DM\cicd-tools\iwork" in content
     assert "Invoke-IworkProductionDeployment.ps1" in content
     assert "DEPLOY_SCRIPT_SHA256:" in content
     assert "Get-FileHash" in content
@@ -109,6 +116,61 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
 
     script_hash = hashlib.sha256(DEPLOY_SCRIPT_PATH.read_bytes()).hexdigest()
     assert f"DEPLOY_SCRIPT_SHA256: {script_hash}" in content
+    module_hash = hashlib.sha256(COORDINATION_MODULE_PATH.read_bytes()).hexdigest()
+    assert f"DEPLOY_COORDINATION_MODULE_SHA256: {module_hash}" in content
+    assert module_hash == EXPECTED_COORDINATION_MODULE_SHA256
+    assert "DEPLOY_COORDINATION_MODULE_PATH:" in content
+    assert "DEPLOY_COORDINATION_MODULE_PATH" in content
+
+
+def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
+    """统一协调模块必须字节固定，并由部署脚本接入三段式锁生命周期。"""
+    module_bytes = COORDINATION_MODULE_PATH.read_bytes()
+    assert module_bytes.startswith(b"\xef\xbb\xbf")
+    assert hashlib.sha256(module_bytes).hexdigest() == EXPECTED_COORDINATION_MODULE_SHA256
+
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+    assert "Import-Module -Name $COORDINATION_MODULE" in content
+    assert "Enter-ProductionCoordinationLock" in content
+    assert "Update-ProductionCoordinationLock" in content
+    assert "Exit-ProductionCoordinationLock" in content
+    assert "-Repository 'GuChenkano/iwork'" in content
+    assert "-Service 'iwork'" in content
+    assert "-ArtifactDigests @{ iwork = $ImageDigest }" in content
+    assert "if (Test-Path -LiteralPath $DEPLOYMENT_LOCK_FILE -PathType Leaf)" not in content
+
+
+def test_policy_installer_installs_and_pins_script_and_coordination_module() -> None:
+    """安装器必须原子暂存部署脚本和协调模块，并在Hook固定双SHA。"""
+    content = POLICY_INSTALLER_PATH.read_text(encoding="utf-8-sig")
+    lowered = content.lower()
+
+    assert "SourceCoordinationModule" in content
+    assert "TARGET_COORDINATION_MODULE" in content
+    assert "MODULE_SHA256" in content
+    assert "coordinationModuleTemporaryPath" in content
+    assert "COORDINATION_MODULE_PATH" in content
+    assert "COORDINATION_MODULE_SHA256" in content
+    assert "Get-FileHash -LiteralPath $coordinationModulePath" in content
+    assert "Move-Item -LiteralPath $coordinationModuleTemporaryPath" in content
+    assert "module" in lowered
+
+
+def test_deployment_lock_schema_contract_is_explicit() -> None:
+    """部署接入必须传递统一锁Schema所需的Run、版本和制品字段。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "production-deploy-lock-v1" in COORDINATION_MODULE_PATH.read_text(
+        encoding="utf-8-sig"
+    )
+    assert "-RunId $RunId" in content
+    assert "-Actor $Actor" in content
+    assert "-ExpectedRevision $ExpectedRevision" in content
+    assert "-Phase 'candidate_validation'" in content
+    assert "-Phase 'preflight_complete'" in content
+    assert "-Phase 'production_validation'" in content
+    assert "-Phase 'automatic_rollback'" in content
+    assert "-Phase 'completed'" in content
 
 
 def test_deploy_workflow_requires_explicit_one_time_rollback_drill() -> None:
@@ -137,13 +199,22 @@ def test_policy_installer_pins_workflow_commit_and_server_script() -> None:
     assert "iwork controlled production deployment" in content
     assert "runner-smoke.yml@refs/heads/Keycloak" in content
     assert "deploy-iwork.yml@refs/heads/Keycloak" in content
-    assert r"D:\DM\cicd-tools" in content
+    assert r"D:\DM\cicd-tools\iwork" in content
     assert "Invoke-IworkProductionDeployment.ps1" in content
     assert "Get-FileHash" in content
     assert "Runner.Worker.exe" in content
     assert "Move-Item" in content
     assert "StateRoot" in content
     assert "LockRoot" in content
+    assert "Assert-CrossRepositoryRunReadiness" in content
+    assert "GuChenkano/DTD_nginx" in content
+    assert '"repos/$CROSS_REPOSITORY/actions/runs?per_page=1"' in content
+    assert "$env:GH_TOKEN = $null" in content
+    assert "$env:GITHUB_TOKEN = $null" in content
+    assert "$previousGhToken = $env:GH_TOKEN" in content
+    assert "$previousGitHubToken = $env:GITHUB_TOKEN" in content
+    assert "$env:GH_TOKEN = $previousGhToken" in content
+    assert "$env:GITHUB_TOKEN = $previousGitHubToken" in content
 
     for forbidden in (
         "dkt-secrets.env",
@@ -195,6 +266,8 @@ def _run_deployment_script(
     emit_compose_progress: bool = False,
     transient_alert_unhealthy_checks: int = 0,
     health_timeout_seconds: int = 2,
+    fail_maintenance_cleanup: bool = False,
+    existing_maintenance_marker: dict[str, object] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -210,6 +283,8 @@ def _run_deployment_script(
         emit_compose_progress (bool): 是否模拟Compose在标准错误输出成功进度。
         transient_alert_unhealthy_checks (int): 告警Worker暂时不健康的检查次数。
         health_timeout_seconds (int): 等待容器恢复健康的超时秒数。
+        fail_maintenance_cleanup (bool): 是否模拟维护标记在清理前变为不可删除目录。
+        existing_maintenance_marker: 运行前写入的部署维护标记。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
@@ -219,6 +294,12 @@ def _run_deployment_script(
     state_root = tmp_path / "state"
     lock_root = tmp_path / "locks"
     maintenance_file = tmp_path / "maintenance" / "iwork-deployment.json"
+    if existing_maintenance_marker is not None:
+        maintenance_file.parent.mkdir(parents=True, exist_ok=True)
+        maintenance_file.write_text(
+            json.dumps(existing_maintenance_marker),
+            encoding="utf-8",
+        )
     profile = iwork_root / "env" / "production.env"
     secrets = tmp_path / "dkt-secrets.env"
     docker_log = tmp_path / "docker.log"
@@ -318,6 +399,16 @@ if ($line -like 'compose*up *--no-build --no-deps iwork alert-worker*') {
     ) {
         throw 'Injected rollback compose failure'
     }
+    if (
+        $env:FAKE_FAIL_MAINTENANCE_CLEANUP -eq '1' -and
+        $images[0] -like 'ghcr.io/guchenkano/iwork@*'
+    ) {
+        Remove-Item -LiteralPath $env:FAKE_MAINTENANCE_FILE -Force
+        New-Item -ItemType Directory -Path $env:FAKE_MAINTENANCE_FILE | Out-Null
+        Set-Content `
+            -LiteralPath (Join-Path $env:FAKE_MAINTENANCE_FILE 'hold.txt') `
+            -Value 'injected cleanup failure'
+    }
     Set-Content -LiteralPath $env:FAKE_WEB_IMAGE_STATE -Value $images[0] -NoNewline
     Set-Content -LiteralPath $env:FAKE_ALERT_IMAGE_STATE -Value $images[1] -NoNewline
     return
@@ -368,6 +459,10 @@ exit /b %fakeDockerExitCode%
     env["FAKE_TRANSIENT_ALERT_UNHEALTHY_CHECKS"] = str(
         transient_alert_unhealthy_checks
     )
+    env["FAKE_FAIL_MAINTENANCE_CLEANUP"] = (
+        "1" if fail_maintenance_cleanup else "0"
+    )
+    env["FAKE_MAINTENANCE_FILE"] = str(maintenance_file)
     env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
@@ -404,7 +499,7 @@ exit /b %fakeDockerExitCode%
             "-RollbackDrill",
             str(rollback_drill).lower(),
             "-RunId",
-            "stage4-test-1",
+            DEPLOYMENT_RUN_ID,
             "-Actor",
             "GuChenkano",
             "-ChangeDescription",
@@ -469,6 +564,137 @@ def test_preflight_validates_candidate_without_mutating_containers(tmp_path: Pat
     assert not paths["maintenance_file"].exists()
 
 
+def test_deploy_archives_expired_owned_maintenance_marker(tmp_path: Path) -> None:
+    """取得双Mutex和新协调锁后，应归档可信且已过期的旧维护标记。"""
+    expired_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        existing_maintenance_marker={
+            "application": "iwork",
+            "operation": "production_deployment",
+            "workflow_run_id": "654321-1",
+            "actor": "GuChenkano",
+            "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
+            "expires_at": expired_at.isoformat(),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not paths["maintenance_file"].exists()
+    archives = list(
+        paths["maintenance_file"].parent.glob(
+            "iwork-deployment.json.stale.*.json"
+        )
+    )
+    assert len(archives) == 1
+
+
+def test_deploy_preserves_untrusted_expired_maintenance_markers(
+    tmp_path: Path,
+) -> None:
+    """不完整或不可信的iwork维护标记必须保留并使部署失败关闭。"""
+    expired_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    valid_marker: dict[str, object] = {
+        "application": "iwork",
+        "operation": "production_deployment",
+        "workflow_run_id": "654321-1",
+        "actor": "GuChenkano",
+        "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
+        "expires_at": expired_at.isoformat(),
+    }
+    invalid_markers = {
+        "missing-started-at": {
+            key: value
+            for key, value in valid_marker.items()
+            if key != "started_at"
+        },
+        "reversed-window": {
+            **valid_marker,
+            "started_at": (expired_at + timedelta(minutes=1)).isoformat(),
+        },
+        "overlong-window": {
+            **valid_marker,
+            "started_at": (expired_at - timedelta(minutes=21)).isoformat(),
+        },
+        "invalid-run-id": {
+            **valid_marker,
+            "workflow_run_id": "invalid run id",
+        },
+        "invalid-status": {**valid_marker, "status": "failed"},
+        "invalid-actor": {**valid_marker, "actor": 123},
+        "future-window": {
+            **valid_marker,
+            "started_at": (expired_at + timedelta(days=1)).isoformat(),
+            "expires_at": (
+                expired_at + timedelta(days=1, minutes=19)
+            ).isoformat(),
+        },
+    }
+
+    for case_name, marker in invalid_markers.items():
+        result, paths = _run_deployment_script(
+            tmp_path / case_name,
+            mode="Deploy",
+            existing_maintenance_marker=marker,
+        )
+        assert result.returncode != 0, case_name
+        assert paths["maintenance_file"].is_file(), case_name
+        assert not list(
+            paths["maintenance_file"].parent.glob(
+                "iwork-deployment.json.stale.*.json"
+            )
+        ), case_name
+
+
+def test_preflight_does_not_archive_expired_maintenance_without_lock(
+    tmp_path: Path,
+) -> None:
+    """只读预检未取得协调锁时，不得处理其他运行遗留的维护标记。"""
+    expired_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        existing_maintenance_marker={
+            "application": "iwork",
+            "operation": "production_deployment",
+            "workflow_run_id": "654322-1",
+            "actor": "GuChenkano",
+            "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
+            "expires_at": expired_at.isoformat(),
+        },
+    )
+
+    assert result.returncode != 0
+    assert paths["maintenance_file"].is_file()
+    assert not list(
+        paths["maintenance_file"].parent.glob(
+            "iwork-deployment.json.stale.*.json"
+        )
+    )
+
+
+def test_deploy_does_not_archive_active_maintenance_marker(tmp_path: Path) -> None:
+    """即使取得新锁，未过期维护标记仍必须失败关闭并保留原文件。"""
+    started_at = datetime.now(timezone.utc)
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        existing_maintenance_marker={
+            "application": "iwork",
+            "operation": "production_deployment",
+            "workflow_run_id": "654323-1",
+            "actor": "GuChenkano",
+            "started_at": started_at.isoformat(),
+            "expires_at": (started_at + timedelta(minutes=20)).isoformat(),
+        },
+    )
+
+    assert result.returncode != 0
+    assert paths["maintenance_file"].is_file()
+    assert not (paths["lock_root"] / "production-deploy.lock").exists()
+
+
 def test_preflight_waits_for_transient_alert_worker_health_recovery(
     tmp_path: Path,
 ) -> None:
@@ -504,7 +730,7 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert "exec dkt_iwork_alert_worker celery" in docker_calls
     assert " down " not in f" {docker_calls} "
 
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "deployed"
     assert state["PreviousWebImageId"].startswith("sha256:")
@@ -525,7 +751,7 @@ def test_deploy_accepts_successful_compose_progress_on_stderr(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stderr
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "deployed"
     assert state["RollbackSucceeded"] is False
@@ -548,12 +774,12 @@ def test_controlled_rollback_drill_restores_both_previous_images(
 
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
-    assert "iwork-web-rollback:stage4-test-1" in docker_calls
-    assert "iwork-alert-worker-rollback:stage4-test-1" in docker_calls
+    assert f"iwork-web-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
+    assert f"iwork-alert-worker-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
     assert docker_calls.count("inspect dkt_iwork --format {{.image}}") >= 2
     assert docker_calls.count("inspect dkt_iwork_alert_worker --format {{.image}}") >= 2
 
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "rolled_back"
     assert state["RollbackSucceeded"] is True
@@ -563,7 +789,7 @@ def test_controlled_rollback_drill_restores_both_previous_images(
     drill_file = paths["state_root"] / "rollback-drill-v1.json"
     drill = json.loads(drill_file.read_text(encoding="utf-8"))
     assert drill["Status"] == "succeeded"
-    assert drill["RunId"] == "stage4-test-1"
+    assert drill["RunId"] == DEPLOYMENT_RUN_ID
     assert drill["PreviousWebImageId"].startswith("sha256:")
     assert drill["PreviousAlertWorkerImageId"].startswith("sha256:")
     assert not (paths["lock_root"] / "production-deploy.lock").exists()
@@ -601,7 +827,7 @@ def test_controlled_rollback_drill_stops_after_unexpected_failure(
     )
 
     assert result.returncode != 0
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "rolled_back"
     assert state["RollbackSucceeded"] is True
@@ -640,7 +866,7 @@ def test_rollback_failure_is_visible_in_job_error_and_state(tmp_path: Path) -> N
 
     assert result.returncode != 0
     assert "自动回滚失败" in result.stderr
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "rollback_failed"
     assert state["RollbackSucceeded"] is False
@@ -660,12 +886,12 @@ def test_deploy_failure_automatically_restores_both_previous_images(
     assert result.returncode != 0
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
-    assert "iwork-web-rollback:stage4-test-1" in docker_calls
-    assert "iwork-alert-worker-rollback:stage4-test-1" in docker_calls
+    assert f"iwork-web-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
+    assert f"iwork-alert-worker-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
     assert docker_calls.count("exec dkt_iwork python manage.py check --deploy") == 2
     assert docker_calls.count("exec dkt_iwork_alert_worker celery") == 1
 
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert state["Status"] == "rolled_back"
     assert state["RollbackSucceeded"] is True
@@ -688,9 +914,9 @@ def test_migration_deployment_creates_database_backup_and_checksum(
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert "exec dkt_mysql sh -c" in docker_calls
     assert "mysqldump" in docker_calls
-    assert "cp dkt_mysql:/tmp/iwork-stage4-test-1.sql" in docker_calls
+    assert f"cp dkt_mysql:/tmp/iwork-{DEPLOYMENT_RUN_ID}.sql" in docker_calls
 
-    state_file = paths["state_root"] / "stage4-test-1.json"
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
     backup_path = Path(state["DatabaseBackupPath"])
     assert backup_path.is_file()
@@ -729,9 +955,62 @@ def test_deployment_only_removes_locks_and_markers_it_created() -> None:
     """部署进程未取得所有权时，不得删除其他运维进程的锁或维护标记。"""
     content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
 
-    assert "$ownsLockFile = $false" in content
-    assert "$ownsLockFile = $true" in content
-    assert "if ($ownsLockFile)" in content
+    assert "$coordinationLock = $null" in content
+    assert "if ($null -ne $coordinationLock)" in content
+    assert "Exit-ProductionCoordinationLock -Lock $coordinationLock" in content
     assert "$ownsMaintenanceFile = $false" in content
     assert "$ownsMaintenanceFile = $true" in content
     assert "if ($ownsMaintenanceFile)" in content
+
+
+def test_maintenance_cleanup_failure_still_releases_lock_and_records_failure(
+    tmp_path: Path,
+) -> None:
+    """维护标记清理失败时，协调锁仍应释放且部署状态必须暴露失败。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        fail_maintenance_cleanup=True,
+    )
+
+    assert result.returncode != 0
+    assert "部署清理失败" in result.stderr
+    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["Status"] == "cleanup_failed"
+    assert state["CleanupSucceeded"] is False
+    assert any("维护标记清理失败" in error for error in state["CleanupErrors"])
+    assert not (paths["lock_root"] / "production-deploy.lock").exists()
+    assert paths["maintenance_file"].is_dir()
+
+
+def test_stage6_cleanup_failures_are_isolated_visible_and_fatal() -> None:
+    """阶段六清理失败必须隔离后续释放、可记录并使部署结果失败。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+    cleanup = content[content.rfind("    finally {"):]
+
+    assert re.search(
+        r"try\s*\{.*?\$ownsMaintenanceFile.*?Remove-Item.*?-ErrorAction Stop.*?\}\s*catch",
+        cleanup,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"try\s*\{.*?\$coordinationLock.*?Exit-ProductionCoordinationLock.*?\}\s*catch",
+        cleanup,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"try\s*\{.*?Exit-DeploymentMutex -Mutex \$recoveryMutex.*?\}\s*catch",
+        cleanup,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"try\s*\{.*?Exit-DeploymentMutex -Mutex \$productionMutex.*?\}\s*catch",
+        cleanup,
+        re.DOTALL,
+    )
+    assert "-ErrorAction SilentlyContinue" not in cleanup
+    assert "$cleanupErrors" in cleanup
+    assert "CleanupErrors" in cleanup
+    assert "cleanup_failed" in cleanup
+    assert "部署清理失败" in cleanup

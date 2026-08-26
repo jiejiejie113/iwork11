@@ -70,8 +70,10 @@ jobs:
       RUN_MIGRATIONS: ${{ inputs.run_migrations }}
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
-      DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: e9cd76bc6cc8f63c106d60bbf0e258f65891ee2085e80df4539cdf4c2113805b
+      DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
+      DEPLOY_SCRIPT_SHA256: 7320713f6f9b0c445eb371ccf7c9f0926cfa020c88478ff1926453c59d44d7cd
+      DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
+      DEPLOY_COORDINATION_MODULE_SHA256: 39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3
     steps:
       - name: 校验候选镜像并执行预检或部署
         shell: powershell
@@ -169,6 +171,15 @@ jobs:
           ).Hash.ToLowerInvariant()
           if ($actualScriptHash -cne $env:DEPLOY_SCRIPT_SHA256) {
               throw "Pinned deployment script SHA-256 mismatch: $actualScriptHash"
+          }
+          if (-not (Test-Path -LiteralPath $env:DEPLOY_COORDINATION_MODULE_PATH -PathType Leaf)) {
+              throw "Pinned coordination module is missing: $env:DEPLOY_COORDINATION_MODULE_PATH"
+          }
+          $actualModuleHash = (
+              Get-FileHash -LiteralPath $env:DEPLOY_COORDINATION_MODULE_PATH -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($actualModuleHash -cne $env:DEPLOY_COORDINATION_MODULE_SHA256) {
+              throw "Pinned coordination module SHA-256 mismatch: $actualModuleHash"
           }
 
           $candidateImage = "ghcr.io/guchenkano/iwork@$env:IMAGE_DIGEST"

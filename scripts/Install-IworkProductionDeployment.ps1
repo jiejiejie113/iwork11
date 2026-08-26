@@ -7,7 +7,10 @@ param(
     [string]$SourceDeployScript = (
         Join-Path $PSScriptRoot 'Invoke-IworkProductionDeployment.ps1'
     ),
-    [string]$ToolRoot = 'D:\DM\cicd-tools',
+    [string]$SourceCoordinationModule = (
+        Join-Path $PSScriptRoot 'ProductionCoordination.psm1'
+    ),
+    [string]$ToolRoot = 'D:\DM\cicd-tools\iwork',
     [string]$PolicyRoot = 'D:\DM\cicd-policy',
     [string]$StateRoot = 'D:\DM\cicd-state\iwork',
     [string]$LockRoot = 'D:\DM\cicd-locks',
@@ -22,10 +25,12 @@ $OutputEncoding = [Text.Encoding]::UTF8
 # ======
 # 固定策略配置
 $TARGET_DEPLOY_SCRIPT = Join-Path $ToolRoot 'Invoke-IworkProductionDeployment.ps1'
+$TARGET_COORDINATION_MODULE = Join-Path $ToolRoot 'ProductionCoordination.psm1'
 $TARGET_HOOK = Join-Path $PolicyRoot 'iwork-job-started.ps1'
 $EXPECTED_REPOSITORY = 'GuChenkano/iwork'
 $EXPECTED_REF = 'refs/heads/Keycloak'
 $EXPECTED_ACTOR = 'GuChenkano'
+$CROSS_REPOSITORY = 'GuChenkano/DTD_nginx'
 
 function Assert-Administrator {
     $principal = [Security.Principal.WindowsPrincipal]::new(
@@ -52,11 +57,47 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-CrossRepositoryRunReadiness {
+    <#
+    .SYNOPSIS
+        确认Runner账号可只读查询另一仓库的Actions Run。
+    #>
+    $gh = Get-Command 'gh.exe' -ErrorAction SilentlyContinue
+    if (-not $gh) { $gh = Get-Command 'gh' -ErrorAction SilentlyContinue }
+    if (-not $gh) { throw '未安装GitHub CLI，无法核验跨仓库Run。' }
+
+    $previousTimeout = $env:GH_HTTP_TIMEOUT
+    $previousGhToken = $env:GH_TOKEN
+    $previousGitHubToken = $env:GITHUB_TOKEN
+    try {
+        $env:GH_TOKEN = $null
+        $env:GITHUB_TOKEN = $null
+        $env:GH_HTTP_TIMEOUT = '30'
+        & $gh.Source auth status --hostname github.com 1>$null 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI未登录。' }
+        & $gh.Source api `
+            "repos/$CROSS_REPOSITORY/actions/runs?per_page=1" `
+            --silent 1>$null 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "当前Runner账号无法只读访问跨仓库：$CROSS_REPOSITORY"
+        }
+    }
+    finally {
+        $env:GH_HTTP_TIMEOUT = $previousTimeout
+        $env:GH_TOKEN = $previousGhToken
+        $env:GITHUB_TOKEN = $previousGitHubToken
+    }
+}
+
 Assert-Administrator
 Assert-ExpectedIdentity
+Assert-CrossRepositoryRunReadiness
 
 if (-not (Test-Path -LiteralPath $SourceDeployScript -PathType Leaf)) {
     throw "源部署脚本不存在：$SourceDeployScript"
+}
+if (-not (Test-Path -LiteralPath $SourceCoordinationModule -PathType Leaf)) {
+    throw "源协调模块不存在：$SourceCoordinationModule"
 }
 
 $activeWorker = Get-CimInstance Win32_Process | Where-Object {
@@ -73,7 +114,9 @@ foreach ($directory in @($ToolRoot, $PolicyRoot, $StateRoot, $LockRoot)) {
 }
 
 $sourceHash = Get-Sha256 -Path $SourceDeployScript
+$coordinationModuleHash = Get-Sha256 -Path $SourceCoordinationModule
 $scriptTemporaryPath = "$TARGET_DEPLOY_SCRIPT.$([Guid]::NewGuid().ToString('N')).tmp"
+$coordinationModuleTemporaryPath = "$TARGET_COORDINATION_MODULE.$([Guid]::NewGuid().ToString('N')).tmp"
 $hookTemporaryPath = "$TARGET_HOOK.$([Guid]::NewGuid().ToString('N')).tmp"
 
 try {
@@ -81,6 +124,12 @@ try {
     $copiedHash = Get-Sha256 -Path $scriptTemporaryPath
     if ($copiedHash -cne $sourceHash) {
         throw "复制后的部署脚本SHA-256不一致：$copiedHash"
+    }
+
+    Copy-Item -LiteralPath $SourceCoordinationModule -Destination $coordinationModuleTemporaryPath -Force
+    $copiedModuleHash = Get-Sha256 -Path $coordinationModuleTemporaryPath
+    if ($copiedModuleHash -cne $coordinationModuleHash) {
+        throw "复制后的协调模块SHA-256不一致：$copiedModuleHash"
     }
 
     $hook = @'
@@ -92,6 +141,8 @@ $expectedRef = '__EXPECTED_REF__'
 $approvedHeadSha = '__APPROVED_HEAD_SHA__'
 $deployScriptPath = '__DEPLOY_SCRIPT_PATH__'
 $deployScriptSha256 = '__DEPLOY_SCRIPT_SHA256__'
+$coordinationModulePath = '__COORDINATION_MODULE_PATH__'
+$coordinationModuleSha256 = '__COORDINATION_MODULE_SHA256__'
 $allowedWorkflowRefs = @{
     'iwork production runner smoke' = 'GuChenkano/iwork/.github/workflows/runner-smoke.yml@refs/heads/Keycloak'
     'iwork controlled production deployment' = 'GuChenkano/iwork/.github/workflows/deploy-iwork.yml@refs/heads/Keycloak'
@@ -128,6 +179,15 @@ $actualScriptHash = (
 if ($actualScriptHash -ne $deployScriptSha256) {
     throw "固定部署脚本哈希不匹配：$actualScriptHash"
 }
+if (-not (Test-Path -LiteralPath $coordinationModulePath -PathType Leaf)) {
+    throw "固定协调模块不存在：$coordinationModulePath"
+}
+$actualModuleHash = (
+    Get-FileHash -LiteralPath $coordinationModulePath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+if ($actualModuleHash -ne $coordinationModuleSha256) {
+    throw "固定协调模块哈希不匹配：$actualModuleHash"
+}
 "Runner准入通过：$env:GITHUB_WORKFLOW_REF；sha=$env:GITHUB_SHA；actor=$env:GITHUB_ACTOR"
 '@
     $hook = $hook.Replace('__EXPECTED_ACTOR__', $EXPECTED_ACTOR)
@@ -136,6 +196,8 @@ if ($actualScriptHash -ne $deployScriptSha256) {
     $hook = $hook.Replace('__APPROVED_HEAD_SHA__', $ApprovedHeadSha)
     $hook = $hook.Replace('__DEPLOY_SCRIPT_PATH__', $TARGET_DEPLOY_SCRIPT)
     $hook = $hook.Replace('__DEPLOY_SCRIPT_SHA256__', $sourceHash)
+    $hook = $hook.Replace('__COORDINATION_MODULE_PATH__', $TARGET_COORDINATION_MODULE)
+    $hook = $hook.Replace('__COORDINATION_MODULE_SHA256__', $coordinationModuleHash)
     [IO.File]::WriteAllText(
         $hookTemporaryPath,
         $hook,
@@ -143,10 +205,12 @@ if ($actualScriptHash -ne $deployScriptSha256) {
     )
 
     Move-Item -LiteralPath $scriptTemporaryPath -Destination $TARGET_DEPLOY_SCRIPT -Force
+    Move-Item -LiteralPath $coordinationModuleTemporaryPath -Destination $TARGET_COORDINATION_MODULE -Force
     Move-Item -LiteralPath $hookTemporaryPath -Destination $TARGET_HOOK -Force
 }
 finally {
     Remove-Item -LiteralPath $scriptTemporaryPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $coordinationModuleTemporaryPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $hookTemporaryPath -Force -ErrorAction SilentlyContinue
 }
 
@@ -154,5 +218,7 @@ finally {
     ApprovedHeadSha = $ApprovedHeadSha
     DeployScript = $TARGET_DEPLOY_SCRIPT
     DeployScriptSha256 = $sourceHash
+    CoordinationModule = $TARGET_COORDINATION_MODULE
+    CoordinationModuleSha256 = $coordinationModuleHash
     AdmissionHook = $TARGET_HOOK
 } | Format-List

@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-25，阶段0—4已经完成：两仓库纯CI已跑绿，三个GHCR不可变镜像已发布并按Digest复验，两个生产Self-hosted Runner已永久安装并完成自动恢复、准入钩子、私有GHCR只读拉取和OCI revision真实验收。阶段4已完成生产预检、修复版真实容器切换、自动验收及唯一一次受控回滚演练；用户明确豁免真实账号浏览器验收，该项保留为风险豁免，不影响阶段4的自动化验收结论。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过；真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页仍因当前自定义证书未被内置浏览器信任而待人工验收，且尚未获得本阶段单独风险豁免。因此阶段5保持“进行中（生产交付完成，浏览器验收待补）”，阶段6—8尚未开始，当前已完成阶段仍为5/9。
+截至2026-08-26，阶段0—5已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力均已形成生产证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6现已开始，阶段7—8尚未开始，当前已完成阶段为6/9。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -70,8 +70,8 @@
 | 2 | GHCR不可变镜像发布 | 已完成 | iwork、Portal和oauth2-proxy镜像已按完整SHA发布并按Digest复验 |
 | 3 | 生产Self-hosted Runner安装 | 已完成 | 两个永久Runner在线且可自动恢复；iwork、Portal和oauth2-proxy固定Digest均完成生产只读验收 |
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
-| 5 | Portal受控部署与回滚 | 进行中 | v3回滚演练与最终生产切换已完成；仅剩真实账号浏览器业务验收或明确风险豁免 |
-| 6 | 跨仓库部署锁与运维任务协调 | 未开始 | 需兼容看门狗和周重启 |
+| 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
+| 6 | 跨仓库部署锁与运维任务协调 | 进行中 | 本地实现与隔离验收完成，待提交、推送并安装生产准入策略后做只读预检 |
 | 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
 
@@ -775,7 +775,9 @@ Portal是全系统认证网关，必须在iwork自动部署稳定后单独实施
 - 新Portal未登录请求返回302到`auth.dituportal.dongming.local/realms/ditu`，回调严格使用新Portal；旧Portal和旧认证入口返回单次307，`dkt` Realm路径正确映射为`ditu`，`master`路径保持不变；discovery issuer严格等于新认证地址。
 - iwork生产详情内部真实请求返回200；SSE返回200、`text/event-stream`和非stale的`snapshot_published`事件。六个应用入口未登录请求均进入新认证地址，未发现旧认证域名或跳转循环。
 
-剩余人工验收：内置浏览器访问新Portal时因当前自定义证书未被该浏览器信任，返回`ERR_CERT_AUTHORITY_INVALID`；安全规则禁止自动绕过证书警告。用户已决定证书后续单独重签，但尚未对阶段5的真实账号浏览器验收作单独风险豁免。因此真实登录/退出、Remote-User、Remote-Groups、权限拒绝页，以及六个应用登录后的页面、API和静态资源仍需在新证书安装后人工验收。自动化生产交付和回滚能力已经完成，本阶段保持“进行中（生产交付完成，浏览器验收待补）”。
+风险豁免：内置浏览器访问新Portal时因当前自定义证书未被该浏览器信任，返回`ERR_CERT_AUTHORITY_INVALID`；安全规则禁止自动绕过证书警告。真实登录/退出、Remote-User、Remote-Groups、权限拒绝页，以及六个应用登录后的页面、API和静态资源未实际执行。用户于2026-08-26明确要求跳过该项并接受风险豁免；证书仍按既有待办方案后续处理。本项不表述为验收通过，但不再阻断阶段5完成。
+
+阶段状态：已完成（2026-08-26）。
 
 ## 10. 阶段6——跨仓库部署锁与运维任务协调
 
@@ -812,7 +814,74 @@ D:\DM\cicd-locks\production-deploy.lock
 - 周重启、看门狗和部署任务不会重复操作同一容器。
 - 所有锁事件都有日志和Run ID可追溯。
 
-阶段状态：未开始。
+### 10.4 实际实现
+
+两个仓库共用字节完全一致的`ProductionCoordination.psm1`，锁Schema固定为
+`production-deploy-lock-v1`。服务器分别安装到`D:\DM\cicd-tools\portal`和
+`D:\DM\cicd-tools\iwork`，避免一个仓库更新生产策略时覆盖另一仓库正在使用的模块。
+Portal与iwork部署均先取得
+`Global\DKT-Production-Deploy`、`Global\DKT-Docker-Recovery`和统一文件锁，再进入候选校验、
+切换、生产验收或回滚阶段。Runner准入Hook和Workflow同时固定部署脚本与协调模块的
+SHA-256，禁止从Runner工作区直接替换生产脚本。
+
+过期锁不能按文件时间或租约单独删除。自动接管必须同时确认：锁Schema与仓库身份可信、
+本机原PID不存在或PID已复用、原GitHub Actions Run已经进入明确终态。GitHub不可达、`gh`
+不可用、Run字段不一致、进程状态未知或锁来自其他主机时均失败关闭；两个安装器会先验证
+Runner账号的`gh`登录状态，并直接读取另一私有仓库的`actions/runs`接口，不能用仅可读取
+仓库元数据的权限冒充Actions读取能力。跨仓库Run核验会暂存并清除Workflow注入的
+`GH_TOKEN / GITHUB_TOKEN`，强制使用安装器已验证的Runner持久`gh`身份，调用结束后在
+`finally`中恢复原环境变量。安全接管前将旧锁原子
+改名为审计归档。协调事件以JSONL记录`acquire_attempt`、`contention`、`acquired`、
+`phase_updated`、`stale_archived`、`stale_rejected`、`released`和`cleanup_failed`，每条均含
+仓库、服务与Run ID，不记录Token、Cookie或密码；JSONL写入使用独立的全局审计Mutex，
+避免并发竞争导致事件交错或丢失。
+
+看门狗同时识别Portal和iwork部署维护标记。有效窗口内不执行Docker恢复；过期、未来、
+无时区、超长、字段错误或非法JSON标记均不放行。Python应用健康监控继续检查容器，只跳过
+正在部署应用的HTTP探测。iwork标记沿用既有`application / operation /
+workflow_run_id / actor`契约，Portal沿用`scope / run_id`契约。Docker周重启保持周日03:00和
+十分钟窗口，通过`Global\DKT-Docker-Recovery`与部署互斥；看门狗在03:10超时接管路径恢复。
+看门狗和周重启各自生成运行级`run_id`写入日志。周重启维护标记的关闭或失败状态写入若失败，
+任务会返回非零，不能用成功结果掩盖残留维护窗口。
+
+部署进程异常退出后可能遗留应用维护标记。后续正式部署只有在已经取得生产部署Mutex、
+Docker恢复Mutex和新的统一协调锁后，才允许对字段可信且已过期的旧标记执行同目录原子归档。
+可信标记必须包含完整Schema、合法且不超过128字符的Run ID、带时区的开始和结束时间、
+正确的时间顺序及最大窗口（Portal 30分钟、iwork 20分钟）；可选`status`存在时只能为
+`running`，iwork还必须具有字符串类型、非空且不超过128字符的`actor`。只读预检、活动标记、
+未来窗口、超长窗口、错误状态、非法ID、无时区和无法解析的标记均保留原文件并失败关闭。
+
+### 10.5 本地隔离验收证据
+
+2026-08-26已完成以下不触碰生产Docker、生产锁和真实GitHub Run的隔离验收：
+
+- 两个独立PowerShell进程并发竞争，只有一个取得统一锁；另一个明确返回竞争结果。
+- 强制终止隔离持锁子进程后，只有在伪Run为`completed`且PID核验通过时才归档并接管。
+- 锁生命周期、阶段续租、活动进程拒绝、运行中Run拒绝、未知Run失败关闭、Run字段不一致
+  拒绝、释放失败审计均通过。
+- Portal阶段六目标测试`28 passed`；CI口径Django应用测试`72 passed`，离线配置测试
+  `138 passed / 2 skipped / 39 subtests passed`。直接全仓pytest额外收集到需访问当前旧域名的
+  `docker/test_auth_flow.py`并因旧入口307跳转而失败，该脚本不属于CI离线测试，本阶段未将其误报为
+  代码回归。
+- iwork阶段四及阶段六目标测试`31 passed`，iwork全量测试`574 passed`；仅保留第三方
+  `requests`依赖版本告警，与本次变更无关。
+- 看门狗完整隔离测试和周重启维护测试均为`0 failure(s)`；未运行会真实重启Docker/WSL的
+  `test_docker_weekly_restart.ps1`。
+- 统一锁生命周期测试、两个独立进程并发竞争、异常退出后双重核验恢复、跨仓库gh临时Token
+  隔离与恢复全部通过；Portal与iwork维护标记覆盖缺少开始时间、时间倒置、超长窗口、非法Run ID、
+  错误状态、未来窗口及可信过期归档。
+- 两仓库协调模块字节完全一致，SHA-256为
+  `39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3`；Portal部署脚本SHA-256为
+  `ba6b5c5d95213840169e6e076af13997e7f4fbbac45ac04d91a6b25c2406a830`，iwork部署脚本SHA-256为
+  `7320713f6f9b0c445eb371ccf7c9f0926cfa020c88478ff1926453c59d44d7cd`，Workflow固定值均与文件匹配。
+- Ruff、PowerShell语法解析、两个仓库`git diff --check`及标准/规格双轴复审通过，无剩余阻断。
+
+本轮定位并修复两个测试无法提前暴露的兼容问题：Windows PowerShell 5.1读取无BOM UTF-8
+脚本时会受中文注释影响，现已固定看门狗脚本为UTF-8 BOM并增加回归断言；Python健康监控
+原先错误地用Portal字段解释iwork部署标记，现已按两个真实Schema分别校验。DITU已完成
+正式切换，因此旧Keycloak认证地址不再作为健康检查回退，DITU discovery失败时严格失败。
+
+阶段状态：进行中（2026-08-26；本地代码与隔离验收完成，生产安装及只读预检待完成）。
 
 ## 11. 阶段7——`dkt-cicd` Skill
 
@@ -909,7 +978,7 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段4已经完成。阶段5的代码、CI、不可变镜像、精确Digest Runner smoke、生产预检、唯一v3恢复演练和最终生产切换均已完成；当前只剩真实账号浏览器业务验收：
+阶段5已经完成。真实账号浏览器业务验收按用户2026-08-26明确决定记录为风险豁免，不再阻断后续阶段；阶段6已经开始：
 
 1. 已完成：Portal修复提交`254cb2d...`通过本地全套测试、双轴审查、CI和GHCR发布。
 2. 已完成：服务器准入固定到`254cb2d...`及部署脚本SHA-256；服务器仓库安全快进且保留未跟踪证书材料。
@@ -917,8 +986,9 @@ gh run view --log-failed
 4. 已完成：独立v3状态文件绑定并保留v1/v2失败证据；唯一一次v3恢复演练成功，形成`rolled_back / RollbackSucceeded=true`收据。
 5. 已完成：最终生产部署成功，Portal、Authorizer和oauth2-proxy使用批准Digest并healthy；Keycloak、Nginx、数据库、Redis、网络和物理卷未重建。
 6. 已完成：新旧入口、OIDC issuer、六应用未登录路由、iwork生产详情和SSE自动化验收。
-7. 待完成：补发并安装可被验收浏览器信任、且SAN包含新Portal和新认证域名的自定义证书；该证书工作继续沿用既有证书待办方案。
-8. 待完成：使用真实账号验证登录、退出、Remote-User、Remote-Groups、无权限页和六应用登录后的页面/API/静态资源。若用户明确豁免本项，则文档必须记录豁免范围，不能表述为实际验收通过。
-9. 上述浏览器验收完成或取得明确风险豁免后，将阶段5标记为“已完成”，再开始阶段6的跨仓库锁与运维任务协调。
+7. 风险豁免：真实账号浏览器验收未执行，不表述为实际通过；证书工作继续沿用既有待办方案。
+8. 已完成：统一跨仓库锁、维护标记、看门狗、周重启和异常恢复协议，并完成本地隔离测试及双轴复审。
+9. 下一步：提交并推送两个仓库，等待CI；Runner空闲且生产无锁时只安装新准入策略与固定脚本，
+   再执行`apply=false`生产预检。不得用真实部署并发、删除锁文件、故障注入或真实周重启模拟恢复。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。

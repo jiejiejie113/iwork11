@@ -53,6 +53,8 @@ $RUN_MIGRATIONS_ENABLED = $RunMigrations -eq 'true'
 $ROLLBACK_DRILL_ENABLED = $RollbackDrill -eq 'true'
 $WATCHDOG_RECOVERY_MUTEX = 'Global\DKT-Docker-Recovery'
 $ROLLBACK_DRILL_FILE = Join-Path $StateRoot 'rollback-drill-v1.json'
+$COORDINATION_MODULE = Join-Path $PSScriptRoot 'ProductionCoordination.psm1'
+Import-Module -Name $COORDINATION_MODULE -Force
 
 function Invoke-DockerCommand {
     param(
@@ -117,7 +119,81 @@ function Assert-ContainerHealthy {
     }
 }
 
+function Archive-ExpiredIworkDeploymentMarker {
+    <#
+    .SYNOPSIS
+    在已取得双Mutex和新协调锁后归档过期的iwork部署维护标记。
+    #>
+    param([Parameter(Mandatory = $true)][object]$CoordinationLock)
+
+    if (-not (Test-Path -LiteralPath $MaintenanceFile -PathType Leaf)) { return }
+    if ($CoordinationLock.Fields['service'] -cne 'iwork') {
+        throw '当前协调锁不属于iwork，拒绝处理部署维护标记。'
+    }
+    try {
+        $marker = Get-Content -LiteralPath $MaintenanceFile -Raw | ConvertFrom-Json
+        if ($marker -isnot [pscustomobject]) {
+            throw '标记不是JSON对象'
+        }
+        $workflowRunId = $marker.workflow_run_id
+        $actor = $marker.actor
+        $startedAtText = [string]$marker.started_at
+        $expiresAtText = [string]$marker.expires_at
+        $statusInvalid = (
+            $marker.PSObject.Properties.Name -contains 'status' -and
+            [string]$marker.status -ne 'running'
+        )
+        if (
+            $marker.application -ne 'iwork' -or
+            $marker.operation -ne 'production_deployment' -or
+            $workflowRunId -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($workflowRunId.Trim()) -or
+            $workflowRunId.Trim().Length -gt 128 -or
+            $workflowRunId.Trim() -notmatch '^[-A-Za-z0-9._:]+$' -or
+            $actor -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($actor.Trim()) -or
+            $actor.Length -gt 128 -or
+            $statusInvalid -or
+            [string]::IsNullOrWhiteSpace($startedAtText) -or
+            [string]::IsNullOrWhiteSpace($expiresAtText) -or
+            $startedAtText -notmatch '(?:Z|[+-]\d{2}:\d{2})$' -or
+            $expiresAtText -notmatch '(?:Z|[+-]\d{2}:\d{2})$'
+        ) {
+            throw '字段无效'
+        }
+        $startedAt = [DateTimeOffset]::MinValue
+        $expiresAt = [DateTimeOffset]::MinValue
+        if (
+            -not [DateTimeOffset]::TryParse($startedAtText, [ref]$startedAt) -or
+            -not [DateTimeOffset]::TryParse($expiresAtText, [ref]$expiresAt)
+        ) {
+            throw '维护时间无效'
+        }
+        $maintenanceMinutes = ($expiresAt - $startedAt).TotalMinutes
+        if ($maintenanceMinutes -le 0 -or $maintenanceMinutes -gt 20) {
+            throw '维护窗口无效'
+        }
+        if ($startedAt -gt [DateTimeOffset]::UtcNow) {
+            throw '维护窗口尚未开始'
+        }
+    }
+    catch {
+        throw "已有iwork部署维护标记且无法可信解析，拒绝自动处理：$MaintenanceFile"
+    }
+    if ($expiresAt -gt [DateTimeOffset]::UtcNow) {
+        throw "已有iwork部署维护标记：$MaintenanceFile"
+    }
+
+    $archivePath = '{0}.stale.{1}.{2}.json' -f @(
+        $MaintenanceFile,
+        [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'),
+        [Guid]::NewGuid().ToString('N')
+    )
+    [IO.File]::Move($MaintenanceFile, $archivePath)
+}
+
 function Assert-PreflightInputs {
+    param([object]$CoordinationLock)
     if ($ImageDigest -notmatch '^sha256:[0-9a-f]{64}$') {
         throw 'ImageDigest必须是sha256加64位小写十六进制。'
     }
@@ -154,11 +230,11 @@ function Assert-PreflightInputs {
     if (-not (Test-Path -LiteralPath $LockRoot -PathType Container)) {
         throw "部署锁目录不存在：$LockRoot"
     }
-    if (Test-Path -LiteralPath $DEPLOYMENT_LOCK_FILE -PathType Leaf) {
-        throw "已有生产部署锁：$DEPLOYMENT_LOCK_FILE"
-    }
     if (Test-Path -LiteralPath $MaintenanceFile -PathType Leaf) {
-        throw "已有iwork部署维护标记：$MaintenanceFile"
+        if ($null -eq $CoordinationLock) {
+            throw "已有iwork部署维护标记：$MaintenanceFile"
+        }
+        Archive-ExpiredIworkDeploymentMarker -CoordinationLock $CoordinationLock
     }
     if (Test-Path -LiteralPath $WeeklyMaintenanceFile -PathType Leaf) {
         throw "Docker周重启维护标记存在，拒绝开始iwork部署：$WeeklyMaintenanceFile"
@@ -172,8 +248,9 @@ function Assert-PreflightInputs {
 }
 
 function Invoke-Preflight {
+    param([object]$CoordinationLock)
     $startedAt = [DateTimeOffset]::UtcNow
-    Assert-PreflightInputs
+    Assert-PreflightInputs -CoordinationLock $CoordinationLock
     $candidateImage = "$IMAGE_REPOSITORY@$ImageDigest"
 
     $null = Invoke-DockerCommand -Arguments @('info', '--format', '{{.ServerVersion}}')
@@ -447,6 +524,10 @@ function Assert-IworkApplication {
 }
 
 function Enter-DeploymentMutex {
+    <#
+    .SYNOPSIS
+    尝试立即取得指定的Windows互斥锁。
+    #>
     param(
         [Parameter(Mandatory = $true)]
         [string]$Name
@@ -460,12 +541,16 @@ function Enter-DeploymentMutex {
         }
     }
     catch [Threading.AbandonedMutexException] {
-        # 上一次持有者异常退出时，本次已取得互斥锁，继续由文件锁阻止盲目部署。
+        # 上一次持有者异常退出时，本次已取得互斥锁，继续由统一文件锁严格核验残留内容。
     }
     return $mutex
 }
 
 function Exit-DeploymentMutex {
+    <#
+    .SYNOPSIS
+    释放指定的Windows互斥锁。
+    #>
     param([Threading.Mutex]$Mutex)
 
     if ($null -ne $Mutex) {
@@ -558,7 +643,6 @@ function Backup-IworkDatabases {
 
 function Invoke-Deploy {
     $startedAt = [DateTimeOffset]::UtcNow
-    $null = Invoke-Preflight
     $candidateImage = "$IMAGE_REPOSITORY@$ImageDigest"
     $stateFile = Join-Path $StateRoot "$RunId.json"
     $candidateOverride = Join-Path $StateRoot "$RunId.candidate.yml"
@@ -567,31 +651,33 @@ function Invoke-Deploy {
     $alertRollbackTag = "dkt-cicd/iwork-alert-worker-rollback:$RunId"
     $productionMutex = $null
     $recoveryMutex = $null
-    $lockStream = $null
+    $coordinationLock = $null
     $state = $null
     $switchAttempted = $false
-    $ownsLockFile = $false
     $ownsMaintenanceFile = $false
     $ownsDrillAttempt = $false
     $controlledRollbackRequested = $false
     $drillAttempt = $null
+    $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 
     try {
         $productionMutex = Enter-DeploymentMutex -Name $ProductionMutexName
         $recoveryMutex = Enter-DeploymentMutex -Name $RecoveryMutexName
-        $lockStream = [IO.File]::Open(
-            $DEPLOYMENT_LOCK_FILE,
-            [IO.FileMode]::CreateNew,
-            [IO.FileAccess]::Write,
-            [IO.FileShare]::None
-        )
-        $ownsLockFile = $true
-        $lockPayload = [Text.Encoding]::UTF8.GetBytes(
-            "repository=GuChenkano/iwork`nrun_id=$RunId`nactor=$Actor`n"
-        )
-        $lockStream.Write($lockPayload, 0, $lockPayload.Length)
-        $lockStream.Flush()
-
+        $coordinationLock = Enter-ProductionCoordinationLock `
+            -LockRoot $LockRoot `
+            -Repository 'GuChenkano/iwork' `
+            -Service 'iwork' `
+            -RunId $RunId `
+            -Actor $Actor `
+            -ExpectedRevision $ExpectedRevision `
+            -ArtifactDigests @{ iwork = $ImageDigest }
+        Update-ProductionCoordinationLock `
+            -Lock $coordinationLock `
+            -Phase 'candidate_validation'
+        $null = Invoke-Preflight -CoordinationLock $coordinationLock
+        Update-ProductionCoordinationLock `
+            -Lock $coordinationLock `
+            -Phase 'preflight_complete'
         $previousContainers = foreach ($containerName in $EXPECTED_CONTAINERS) {
             Assert-ContainerHealthy -ContainerName $containerName
             Get-ContainerBaseline -ContainerName $containerName
@@ -639,6 +725,8 @@ function Invoke-Deploy {
             StartedAt = [DateTimeOffset]::UtcNow.ToString('o')
             CompletedAt = $null
             RollbackSucceeded = $false
+            CleanupSucceeded = $true
+            CleanupErrors = @()
             DatabaseBackupPath = $null
             DatabaseBackupSha256 = $null
         }
@@ -660,6 +748,10 @@ function Invoke-Deploy {
             -AlertWorkerImage $alertRollbackTag `
             -AllowMigrations $false
 
+        Update-ProductionCoordinationLock `
+            -Lock $coordinationLock `
+            -Phase 'switching'
+
         $maintenance = [ordered]@{
             application = 'iwork'
             operation = 'production_deployment'
@@ -675,6 +767,9 @@ function Invoke-Deploy {
             -OverrideFile $candidateOverride `
             -CommandArguments @('config', '--quiet')
         $switchAttempted = $true
+        Update-ProductionCoordinationLock `
+            -Lock $coordinationLock `
+            -Phase 'production_validation'
         $null = Invoke-ComposeCommand `
             -OverrideFile $candidateOverride `
             -CommandArguments @(
@@ -695,6 +790,9 @@ function Invoke-Deploy {
         $state.Status = 'deployed'
         $state.CompletedAt = [DateTimeOffset]::UtcNow.ToString('o')
         Write-JsonAtomic -Path $stateFile -Value $state
+        Update-ProductionCoordinationLock `
+            -Lock $coordinationLock `
+            -Phase 'completed'
 
         [pscustomobject]@{
             Mode = 'Deploy'
@@ -712,6 +810,25 @@ function Invoke-Deploy {
     }
     catch {
         $deploymentError = $_
+        if ($null -ne $coordinationLock) {
+            try {
+                if ($switchAttempted) {
+                    Update-ProductionCoordinationLock `
+                        -Lock $coordinationLock `
+                        -Phase 'automatic_rollback'
+                }
+                else {
+                    Update-ProductionCoordinationLock `
+                        -Lock $coordinationLock `
+                        -Phase 'failed_before_switch'
+                }
+            }
+            catch {
+                $null = $cleanupErrors.Add(
+                    "协调锁失败阶段更新失败：$($_.Exception.Message)"
+                )
+            }
+        }
         if ($switchAttempted -and $null -ne $state) {
             try {
                 $null = Invoke-ComposeCommand `
@@ -797,23 +914,68 @@ function Invoke-Deploy {
         throw $deploymentError
     }
     finally {
-        if ($ownsMaintenanceFile) {
-            Remove-Item `
-                -LiteralPath $MaintenanceFile `
-                -Force `
-                -ErrorAction SilentlyContinue
+        try {
+            if ($ownsMaintenanceFile) {
+                Remove-Item `
+                    -LiteralPath $MaintenanceFile `
+                    -Force `
+                    -ErrorAction Stop
+            }
         }
-        if ($null -ne $lockStream) {
-            $lockStream.Dispose()
+        catch {
+            $null = $cleanupErrors.Add(
+                "维护标记清理失败：$($_.Exception.Message)"
+            )
         }
-        if ($ownsLockFile) {
-            Remove-Item `
-                -LiteralPath $DEPLOYMENT_LOCK_FILE `
-                -Force `
-                -ErrorAction SilentlyContinue
+
+        try {
+            if ($null -ne $coordinationLock) {
+                Exit-ProductionCoordinationLock -Lock $coordinationLock
+                $coordinationLock = $null
+            }
         }
-        Exit-DeploymentMutex -Mutex $recoveryMutex
-        Exit-DeploymentMutex -Mutex $productionMutex
+        catch {
+            $null = $cleanupErrors.Add(
+                "协调锁清理失败：$($_.Exception.Message)"
+            )
+        }
+
+        try {
+            Exit-DeploymentMutex -Mutex $recoveryMutex
+        }
+        catch {
+            $null = $cleanupErrors.Add(
+                "Recovery Mutex释放失败：$($_.Exception.Message)"
+            )
+        }
+
+        try {
+            Exit-DeploymentMutex -Mutex $productionMutex
+        }
+        catch {
+            $null = $cleanupErrors.Add(
+                "Production Mutex释放失败：$($_.Exception.Message)"
+            )
+        }
+
+        if ($cleanupErrors.Count -gt 0) {
+            if ($null -ne $state) {
+                $state.Status = 'cleanup_failed'
+                $state.CleanupSucceeded = $false
+                $state.CleanupErrors = @($cleanupErrors)
+                try {
+                    Write-JsonAtomic -Path $stateFile -Value $state
+                }
+                catch {
+                    $null = $cleanupErrors.Add(
+                        "清理失败记录写入失败：$($_.Exception.Message)"
+                    )
+                }
+            }
+            throw (
+                '部署清理失败：' + ($cleanupErrors -join '；')
+            )
+        }
     }
 }
 
