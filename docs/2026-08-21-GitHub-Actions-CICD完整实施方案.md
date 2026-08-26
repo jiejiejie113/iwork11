@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-26，阶段0—6已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7—8尚未开始，当前已完成阶段为7/9。
+截至2026-08-26，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill，真实生产部署仍留在阶段8执行。当前已完成阶段为8/9。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -72,7 +72,7 @@
 | 4 | iwork受控部署与回滚 | 已完成 | 真实切换、自动验收和唯一一次受控回滚演练均成功；浏览器验收由用户豁免 |
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
-| 7 | `dkt-cicd` Skill | 未开始 | 本机已可人工使用`gh` |
+| 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
 | 8 | 端到端验收与观察 | 未开始 | 最终生产验收阶段 |
 
 ## 4. 已完成：阶段0——基线与纯CI
@@ -953,8 +953,8 @@ C:\Users\lipengfei\.agents\skills\dkt-cicd
 构建Portal镜像
 部署iwork
 部署Portal
-查看生产容器状态
-回滚上一次部署
+查看生产交付证据
+回滚上一次部署（缺少独立Workflow时失败关闭）
 ```
 
 主要调用：
@@ -974,7 +974,91 @@ gh run view --log-failed
 - 部署确认不可绕过。
 - Token不会出现在日志、参数或文件中。
 
-阶段状态：未开始。
+### 11.5 实际交付
+
+2026-08-26已安装以下用户级Skill，不读取或复制本机`gh`凭据：
+
+```text
+C:\Users\lipengfei\.agents\skills\dkt-cicd\SKILL.md
+C:\Users\lipengfei\.agents\skills\dkt-cicd\agents\openai.yaml
+C:\Users\lipengfei\.agents\skills\dkt-cicd\references\workflow-map.md
+C:\Users\lipengfei\.agents\skills\dkt-cicd\scripts\Invoke-DktCicd.ps1
+C:\Users\lipengfei\.agents\skills\dkt-cicd\tests\Fake-Gh.ps1
+C:\Users\lipengfei\.agents\skills\dkt-cicd\tests\Test-DktCicd.ps1
+```
+
+固定映射：
+
+- iwork：`GuChenkano/iwork`、`Keycloak`、`ci.yml`、`release.yml`、
+  `deploy-iwork.yml`、`production-iwork`。
+- Portal：`GuChenkano/DTD_nginx`、`feature/keycloak-migration`、`ci.yml`、
+  `release.yml`、`deploy-portal.yml`、`production-portal`。
+- 查询支持按`ci / release / deploy / all`筛选；触发前复验固定分支远程HEAD，发布前
+  复验同Commit成功CI，部署前复验同Commit成功CI和GHCR发布。Portal还会预检匹配
+  Commit与两个Digest的Runner smoke证据。
+- iwork生产确认词绑定本次完整Commit；Portal使用
+  `DEPLOY PORTAL AND AUTHENTICATION <完整Commit>`高等级确认。确认缺失或不一致时返回
+  `confirmation_required`和退出码4，不调用`gh workflow run`。
+- 失败日志仅在明确查询时读取，并在输出前脱敏GitHub Token、Authorization、密码、
+  Cookie和Secret形态的值。
+
+主入口SHA-256：
+
+```text
+SKILL.md
+f1f0102f015440dcb2ad714957daa25baa457fdb63e8f1ce3bf15676d236d9aa
+
+scripts\Invoke-DktCicd.ps1
+6ec59855202e40d2420ee60528c670e0ed2d4496aa079a0b87e97222de49128c
+```
+
+### 11.6 验收证据
+
+- PowerShell语法检查通过；`skill-creator/quick_validate.py`在`PYTHONUTF8=1`下返回
+  `Skill is valid!`。首次不带UTF-8模式运行时，校验器使用Windows默认GBK读取UTF-8
+  `SKILL.md`而报`UnicodeDecodeError`，属于校验器启动编码差异，不是Skill文件损坏。
+- `tests/Test-DktCicd.ps1`通过64个离线断言，覆盖固定仓库/分支/Workflow路由、
+  `queued`、`in_progress`、`success`、`failure`、失败Step提取、日志脱敏、CI与发布触发、
+  Digest提取、iwork/Portal确认门禁、回滚失败关闭及Actions证据与实时Docker状态分离；
+  `-Wait`监控到失败时返回非零退出码，失败日志或Digest日志读取失败时失败关闭。
+- 独立安全审查发现并修复四项问题：等待失败曾可能返回0、新版`github_pat_`及URI
+  userinfo脱敏覆盖不足、日志读取失败未失败关闭、同Commit并发触发可能关联错误Run。
+  修复后增加本地命名Mutex、触发时间窗口和4秒稳定窗口；出现多个候选Run时立即返回
+  并发歧义并明确禁止重复触发，不再选择“最新一条”继续监控。
+- Digest按固定镜像名解析并做唯一性校验；Portal必须分别得到一个`dtd-nginx`和一个
+  `dtd-oauth2-proxy` Digest，两个不同的Portal镜像Digest不能冒充两个发布产物。
+- 真实只读iwork CI查询返回[`32922442124`](https://github.com/GuChenkano/iwork/actions/runs/32922442124)：
+  `completed / success`，Commit为`73417ff196098ed606a5354d4d101087d65359bb`，耗时258秒。
+- 真实只读iwork生产证据查询返回[`32925118718`](https://github.com/GuChenkano/iwork/actions/runs/32925118718)：
+  `completed / success`，并提取Digest
+  `sha256:d7fae15d06672249b72f76d68b884fa93f83dc0df706ac87ecf69b59a1735dc7`。
+- 独立前向测试读取Portal生产证据[`32925115404`](https://github.com/GuChenkano/DTD_nginx/actions/runs/32925115404)：
+  `completed / success`，耗时64秒，正确提取Portal Digest
+  `sha256:d53222466e4aa9b6e6395afd12c57e5450a04dd97301955dc676d05d0b017bdc`
+  和oauth2-proxy Digest
+  `sha256:abb644f6afaa60e37820fec177f0c360c1e0c95cccab57a1a7830a1b7fcd0586`。
+- 使用上述Portal Commit与Digest执行无确认预览，返回退出码4和高等级确认词；预览前后
+  最新部署Run ID均为`32925115404`，证明未触发真实Workflow。
+- 阶段7没有执行`gh workflow run`真实触发、生产部署、数据库迁移、故障注入、并发锁
+  测试或24小时观察。
+
+### 11.7 方案偏差与安全收敛
+
+- 原“查看生产容器状态”改为“查看GitHub Actions生产交付证据”。Actions无法证明当前
+  Docker实时健康，Skill会明确返回`not live Docker health`；需要实时状态时另行执行获准的
+  服务器只读检查，禁止混称。
+- 原“回滚上一次部署”没有对应独立Workflow。现有`rollback_drill`是一次性受控演练，
+  不能冒充手工回滚；强SHA准入也禁止直接用旧Digest替代当前批准版本。因此`rollback`
+  固定返回`manual_rollback_workflow_missing`并失败关闭。部署失败时的自动回滚仍由现有
+  Workflow和服务器固定脚本负责。若未来确需手工回退，应单独设计、审查和安装版本化
+  Workflow，不在Skill中直接SSH执行。
+- iwork `runner-smoke.yml`仍固定历史Revision/Digest，不是当前分支动态入口；Skill未把它
+  暴露为当前版本通用smoke，避免错误验收。
+- Skill安装在用户级目录，不属于iwork Git仓库；本阶段Git提交只追踪本文档，实际安装树
+  通过上述完整路径、测试和主入口哈希留证。
+
+阶段状态：已完成（2026-08-26；Skill安装、离线行为测试、真实只读查询、生产确认不触发
+验收及独立前向测试全部完成；没有提前执行阶段8的真实Workflow和生产动作）。
 
 ## 12. 阶段8——端到端验收与稳定观察
 
@@ -1021,7 +1105,7 @@ gh run view --log-failed
 
 ## 14. 下一步
 
-阶段5和阶段6已经完成。真实账号浏览器业务验收按用户2026-08-26明确决定记录为风险豁免，不再阻断后续阶段：
+阶段5、阶段6和阶段7已经完成。真实账号浏览器业务验收按用户2026-08-26明确决定记录为风险豁免，不再阻断后续阶段：
 
 1. 已完成：Portal修复提交`254cb2d...`通过本地全套测试、双轴审查、CI和GHCR发布。
 2. 已完成：服务器准入固定到`254cb2d...`及部署脚本SHA-256；服务器仓库安全快进且保留未跟踪证书材料。
@@ -1033,7 +1117,9 @@ gh run view --log-failed
 8. 已完成：统一跨仓库锁、维护标记、看门狗、周重启和异常恢复协议，并完成本地隔离测试及双轴复审。
 9. 已完成：服务器安全快进两个批准提交，保留Portal既有未跟踪文件；生产准入脚本和协调模块按固定哈希安装。
 10. 已完成：Portal与iwork的Runner smoke及`apply=false`生产预检成功；收尾无锁、无维护标记、无候选容器残留，业务容器保持`healthy`。
-11. 下一步：进入阶段7，开发并验收`dkt-cicd` Skill。阶段7只封装查询、触发、监控、确认和汇报，
-    不把生产部署逻辑或密钥移入Skill；阶段8的真实部署、故障注入、并发锁和24小时观察仍不得提前执行。
+11. 已完成：安装并验收`dkt-cicd` Skill；64个离线断言、真实只读Actions查询、Digest提取、
+    高等级生产确认门禁和独立前向测试通过，阶段7没有触发真实Workflow。
+12. 下一步：进入阶段8，按顺序通过Skill触发iwork纯CI、发布GHCR镜像并执行只拉取预检；
+    后续真实部署、故障注入、并发锁验收和24小时观察继续使用独立维护窗口及明确生产确认。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
