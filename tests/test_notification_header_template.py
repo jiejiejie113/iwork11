@@ -1,5 +1,8 @@
 """共享标题栏站内通知中心模板测试。"""
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -40,6 +43,29 @@ def test_notification_expandable_detail_has_indicator():
     assert 'payload.type === "daily_summary"' in SCRIPT
 
 
+def test_notification_detail_opens_before_mark_read_request_finishes():
+    """已读POST失败或变慢时，每日摘要详情仍应立即打开。"""
+    node_executable = shutil.which("node")
+    assert node_executable is not None
+    result = subprocess.run(  # noqa: S603 - 仅执行PATH解析出的本机Node和仓库内固定测试脚本
+        [node_executable, "tests/js/notification_detail_harness.cjs"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads(result.stdout)
+    assert payload["modal_hidden"] is False
+    assert payload["requests"] == [
+        ["/iwork/api/account/notifications/", "GET"],
+        ["/iwork/api/account/notifications/7/read/", "POST"],
+    ]
+    assert "标记通知已读失败" in payload["warning"]
+    assert "CSRF失败" in payload["warning"]
+
+
 def test_subscription_settings_can_return_to_notification_list():
     """订阅设置面板应提供返回入口且抽屉重新打开时回到通知列表。"""
     assert "← 返回通知" in SCRIPT
@@ -71,3 +97,11 @@ def test_static_notifications_js_is_served_by_app(client):
     assert "application/javascript" in response["Content-Type"]
     body = b"".join(response.streaming_content).decode("utf-8")
     assert "data-iwork-notification-center" in body
+
+
+def test_shared_header_page_bootstraps_csrf_cookie(client):
+    """包含通知中心的页面应主动签发CSRF Cookie供已读POST使用。"""
+    response = client.get("/", REMOTE_ADDR="127.0.0.1")
+
+    assert response.status_code == 200
+    assert "csrftoken" in response.cookies

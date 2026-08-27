@@ -3,9 +3,10 @@
 import asyncio
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
-from django.test import RequestFactory
+from django.test import Client, RequestFactory, override_settings
 from django.utils import timezone
 
 
@@ -15,6 +16,16 @@ AUTH_HEADERS = {
     "HTTP_REMOTE_USER": "admin",
     "HTTP_REMOTE_GROUPS": "/admin,/apps/iwork",
 }
+
+
+def _production_csrf_origins() -> list[str]:
+    """读取版本化生产环境中的CSRF可信源站。"""
+    production_env = Path("env/production.env").read_text(encoding="utf-8")
+    prefix = "DJANGO_CSRF_TRUSTED_ORIGINS="
+    for line in production_env.splitlines():
+        if line.startswith(prefix):
+            return [value.strip() for value in line.removeprefix(prefix).split(",") if value.strip()]
+    return []
 
 
 def _create_admin_alert():
@@ -89,6 +100,60 @@ def test_read_endpoint_marks_current_event_revision_only(client):
     event.save(using="iwork_local")
 
     assert client.get("/api/account/notifications/", **AUTH_HEADERS).json()["unread_count"] == 1
+
+
+@override_settings(ALLOWED_HOSTS=["dituportal.dongming.local"])
+@pytest.mark.django_db(databases=["default", "iwork_local"])
+def test_production_https_origin_can_mark_notification_read_with_csrf_checks():
+    """新旧Portal HTTPS页面携带合法CSRF令牌时均应能标记通知已读。"""
+    event = _create_admin_alert()
+    production_origins = _production_csrf_origins()
+    expected_origins = {
+        "https://dituportal.dongming.local",
+        "https://dktportal.dongming.local",
+    }
+    assert set(production_origins) == expected_origins
+
+    with override_settings(CSRF_TRUSTED_ORIGINS=production_origins):
+        for index, origin in enumerate(sorted(expected_origins)):
+            csrf_client = Client(enforce_csrf_checks=True)
+            csrf_token = chr(ord("a") + index) * 32
+            csrf_client.cookies["csrftoken"] = csrf_token
+            response = csrf_client.post(
+                f"/api/account/notifications/{event.pk}/read/",
+                data=json.dumps({}),
+                content_type="application/json",
+                HTTP_HOST="dituportal.dongming.local",
+                HTTP_ORIGIN=origin,
+                HTTP_X_CSRFTOKEN=csrf_token,
+                **AUTH_HEADERS,
+            )
+
+            assert response.status_code == 200
+            assert response.json() == {"status": "read", "notification_id": event.pk}
+
+
+@override_settings(ALLOWED_HOSTS=["dituportal.dongming.local"])
+@pytest.mark.django_db(databases=["default", "iwork_local"])
+def test_untrusted_https_origin_cannot_mark_notification_read():
+    """生产配置不得允许未知HTTPS源站提交通知已读请求。"""
+    event = _create_admin_alert()
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_token = "a" * 32
+    csrf_client.cookies["csrftoken"] = csrf_token
+
+    with override_settings(CSRF_TRUSTED_ORIGINS=_production_csrf_origins()):
+        response = csrf_client.post(
+            f"/api/account/notifications/{event.pk}/read/",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_HOST="dituportal.dongming.local",
+            HTTP_ORIGIN="https://untrusted.example",
+            HTTP_X_CSRFTOKEN=csrf_token,
+            **AUTH_HEADERS,
+        )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.django_db(databases=["default", "iwork_local"])

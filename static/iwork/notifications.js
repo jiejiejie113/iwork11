@@ -158,11 +158,15 @@
                 card.append(createText("span", "block mt-1 text-[11px] text-blue-400", "查看详情 ›"));
             }
             card.addEventListener("click", async () => {
-                if (!notification.is_read) {
-                    await requestJson(`api/account/notifications/${notification.id}/read/`, {method: "POST", body: "{}"});
-                    await loadNotifications();
-                }
                 if (hasDetail(notification)) openModalDetail(notification);
+                if (!notification.is_read) {
+                    try {
+                        await requestJson(`api/account/notifications/${notification.id}/read/`, {method: "POST", body: "{}"});
+                        await loadNotifications();
+                    } catch (error) {
+                        console.warn("标记通知已读失败:", error);
+                    }
+                }
             });
             return card;
         }

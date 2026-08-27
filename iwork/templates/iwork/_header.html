@@ -22,6 +22,7 @@
     </div>
 
     <div class="relative" data-iwork-notification-center>
+        <div hidden data-notification-csrf-bootstrap>{% csrf_token %}</div>
         <button type="button" data-notification-toggle
                 class="relative w-10 h-10 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 transition-colors"
                 aria-label="打开站内通知">
