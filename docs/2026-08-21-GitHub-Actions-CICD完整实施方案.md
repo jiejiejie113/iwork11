@@ -73,7 +73,7 @@
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
-| 8 | 端到端验收与观察 | 进行中 | iwork新Commit纯CI成功；GHCR首次发布暴露清单最终一致性缺陷，已修复待复验 |
+| 8 | 端到端验收与观察 | 进行中 | Portal新候选在切换前被旧v3精确版本门禁拒绝，生产未变；部署机制认证已进入本地实现与验证 |
 
 ## 4. 已完成：阶段0——基线与纯CI
 
@@ -1129,6 +1129,81 @@ scripts\Invoke-DktCicd.ps1
 阶段状态：进行中（2026-08-26；iwork纯CI成功，GHCR首轮失败已定位并修复，尚未形成新的
 成功Release或执行生产预检/部署）。
 
+### 12.2 2026-08-27 Portal部署阻断与机制认证迁移
+
+Portal生产部署运行
+[`33027031233`](https://github.com/GuChenkano/DTD_nginx/actions/runs/33027031233)
+在生产切换前失败，状态收据为`failed_before_switch`。失败原因不是候选镜像、数据库或容器健康，
+而是原`Assert-SuccessfulDrillEvidence`要求当前候选Commit及两个镜像Digest与历史v3演练完全
+相同。历史v3绑定`254cb2d...`，因此不能授权新候选`3bcc7a1...`。只读核验确认Portal、
+Authorizer和oauth2-proxy仍运行v3成功恢复后的`254cb2d...`镜像，均`healthy`、重启0次；没有
+候选容器、部署锁或维护标记残留，本次失败没有发生生产切换。
+
+长期修正采用“应用发布身份与部署机制身份分离”：
+
+- 应用Commit和OCI Digest继续用于CI、Release、Runner smoke、候选验证及部署收据审计，但不再
+  作为回滚能力证书的复用键。
+- 部署机制由`production-deployment-mechanism/v1`清单绑定安装器/Runner Hook生成逻辑、认证核心模块、Portal部署Adapter、
+  生产协调契约、部署Workflow和Runner smoke Workflow的SHA-256，并计算稳定机制指纹。Runner启动
+  钩子按当前Commit从GitHub只读获取本次启动的Workflow并比对各自认证哈希，因此应用代码Commit
+  可变，任一生产Runner Workflow变化都会失败关闭。
+- `production-deployment-capability-proof/v1`登记一次真实机制演练；只有候选健康、生产切换、
+  受控回滚、生产基线恢复和协调清理全部成功，才能签发90天有效的
+  `production-deployment-capability-certificate/v1`。任一观察失败时只生成带签名的失败Proof Result，
+  不创建能力证书。
+- 能力claim、证书和吊销收据使用受ACL保护的本机随机密钥进行HMAC-SHA256签名；证据采用
+  `CreateNew`、同目录临时文件持久化后原子移动，禁止覆盖相同Run ID。
+- 普通发布只验证当前机制指纹下未过期、未吊销、签名和载荷完整的成功证书；同一机制下更换
+  应用Commit或Digest不要求重复演练。机制核心、部署Adapter或协调契约变化时，指纹变化并
+  自动fail-closed，必须重新认证。
+- 原`rollback_drill`、retry和recovery输入从活动Workflow移除，统一为`capability_drill`；
+  Runner准入钩子不再按每个应用Commit钉死`GITHUB_SHA`，但继续固定Actor、仓库、分支、
+  Workflow引用和服务器安装件SHA-256。安装器在Runner停止状态下原子注册
+  `ACTIONS_RUNNER_HOOK_JOB_STARTED`，未完成Hook注册不得视为安装成功。
+
+旧v1/v2/v3处理规则：
+
+| 对象 | 处理 | 是否能授权新部署 |
+|---|---|---:|
+| `rollback-drill-v1.json` | 原路径、原内容和SHA-256永久保留 | 否 |
+| `rollback-drill-v2.json` | 原路径、原内容和SHA-256永久保留 | 否 |
+| `rollback-drill-v3.json` | 原路径、原内容和SHA-256永久保留 | 否 |
+| 对应历史部署收据 | 继续作为审计事实保存 | 否 |
+| `legacy-evidence-index.json` | 安装时将每个旧状态文件与Run ID一致的部署收据成对索引，标记`legacy_history / authoritative=false`；缺失收据则失败关闭 | 否 |
+| `capabilities/portal/<fingerprint>/...` | 新claim、证书和吊销收据的唯一权威命名空间 | 是 |
+
+禁止删除、移动、改名、覆盖或伪造旧v1/v2/v3；需要清理的只有候选容器、临时Compose、候选敏感
+环境文件、过期锁和维护标记。旧证据保留不会造成门禁混淆，因为新认证模块只扫描
+`capabilities/<service>/<fingerprint>/certificates`和对应吊销目录，永不读取状态根目录下的
+旧文件作为授权依据。
+
+本地实现范围位于Portal仓库，包含能力模块、机制清单、部署Adapter、安装器、Workflow、CI和
+行为测试；本轮不安装服务器策略、不触发Workflow、不重启或切换生产。生产落地仍需单独完成：
+
+1. 合并并发布Portal变更，通过CI、Release和Runner smoke。
+2. 在提升权限的生产执行会话安装新部署机制包；安装器幂等创建签名密钥并生成旧证据索引，
+   不修改任何旧证据；同时注册Runner作业启动Hook，之后按既有运维流程启动Runner并先做smoke。
+3. 先执行`apply=false`候选预检。
+4. 在独立维护窗口显式执行一次`capability_drill=true`机制认证；失败即停止，不自动重复。
+5. 认证成功后再以新候选执行普通部署；普通部署复用机制证书，不再按每个Commit重演练。
+6. 完成真实登录、六应用、iwork SSE、容器健康、锁清理及24小时观察。
+
+本地验收结果：机制认证与阶段5目标测试48项通过；Portal Django测试72项通过；离线配置测试
+158项通过、2项跳过、39个subtests通过；Ruff、迁移检查、Windows PowerShell 5.1语法、Actions YAML、
+六项机制哈希及`git diff --check`均通过。双轴复审发现的失败证书、临时Compose残留、Runner Hook
+未注册、旧证据集合不完整、未知清单字段、异机制证书静默跳过和Runner注册文件可写问题均已修复并复测。
+当前机制证书目录中只要出现签名有效但身份不属于当前机制的证书，整个准入即失败关闭；安装器仅在
+Runner已停止的维护阶段临时给予生产执行身份必要写权限，结束或失败后会把固定工具、Hook、Runner
+`.env`、legacy index及其索引的旧状态/收据恢复为只读，并显式拒绝该身份写入或删除。
+能力证书还会回查同一Run ID的原始claim文件、文件SHA-256、身份、载荷哈希和HMAC签名；固定
+工具/策略目录与Runner注册文件锚点拒绝重解析点及父目录替换。
+固定工具、策略和状态目录使用专用父目录锚点；StateRoot全程保持旧证据删除保护，候选临时文件
+依靠自身权限正常清理，最终阶段重新断言保护且目录缺失时阻断。部署与Runner smoke的临时Docker凭据目录也必须
+位于`RUNNER_TEMP`内且不是重解析点。
+
+阶段状态：进行中（2026-08-27；生产保持未变；部署机制认证本地实现、验证、复审和仓库提交完成后，
+仍需CI/Release、生产安装、一次真实机制认证和最终Portal部署，不能把本地测试表述为生产认证成功）。
+
 ## 13. 全局风险控制
 
 | 风险 | 控制措施 |
@@ -1160,8 +1235,8 @@ scripts\Invoke-DktCicd.ps1
 10. 已完成：Portal与iwork的Runner smoke及`apply=false`生产预检成功；收尾无锁、无维护标记、无候选容器残留，业务容器保持`healthy`。
 11. 已完成：安装并验收`dkt-cicd` Skill；72个离线断言、真实只读Actions查询、Digest提取、
     高等级生产确认门禁和独立前向测试通过，阶段7没有触发真实Workflow。
-12. 进行中：阶段8的iwork纯CI已成功；GHCR首轮发布失败已修复，下一步对修复Commit重新执行
-    CI、GHCR发布和只拉取预检。后续真实部署、故障注入、并发锁验收和24小时观察继续使用
-    独立维护窗口及明确生产确认。
+12. 进行中：Portal运行`33027031233`因旧v3证据精确绑定旧候选而在切换前失败，生产未变。
+    当前先完成部署机制认证的本地代码、测试、审查和提交；后续需经CI/Release、生产安装、
+    一次真实机制认证和新的Portal部署。旧v1/v2/v3永久保留为非权威历史证据，不做物理清理。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
