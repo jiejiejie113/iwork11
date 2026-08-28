@@ -99,7 +99,6 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/guchenkano/iwork
       IMAGE_REF: ghcr.io/guchenkano/iwork:${{ github.sha }}
-      CONFIG_SOURCE_PATH: ${{ runner.temp }}/iwork-production-config-source
       CI_REQUEST_ID: ${{ inputs.ci_request_id }}
     steps:
       - name: 校验请求关联ID
@@ -123,16 +122,17 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $configSourcePath = Join-Path $env:RUNNER_TEMP 'iwork-production-config-source'
           New-Item `
               -ItemType Directory `
-              -Path (Join-Path $env:CONFIG_SOURCE_PATH 'env') `
+              -Path (Join-Path $configSourcePath 'env') `
               -Force | Out-Null
           Copy-Item `
               -LiteralPath ./docker-compose.yml `
-              -Destination (Join-Path $env:CONFIG_SOURCE_PATH 'docker-compose.yml')
+              -Destination (Join-Path $configSourcePath 'docker-compose.yml')
           Copy-Item `
               -LiteralPath ./env/production.env `
-              -Destination (Join-Path (Join-Path $env:CONFIG_SOURCE_PATH 'env') 'production.env')
+              -Destination (Join-Path (Join-Path $configSourcePath 'env') 'production.env')
 
       - name: 清除临时构建上下文中的敏感文件
         shell: pwsh
@@ -232,7 +232,7 @@ jobs:
               $env:RUNNER_TEMP `
               "iwork-production-config-$env:GITHUB_SHA"
           & ./scripts/New-IworkProductionConfigBundle.ps1 `
-              -SourceRoot $env:CONFIG_SOURCE_PATH `
+              -SourceRoot (Join-Path $env:RUNNER_TEMP 'iwork-production-config-source') `
               -OutputDirectory $bundlePath `
               -SourceCommit $env:GITHUB_SHA `
               -ImageDigest $env:IMAGE_DIGEST

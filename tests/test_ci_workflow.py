@@ -176,6 +176,16 @@ def test_release_publish_job_keeps_permissions_and_environment_at_job_scope() ->
     assert "env" not in publish["permissions"]
 
 
+def test_release_resolves_runner_temp_at_step_runtime() -> None:
+    """Release不能在Job级表达式中使用仅步骤可用的runner上下文。"""
+    workflow = yaml.safe_load(_read_release_workflow())
+    publish = workflow.get("jobs", {}).get("publish", {})
+
+    assert "CONFIG_SOURCE_PATH" not in publish.get("env", {})
+    assert "${{ runner.temp }}" not in _read_release_workflow()
+    assert "$env:RUNNER_TEMP" in _read_release_workflow()
+
+
 def test_release_ci_binding_fails_closed_on_duplicate_request_id_matches() -> None:
     """同一Commit和ci_request_id出现多个成功Run时必须拒绝发布。"""
     content = _read_release_workflow()
