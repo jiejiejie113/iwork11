@@ -20,18 +20,66 @@ COORDINATION_MODULE_PATH = ROOT / "scripts" / "ProductionCoordination.psm1"
 POLICY_INSTALLER_PATH = ROOT / "scripts" / "Install-IworkProductionDeployment.ps1"
 RUNNER_INSTALLER_PATH = ROOT / "scripts" / "Install-GitHubProductionRunner.ps1"
 START_SCRIPT_PATH = ROOT / "start.sh"
+COMPOSE_PATH = ROOT / "docker-compose.yml"
 GIT_ATTRIBUTES_PATH = ROOT / ".gitattributes"
 CANDIDATE_DIGEST = "sha256:" + "1" * 64
 CANDIDATE_REVISION = "2" * 40
+PREVIOUS_DIGEST = "sha256:" + "9" * 64
+PREVIOUS_REVISION = "8" * 40
 DEPLOYMENT_RUN_ID = "123456-1"
+REQUEST_ID = "12345678-1234-1234-1234-123456789abc"
+PREFLIGHT_RUN_ID = "654321-1"
+PREFLIGHT_REQUEST_ID = "abcdefab-cdef-abcd-efab-cdefabcdefab"
+CONFIG_ARTIFACT_DIGEST = "sha256:" + "7" * 64
 SYSTEM_ROOT = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
 WHOAMI_EXE = SYSTEM_ROOT / "System32" / "whoami.exe"
 POWERSHELL_EXE = (
     SYSTEM_ROOT / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 )
 EXPECTED_COORDINATION_MODULE_SHA256 = (
-    "39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3"
+    "beb88d9bf07143102c0398edf75f6665dcd1ee48fc1604b22ecae3bafc1cf882"
 )
+
+
+def _write_config_bundle(
+    bundle_path: Path,
+    *,
+    compose_content: bytes,
+    profile_content: bytes,
+    source_commit: str = CANDIDATE_REVISION,
+    image_digest: str = CANDIDATE_DIGEST,
+) -> str:
+    """写入符合固定Schema的隔离生产配置包。
+
+    Args:
+        bundle_path (Path): 配置包根目录。
+        compose_content (bytes): Compose文件字节。
+        profile_content (bytes): 生产环境文件字节。
+        source_commit (str): 配置来源Commit。
+        image_digest (str): 绑定的应用镜像Digest。
+
+    Returns:
+        str: 配置包逻辑Digest。
+    """
+    bundle_path.joinpath("env").mkdir(parents=True)
+    bundle_path.joinpath("docker-compose.yml").write_bytes(compose_content)
+    bundle_path.joinpath("env", "production.env").write_bytes(profile_content)
+    manifest = {
+        "schema": "iwork-production-config/v1",
+        "application": "iwork",
+        "source_commit": source_commit,
+        "image_digest": image_digest,
+        "compose_sha256": hashlib.sha256(compose_content).hexdigest(),
+        "production_env_sha256": hashlib.sha256(profile_content).hexdigest(),
+    }
+    canonical = "".join(f"{key}={value}\n" for key, value in manifest.items())
+    config_digest = f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
+    manifest["config_digest"] = config_digest
+    bundle_path.joinpath("config-manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return config_digest
 
 
 def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
@@ -40,7 +88,11 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
     lowered = content.lower()
 
     assert "workflow_dispatch:" in content
+    assert "inputs.request_id || github.run_id" not in content
     assert "image_digest:" in content
+    assert "config_digest:" in content
+    assert "config_artifact_digest:" in content
+    assert "release_request_id:" in content
     assert "expected_revision:" in content
     assert "apply:" in content
     assert "run_migrations:" in content
@@ -81,9 +133,14 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
 def test_windows_powershell_inline_script_is_ascii_only() -> None:
     """Windows PowerShell 5.1内联脚本必须为ASCII，避免无BOM临时文件解析失败。"""
     workflow = yaml.safe_load(DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8"))
-    inline_script = workflow["jobs"]["deploy"]["steps"][0]["run"]
+    scripts = [
+        step["run"]
+        for step in workflow["jobs"]["deploy"]["steps"]
+        if step.get("shell") == "powershell" and "run" in step
+    ]
 
-    assert inline_script.isascii()
+    assert scripts
+    assert all(script.isascii() for script in scripts)
 
 
 def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> None:
@@ -121,6 +178,28 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert module_hash == EXPECTED_COORDINATION_MODULE_SHA256
     assert "DEPLOY_COORDINATION_MODULE_PATH:" in content
     assert "DEPLOY_COORDINATION_MODULE_PATH" in content
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in content
+    assert "iwork-production-config-${{ inputs.expected_revision }}" in content
+    assert "run-id: ${{ steps.release.outputs.run_id }}" in content
+    assert "CONFIG_DIGEST: ${{ inputs.config_digest }}" in content
+    assert "CONFIG_ARTIFACT_DIGEST: ${{ inputs.config_artifact_digest }}" in content
+    assert "RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}" in content
+    assert "$_.event -eq 'workflow_dispatch'" in content
+    assert "$_.head_branch -eq 'Keycloak'" in content
+    assert "actions/runs/$($candidate.id)/artifacts" in content
+    assert "$_.digest -ceq $env:CONFIG_ARTIFACT_DIGEST" in content
+    assert "matchingReleaseRuns.Count -ne 1" in content
+    assert "([string]$_.display_title).Contains($env:RELEASE_REQUEST_ID)" in content
+    assert "iwork-production-config/v1" in content
+    assert "Production config commit mismatch." in content
+    assert "Production config image digest mismatch." in content
+    assert "Production config digest mismatch." in content
+    assert "Production compose hash mismatch." in content
+    assert "Production profile hash mismatch." in content
+    assert "-ConfigDigest $env:CONFIG_DIGEST" in content
+    assert "-ConfigBundlePath $env:CONFIG_BUNDLE_PATH" in content
+    assert "-RequestId $env:REQUEST_ID" in content
+    assert '"IWORK_REQUEST_ID=$env:REQUEST_ID"' in content
 
 
 def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
@@ -136,7 +215,8 @@ def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
     assert "Exit-ProductionCoordinationLock" in content
     assert "-Repository 'GuChenkano/iwork'" in content
     assert "-Service 'iwork'" in content
-    assert "-ArtifactDigests @{ iwork = $ImageDigest }" in content
+    assert "iwork = $ImageDigest" in content
+    assert "iwork_config = $ConfigDigest" in content
     assert "if (Test-Path -LiteralPath $DEPLOYMENT_LOCK_FILE -PathType Leaf)" not in content
 
 
@@ -166,6 +246,7 @@ def test_deployment_lock_schema_contract_is_explicit() -> None:
     assert "-RunId $RunId" in content
     assert "-Actor $Actor" in content
     assert "-ExpectedRevision $ExpectedRevision" in content
+    assert "-RequestId $RequestId" in content
     assert "-Phase 'candidate_validation'" in content
     assert "-Phase 'preflight_complete'" in content
     assert "-Phase 'production_validation'" in content
@@ -253,6 +334,17 @@ def test_container_startup_can_skip_migrations_explicitly() -> None:
     assert "根据部署策略跳过数据库迁移" in content
 
 
+def test_compose_env_file_is_overridable_by_verified_release_profile() -> None:
+    """生产脚本必须能让Compose服务直接读取配置包内环境文件。"""
+    compose = COMPOSE_PATH.read_text(encoding="utf-8")
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert compose.count("IWORK_RELEASE_PROFILE_FILE") == 2
+    assert "./env/${DKT_ENVIRONMENT:-production}.env" in compose
+    assert "$env:IWORK_RELEASE_PROFILE_FILE = $ProfileFile" in script
+    assert "Invoke-DockerCommandWithProfile" in script
+
+
 def _run_deployment_script(
     tmp_path: Path,
     *,
@@ -268,7 +360,13 @@ def _run_deployment_script(
     health_timeout_seconds: int = 2,
     fail_maintenance_cleanup: bool = False,
     existing_maintenance_marker: dict[str, object] | None = None,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
+    config_source_commit: str = CANDIDATE_REVISION,
+    config_image_digest: str = CANDIDATE_DIGEST,
+    tamper_config_after_manifest: bool = False,
+    add_unknown_config_file: bool = False,
+    existing_active_config: bool = False,
+    tamper_active_release_field: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
     Args:
@@ -285,9 +383,15 @@ def _run_deployment_script(
         health_timeout_seconds (int): 等待容器恢复健康的超时秒数。
         fail_maintenance_cleanup (bool): 是否模拟维护标记在清理前变为不可删除目录。
         existing_maintenance_marker: 运行前写入的部署维护标记。
+        config_source_commit (str): 配置清单绑定的来源Commit。
+        config_image_digest (str): 配置清单绑定的镜像Digest。
+        tamper_config_after_manifest (bool): 是否在生成清单后篡改配置文件。
+        add_unknown_config_file (bool): 是否在配置包中加入未知文件。
+        existing_active_config (bool): 是否预置一套与候选不同的活动配置。
+        tamper_active_release_field (str | None): 可选的活动指针字段篡改项。
 
     Returns:
-        tuple[subprocess.CompletedProcess[str], dict[str, Path]]:
+        tuple[subprocess.CompletedProcess[str], dict[str, object]]:
             进程结果和隔离路径字典。
     """
     iwork_root = tmp_path / "iwork"
@@ -306,6 +410,7 @@ def _run_deployment_script(
     fake_docker = tmp_path / "fake-docker.ps1"
     fake_docker_wrapper = tmp_path / "fake-docker.cmd"
     watchdog_script = tmp_path / "docker-health-watchdog.ps1"
+    config_bundle = tmp_path / "config-bundle"
 
     profile.parent.mkdir(parents=True)
     state_root.mkdir()
@@ -315,8 +420,71 @@ def _run_deployment_script(
             '{"Status":"failed","RunId":"previous-attempt"}\n',
             encoding="utf-8",
         )
-    (iwork_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
-    profile.write_text("DKT_ENVIRONMENT=production\n", encoding="utf-8")
+    compose_content = b"services: {}\n"
+    profile_content = b"DKT_ENVIRONMENT=production\n"
+    (iwork_root / "docker-compose.yml").write_bytes(compose_content)
+    profile.write_bytes(profile_content)
+    config_digest = _write_config_bundle(
+        config_bundle,
+        compose_content=compose_content,
+        profile_content=profile_content,
+        source_commit=config_source_commit,
+        image_digest=config_image_digest,
+    )
+    if tamper_config_after_manifest:
+        config_bundle.joinpath("env", "production.env").write_text(
+            "DKT_ENVIRONMENT=tampered\n",
+            encoding="utf-8",
+        )
+    if add_unknown_config_file:
+        config_bundle.joinpath("unexpected.ps1").write_text(
+            "throw 'unexpected'\n",
+            encoding="utf-8",
+        )
+    previous_config_digest: str | None = None
+    previous_config_path: Path | None = None
+    if existing_active_config:
+        temporary_previous = tmp_path / "previous-config"
+        previous_image_digest = PREVIOUS_DIGEST
+        previous_revision = PREVIOUS_REVISION
+        previous_config_digest = _write_config_bundle(
+            temporary_previous,
+            compose_content=b"services:\n  legacy: {}\n",
+            profile_content=b"DKT_ENVIRONMENT=production\nFEATURE_LEVEL=legacy\n",
+            source_commit=previous_revision,
+            image_digest=previous_image_digest,
+        )
+        previous_config_path = (
+            state_root
+            / "release-config"
+            / previous_config_digest.removeprefix("sha256:")
+        )
+        previous_config_path.parent.mkdir(parents=True)
+        temporary_previous.rename(previous_config_path)
+        active_release = {
+            "schema": "iwork-active-release/v1",
+            "source_commit": previous_revision,
+            "image_digest": previous_image_digest,
+            "config_digest": previous_config_digest,
+            "config_artifact_digest": CONFIG_ARTIFACT_DIGEST,
+            "compose_sha256": hashlib.sha256(
+                b"services:\n  legacy: {}\n"
+            ).hexdigest(),
+            "production_env_sha256": hashlib.sha256(
+                b"DKT_ENVIRONMENT=production\nFEATURE_LEVEL=legacy\n"
+            ).hexdigest(),
+            "deployment_run_id": "previous-run",
+            "request_id": PREFLIGHT_REQUEST_ID,
+            "activated_at": "2026-08-27T00:00:00+00:00",
+        }
+        if tamper_active_release_field == "request_id":
+            active_release["request_id"] = "not-a-guid"
+        elif tamper_active_release_field == "compose_sha256":
+            active_release["compose_sha256"] = "0" * 64
+        state_root.joinpath("active-release.json").write_text(
+            json.dumps(active_release),
+            encoding="utf-8",
+        )
     secrets.write_text("TEST_ONLY=1\n", encoding="utf-8")
     watchdog_script.write_text(
         (
@@ -329,10 +497,17 @@ def _run_deployment_script(
     fake_docker.write_text(
         """param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CommandArgs)
 $line = $CommandArgs -join ' '
+Add-Content -LiteralPath $env:FAKE_DOCKER_LOG -Value "release-profile=$env:IWORK_RELEASE_PROFILE_FILE" -Encoding UTF8
 Add-Content -LiteralPath $env:FAKE_DOCKER_LOG -Value $line -Encoding UTF8
 if ($line -like 'info*') { '29.4.3'; return }
 if ($line -like 'image inspect*') {
-    '{\"org.opencontainers.image.revision\":\"' + $env:FAKE_REVISION + '\"}'
+    $revision = if ($line -like "*$env:FAKE_PREVIOUS_DIGEST*") {
+        $env:FAKE_PREVIOUS_REVISION
+    }
+    else {
+        $env:FAKE_REVISION
+    }
+    '{\"org.opencontainers.image.revision\":\"' + $revision + '\"}'
     return
 }
 if ($line -like 'inspect DKT_iwork*--format {{.Image}}*') {
@@ -395,7 +570,7 @@ if ($line -like 'compose*up *--no-build --no-deps iwork alert-worker*') {
     })
     if (
         $env:FAKE_FAIL_ROLLBACK -eq '1' -and
-        $images[0] -like 'dkt-cicd/*-rollback:*'
+        $images[0] -like "*$env:FAKE_PREVIOUS_DIGEST*"
     ) {
         throw 'Injected rollback compose failure'
     }
@@ -452,6 +627,8 @@ exit /b %fakeDockerExitCode%
     env = os.environ.copy()
     env["FAKE_DOCKER_LOG"] = str(docker_log)
     env["FAKE_REVISION"] = CANDIDATE_REVISION
+    env["FAKE_PREVIOUS_DIGEST"] = PREVIOUS_DIGEST
+    env["FAKE_PREVIOUS_REVISION"] = PREVIOUS_REVISION
     env["FAKE_CANDIDATE_IMAGE"] = f"ghcr.io/guchenkano/iwork@{CANDIDATE_DIGEST}"
     env["FAKE_FAIL_VALIDATION"] = "1" if fail_validation else "0"
     env["FAKE_FAIL_ROLLBACK"] = "1" if fail_rollback else "0"
@@ -466,13 +643,61 @@ exit /b %fakeDockerExitCode%
     env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
-    web_image_state.write_text("iwork-iwork", encoding="utf-8")
-    alert_image_state.write_text("iwork-alert-worker", encoding="utf-8")
+    previous_image = f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}"
+    web_image_state.write_text(previous_image, encoding="utf-8")
+    alert_image_state.write_text(previous_image, encoding="utf-8")
     env["FAKE_WEB_IMAGE_STATE"] = str(web_image_state)
     env["FAKE_ALERT_IMAGE_STATE"] = str(alert_image_state)
     health_check_counter = tmp_path / "health-check-counter.txt"
     health_check_counter.write_text("0", encoding="ascii")
     env["FAKE_HEALTH_CHECK_COUNTER"] = str(health_check_counter)
+
+    if mode == "Deploy":
+        (state_root / f"preflight-{PREFLIGHT_RUN_ID}.json").write_text(
+            json.dumps(
+                {
+                    "schema": "iwork-preflight-receipt/v1",
+                    "mode": "Preflight",
+                    "run_id": PREFLIGHT_RUN_ID,
+                    "request_id": PREFLIGHT_REQUEST_ID,
+                    "actor": "GuChenkano",
+                    "expected_revision": CANDIDATE_REVISION,
+                    "image_digest": CANDIDATE_DIGEST,
+                    "config_digest": config_digest,
+                    "config_artifact_digest": CONFIG_ARTIFACT_DIGEST,
+                    "compose_sha256": hashlib.sha256(compose_content).hexdigest(),
+                    "production_env_sha256": hashlib.sha256(profile_content).hexdigest(),
+                    "run_migrations": False,
+                    "rollback_drill": False,
+                    "container_baseline": [
+                        {
+                            "Name": "DKT_iwork",
+                            "ContainerId": "web-container-id",
+                            "ConfiguredImage": f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}",
+                            "ImageDigest": PREVIOUS_DIGEST,
+                            "Revision": PREVIOUS_REVISION,
+                            "ImageId": "sha256:" + "a" * 64,
+                            "Status": "running",
+                            "Health": "healthy",
+                            "RestartCount": 0,
+                        },
+                        {
+                            "Name": "DKT_iwork_alert_worker",
+                            "ContainerId": "alert-container-id",
+                            "ConfiguredImage": f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}",
+                            "ImageDigest": PREVIOUS_DIGEST,
+                            "Revision": PREVIOUS_REVISION,
+                            "ImageId": "sha256:" + "b" * 64,
+                            "Status": "running",
+                            "Health": "healthy",
+                            "RestartCount": 0,
+                        },
+                    ],
+                    "result": "validated",
+                }
+            ),
+            encoding="utf-8",
+        )
     identity = subprocess.run(  # noqa: S603 - 固定调用Windows系统whoami
         [str(WHOAMI_EXE)],
         capture_output=True,
@@ -494,6 +719,18 @@ exit /b %fakeDockerExitCode%
             CANDIDATE_DIGEST,
             "-ExpectedRevision",
             CANDIDATE_REVISION,
+            "-RequestId",
+            REQUEST_ID,
+            "-ConfigDigest",
+            config_digest,
+            "-ConfigArtifactDigest",
+            CONFIG_ARTIFACT_DIGEST,
+            "-ConfigBundlePath",
+            str(config_bundle),
+            "-PreflightRunId",
+            PREFLIGHT_RUN_ID if mode == "Deploy" else "none",
+            "-PreflightRequestId",
+            PREFLIGHT_REQUEST_ID if mode == "Deploy" else "none",
             "-RunMigrations",
             str(run_migrations).lower(),
             "-RollbackDrill",
@@ -539,6 +776,9 @@ exit /b %fakeDockerExitCode%
         "lock_root": lock_root,
         "maintenance_file": maintenance_file,
         "watchdog_script": watchdog_script,
+        "config_bundle": config_bundle,
+        "previous_config_path": previous_config_path,
+        "previous_config_digest": previous_config_digest,
     }
 
 
@@ -559,9 +799,38 @@ def test_preflight_validates_candidate_without_mutating_containers(tmp_path: Pat
     assert "inspect dkt_iwork_alert_worker" in docker_calls
     for forbidden in (" up ", " down ", " run ", " stop ", " rm "):
         assert forbidden not in f" {docker_calls} "
-    assert list(paths["state_root"].iterdir()) == []
+    receipt_path = paths["state_root"] / f"preflight-{DEPLOYMENT_RUN_ID}.json"
+    assert receipt_path.is_file()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "iwork-preflight-receipt/v1"
+    assert receipt["request_id"] == REQUEST_ID
+    assert receipt["config_artifact_digest"] == CONFIG_ARTIFACT_DIGEST
     assert list(paths["lock_root"].iterdir()) == []
     assert not paths["maintenance_file"].exists()
+
+
+def test_preflight_rejects_tampered_or_mismatched_config_before_docker(
+    tmp_path: Path,
+) -> None:
+    """配置包被篡改或身份错配时，必须在任何Docker调用前失败关闭。"""
+    cases = {
+        "tampered": {"tamper_config_after_manifest": True},
+        "unknown-file": {"add_unknown_config_file": True},
+        "wrong-commit": {"config_source_commit": "3" * 40},
+        "wrong-image": {
+            "config_image_digest": "sha256:" + "4" * 64,
+        },
+    }
+
+    for case_name, kwargs in cases.items():
+        result, paths = _run_deployment_script(
+            tmp_path / case_name,
+            mode="Preflight",
+            **kwargs,
+        )
+        assert result.returncode != 0, case_name
+        assert not paths["docker_log"].exists(), case_name
+        assert not paths["maintenance_file"].exists(), case_name
 
 
 def test_deploy_archives_expired_owned_maintenance_marker(tmp_path: Path) -> None:
@@ -723,7 +992,7 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert '"Mode":"Deploy"' in result.stdout
     assert '"Result":"deployed"' in result.stdout
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
-    assert "tag sha256:" in docker_calls
+    assert f"ghcr.io/guchenkano/iwork@{CANDIDATE_DIGEST}" in docker_calls
     assert "compose" in docker_calls
     assert "up -d --no-build --no-deps iwork alert-worker" in docker_calls
     assert "exec dkt_iwork python manage.py check --deploy" in docker_calls
@@ -735,9 +1004,30 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert state["Status"] == "deployed"
     assert state["PreviousWebImageId"].startswith("sha256:")
     assert state["PreviousAlertWorkerImageId"].startswith("sha256:")
+    assert state["PreviousImageDigest"] == PREVIOUS_DIGEST
+    assert state["PreviousRevision"] == PREVIOUS_REVISION
     assert state["PreviousContainers"][0]["ContainerId"] == "web-container-id"
     assert state["PreviousContainers"][0]["RestartCount"] == 0
     assert state["PreviousContainers"][0]["Health"] == "healthy"
+    assert state["CandidateConfigDigest"].startswith("sha256:")
+    assert state["RequestId"] == REQUEST_ID
+    assert state["CandidateComposeSha256"] == hashlib.sha256(
+        b"services: {}\n"
+    ).hexdigest()
+    assert state["CandidateProductionEnvSha256"] == hashlib.sha256(
+        b"DKT_ENVIRONMENT=production\n"
+    ).hexdigest()
+    assert state["PreviousConfigDigest"] == state["CandidateConfigDigest"]
+    assert state["PreviousConfigBootstrap"] is True
+    active_release = json.loads(
+        paths["state_root"].joinpath("active-release.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert active_release["schema"] == "iwork-active-release/v1"
+    assert active_release["config_digest"] == state["CandidateConfigDigest"]
+    assert active_release["image_digest"] == CANDIDATE_DIGEST
+    assert active_release["request_id"] == REQUEST_ID
     assert not (paths["lock_root"] / "production-deploy.lock").exists()
     assert not paths["maintenance_file"].exists()
 
@@ -774,8 +1064,9 @@ def test_controlled_rollback_drill_restores_both_previous_images(
 
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
-    assert f"iwork-web-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
-    assert f"iwork-alert-worker-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
+    persisted_config_path = str(paths["state_root"] / "release-config").lower()
+    assert docker_calls.count(persisted_config_path) >= 2
+    assert f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}" in docker_calls
     assert docker_calls.count("inspect dkt_iwork --format {{.image}}") >= 2
     assert docker_calls.count("inspect dkt_iwork_alert_worker --format {{.image}}") >= 2
 
@@ -792,6 +1083,8 @@ def test_controlled_rollback_drill_restores_both_previous_images(
     assert drill["RunId"] == DEPLOYMENT_RUN_ID
     assert drill["PreviousWebImageId"].startswith("sha256:")
     assert drill["PreviousAlertWorkerImageId"].startswith("sha256:")
+    assert drill["PreviousImageDigest"] == PREVIOUS_DIGEST
+    assert drill["PreviousRevision"] == PREVIOUS_REVISION
     assert not (paths["lock_root"] / "production-deploy.lock").exists()
     assert not paths["maintenance_file"].exists()
 
@@ -886,8 +1179,7 @@ def test_deploy_failure_automatically_restores_both_previous_images(
     assert result.returncode != 0
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
-    assert f"iwork-web-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
-    assert f"iwork-alert-worker-rollback:{DEPLOYMENT_RUN_ID}" in docker_calls
+    assert f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}" in docker_calls
     assert docker_calls.count("exec dkt_iwork python manage.py check --deploy") == 2
     assert docker_calls.count("exec dkt_iwork_alert_worker celery") == 1
 
@@ -898,6 +1190,58 @@ def test_deploy_failure_automatically_restores_both_previous_images(
     assert "Injected Django validation failure" in state["DeploymentError"]
     assert not (paths["lock_root"] / "production-deploy.lock").exists()
     assert not paths["maintenance_file"].exists()
+
+
+def test_deploy_failure_restores_previous_image_and_previous_config(
+    tmp_path: Path,
+) -> None:
+    """存在活动发布指针时，候选失败必须成对恢复旧镜像和旧配置。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        fail_validation=True,
+        existing_active_config=True,
+    )
+
+    assert result.returncode != 0
+    state = json.loads(
+        (paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["Status"] == "rolled_back"
+    assert state["RollbackSucceeded"] is True
+    assert state["PreviousConfigBootstrap"] is False
+    assert state["PreviousConfigDigest"] == paths["previous_config_digest"]
+    assert state["PreviousConfigDigest"] != state["CandidateConfigDigest"]
+    docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+    assert str(paths["previous_config_path"]).lower() in docker_calls
+    assert (
+        f"release-profile={paths['previous_config_path']}\\env\\production.env".lower()
+        in docker_calls
+    )
+    active_release = json.loads(
+        (paths["state_root"] / "active-release.json").read_text(encoding="utf-8")
+    )
+    assert active_release["config_digest"] == paths["previous_config_digest"]
+
+
+def test_active_release_pointer_must_bind_audit_identity_and_config_hashes(
+    tmp_path: Path,
+) -> None:
+    """活动发布指针的request_id和配置文件哈希被篡改时必须在切换前失败。"""
+    for field in ("request_id", "compose_sha256"):
+        result, paths = _run_deployment_script(
+            tmp_path / field,
+            mode="Deploy",
+            existing_active_config=True,
+            tamper_active_release_field=field,
+        )
+
+        assert result.returncode != 0, field
+        docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+        assert "up -d --no-build --no-deps iwork alert-worker" not in docker_calls
+        assert "活动发布指针" in result.stderr
 
 
 def test_migration_deployment_creates_database_backup_and_checksum(

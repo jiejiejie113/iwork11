@@ -14,7 +14,7 @@
 
 - CI 和发布均只针对固定远程分支当前完整 Commit SHA。
 - 发布前必须存在同一 Commit 的成功 CI；发布 Workflow 也会再次验证。
-- 部署前必须存在同一 Commit 的成功 CI 和发布，并使用发布得到的完整 GHCR Digest。
+- 部署前必须存在同一 Commit 的成功 CI 和发布，并使用发布得到的完整镜像 Digest 与配置包 Digest。
 - 预检和部署会读取同一Commit的成功Release日志并重新提取Digest；输入Digest必须逐项
   完全一致，不能只通过格式校验。
 - Portal 部署 Workflow 还会验证同一 Commit 和两个 Digest 的成功 Runner smoke。
@@ -29,10 +29,18 @@
 
 - `-Revision`：40 位小写 Commit SHA，必须等于远程 `Keycloak` HEAD。
 - `-ImageDigest`：`sha256:` 加 64 位小写十六进制。
+- `-ConfigDigest`：同一 Release 生成的生产配置包逻辑 Digest。
+- `-ConfigArtifactDigest`：同一 Release 上传的 GitHub 配置 Artifact 存储 Digest。
 - `-ChangeDescription`：非空变更说明。
 
 预检固定传递 `apply=false`、`rollback_drill=false`、`run_migrations=false`、
 `confirmation=PREFLIGHT IWORK`。
+
+正式部署必须传入成功预检返回的 `-PreflightRunId`，格式为
+`<workflow_run_id>-<run_attempt>`。该 Run 必须是同一 Commit 的
+`completed/success`、`workflow_dispatch` 运行，且 Run 名称/标题含有本次 `request_id`；
+它只能来自 `apply=false` 的 iwork 预检，脚本会重新读取其完整三类 Digest 并逐项比对当前
+输入，任何绑定缺失、运行状态不符或证据不一致都失败关闭。
 
 部署确认预览返回：
 
@@ -52,8 +60,8 @@
 - `-PortalDigest` 与 `-ProxyDigest`：两个完整 SHA-256 Digest。
 - `-ChangeDescription`：非空变更说明。
 
-预检固定关闭三种回滚演练开关，关联 Run ID 固定为 `none`，确认词为
-`PREFLIGHT PORTAL`。
+预检和普通部署固定关闭 `capability_drill`，不传递已从 Portal Workflow 移除的旧
+`rollback_drill`、retry 或 recovery 字段；确认词为 `PREFLIGHT PORTAL`。
 
 Portal 部署会同时影响认证入口，确认预览固定返回：
 
@@ -77,5 +85,19 @@ Docker 健康状态。若用户需要实际容器状态，应另行执行获准�
 Actions 证据与 Docker 结果分开汇报。
 
 使用`-Wait`时，Run未以`completed / success`结束或`gh run watch`失败，脚本必须返回
-非零退出码。触发与Run发现期间使用本机命名Mutex；若时间窗口内出现多个同分支、同Commit
-的候选Run，脚本停止关联并要求人工核对，不能猜测最新Run就是本次触发，也不能自动重试。
+非零退出码。iwork 的`ci`、`release`、`preflight`和`deploy`每次 dispatch 都会生成
+独立GUID `request_id`并传给Workflow；脚本只关联`run-name`包含该ID的新Run。Portal
+在其Workflow完成同一输入契约前，继续按触发前Run ID快照、Commit、事件和时间窗关联。
+Run发现窗口为120秒，截止前会执行一次最终查询；触发与Run发现期间使用本机命名Mutex。
+若窗口内出现多个候选Run，脚本停止关联并要求人工核对，不能猜测最新Run就是本次触发，
+也不能自动重试。
+
+iwork 的四类 Workflow 使用独立 `request_id`：Release 还必须接收并核验上游 CI 的
+`ci_request_id`，Preflight/Deploy 还必须接收并核验上游 Release 的 `release_request_id`。
+这些上游 ID 只能从已核验 Run 的 `displayTitle` 提取，不能用平台 Run ID 或“最新成功”替代。
+
+Release 证据输出包含 `ImageDigest`、`ConfigDigest` 与 `ConfigArtifactDigest` 字段，同时保留兼容的
+`Digests`数组。iwork 成功 Release 必须从日志解析出唯一完整的镜像、配置逻辑和配置 Artifact
+Digest；预检与部署将三个值逐项传入并与同一 Release 证据匹配。Portal 仍必须分别解析
+`dtd-nginx` 和 `dtd-oauth2-proxy` 两个唯一 Digest，`ConfigArtifactDigest` 保持为空。失败 Run
+可返回空 Digest 字段，`production-status`不会因失败 Run 没有发布证据而整体失败。

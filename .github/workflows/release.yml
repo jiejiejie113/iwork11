@@ -1,10 +1,18 @@
 name: iwork GHCR不可变镜像发布
+run-name: >-
+  iwork release · ${{ inputs.request_id || github.sha }}
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "iwork-v*"
+    inputs:
+      request_id:
+        description: 本次触发的唯一关联ID
+        required: true
+        type: string
+      ci_request_id:
+        description: 成功CI Run的唯一关联ID
+        required: true
+        type: string
 
 concurrency:
   group: ghcr-release-iwork-${{ github.sha }}
@@ -23,17 +31,34 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
+      REQUEST_ID: ${{ inputs.request_id }}
+      CI_REQUEST_ID: ${{ inputs.ci_request_id }}
     outputs:
       run_url: ${{ steps.ci.outputs.run_url }}
     steps:
+      - name: 仅允许带关联ID的手工发布
+        shell: pwsh
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_EVENT_NAME -cne "workflow_dispatch") {
+              throw "发布只允许workflow_dispatch触发"
+          }
+          if ($env:REQUEST_ID -notmatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") {
+              throw "Invalid request ID format."
+          }
+          if ($env:CI_REQUEST_ID -notmatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") {
+              throw "Invalid CI request ID format."
+          }
+
       - name: 验证发布引用与完整SHA
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $allowedBranch = $env:GITHUB_REF -eq "refs/heads/Keycloak"
-          $allowedTag = $env:GITHUB_REF.StartsWith("refs/tags/iwork-v", [System.StringComparison]::Ordinal)
-          if (-not ($allowedBranch -or $allowedTag)) {
-              throw "仅允许从Keycloak分支或iwork-v*标签发布"
+          if (-not $allowedBranch) {
+              throw "仅允许从Keycloak分支发布"
           }
           if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") {
               throw "发布提交不是完整的40位SHA"
@@ -46,13 +71,20 @@ jobs:
           $ErrorActionPreference = "Stop"
           $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:GITHUB_SHA&status=completed&per_page=100"
           $response = gh api $endpoint | ConvertFrom-Json
-          $successfulRun = $response.workflow_runs |
-              Where-Object { $_.conclusion -eq "success" } |
-              Sort-Object -Property created_at -Descending |
-              Select-Object -First 1
-          if (-not $successfulRun) {
-              throw "没有找到同一提交的成功CI，禁止发布镜像"
+          $successfulRuns = @($response.workflow_runs |
+              Where-Object {
+                  $_.status -eq "completed" -and
+                  $_.conclusion -eq "success" -and
+                  $_.event -eq "workflow_dispatch" -and
+                  $_.head_branch -eq "Keycloak" -and
+                  $_.head_sha -eq $env:GITHUB_SHA -and
+                  ([string]$_.display_title).Contains($env:CI_REQUEST_ID)
+              } |
+              Sort-Object -Property created_at -Descending)
+          if ($successfulRuns.Count -ne 1) {
+              throw "同一提交的成功CI必须恰好匹配一个ci_request_id，实际：$($successfulRuns.Count)"
           }
+          $successfulRun = $successfulRuns[0]
           "run_url=$($successfulRun.html_url)" >> $env:GITHUB_OUTPUT
           "已确认CI: $($successfulRun.html_url)"
 
@@ -67,12 +99,40 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/guchenkano/iwork
       IMAGE_REF: ghcr.io/guchenkano/iwork:${{ github.sha }}
+      CONFIG_SOURCE_PATH: ${{ runner.temp }}/iwork-production-config-source
+      CI_REQUEST_ID: ${{ inputs.ci_request_id }}
     steps:
+      - name: 校验请求关联ID
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          if ($env:REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+              throw 'Invalid request ID format.'
+          }
+          "IWORK_REQUEST_ID=$env:REQUEST_ID"
+
       - name: 检出已通过CI的提交
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
           fetch-depth: 1
+
+      - name: 暂存版本化生产配置源
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item `
+              -ItemType Directory `
+              -Path (Join-Path $env:CONFIG_SOURCE_PATH 'env') `
+              -Force | Out-Null
+          Copy-Item `
+              -LiteralPath ./docker-compose.yml `
+              -Destination (Join-Path $env:CONFIG_SOURCE_PATH 'docker-compose.yml')
+          Copy-Item `
+              -LiteralPath ./env/production.env `
+              -Destination (Join-Path (Join-Path $env:CONFIG_SOURCE_PATH 'env') 'production.env')
 
       - name: 清除临时构建上下文中的敏感文件
         shell: pwsh
@@ -159,7 +219,66 @@ jobs:
           "reused=$($reused.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           $durationSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 1)
           "duration_seconds=$durationSeconds" >> $env:GITHUB_OUTPUT
-          "### iwork GHCR发布`n`n- Commit: ``$env:GITHUB_SHA```n- Image: ``$env:IMAGE_NAME@$digest```n- Reused: ``$reused```n- Duration: ``$durationSeconds seconds```n- CI: ${{ needs.verify-ci.outputs.run_url }}`n- Release: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" >> $env:GITHUB_STEP_SUMMARY
+          "### iwork GHCR发布`n`n- Commit: ``$env:GITHUB_SHA```n- Image: ``$env:IMAGE_NAME@$digest```n- Reused: ``$reused```n- Duration: ``$durationSeconds seconds```n- CI: ${{ needs.verify-ci.outputs.run_url }}`n- CI request ID: ``$env:CI_REQUEST_ID```n- Release request ID: ``$env:REQUEST_ID```n- Release: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: 生成不可变生产配置包
+        id: config
+        shell: pwsh
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundlePath = Join-Path `
+              $env:RUNNER_TEMP `
+              "iwork-production-config-$env:GITHUB_SHA"
+          & ./scripts/New-IworkProductionConfigBundle.ps1 `
+              -SourceRoot $env:CONFIG_SOURCE_PATH `
+              -OutputDirectory $bundlePath `
+              -SourceCommit $env:GITHUB_SHA `
+              -ImageDigest $env:IMAGE_DIGEST
+          if ($LASTEXITCODE -ne 0) { throw "生产配置包生成失败" }
+          $manifest = Get-Content `
+              -LiteralPath (Join-Path $bundlePath 'config-manifest.json') `
+              -Raw | ConvertFrom-Json
+          if ($manifest.source_commit -cne $env:GITHUB_SHA) {
+              throw "配置包Commit不匹配"
+          }
+          if ($manifest.image_digest -cne $env:IMAGE_DIGEST) {
+              throw "配置包镜像Digest不匹配"
+          }
+          if ($manifest.config_digest -notmatch '^sha256:[0-9a-f]{64}$') {
+              throw "配置包Digest格式无效"
+          }
+          "bundle_path=$bundlePath" >> $env:GITHUB_OUTPUT
+          "config_digest=$($manifest.config_digest)" >> $env:GITHUB_OUTPUT
+          "IWORK_IMAGE_DIGEST=$env:IMAGE_DIGEST"
+          "IWORK_CONFIG_DIGEST=$($manifest.config_digest)"
+
+      - name: 发布不可变生产配置包
+        id: config_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iwork-production-config-${{ github.sha }}
+          path: ${{ steps.config.outputs.bundle_path }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          include-hidden-files: false
+
+      - name: 记录发布身份
+        shell: pwsh
+        run: |
+          @(
+              '### iwork immutable production configuration'
+              ''
+              '- Config digest: `${{ steps.config.outputs.config_digest }}`'
+              '- Artifact digest: `${{ steps.config_artifact.outputs.artifact-digest }}`'
+              '- Artifact name: `iwork-production-config-${{ github.sha }}`'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          "IWORK_IMAGE_DIGEST=${{ steps.image.outputs.digest }}"
+          "IWORK_CONFIG_DIGEST=${{ steps.config.outputs.config_digest }}"
+          "IWORK_CONFIG_ARTIFACT_DIGEST=${{ steps.config_artifact.outputs.artifact-digest }}"
+          "IWORK_REQUEST_ID=${{ inputs.request_id }}"
 
       - name: 注销GHCR
         if: always()

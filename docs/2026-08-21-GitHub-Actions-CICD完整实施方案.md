@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-26，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill，阶段8已开始执行iwork端到端验收。阶段0—7共8个阶段已完成，阶段8进行中。
+截至2026-08-28，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill。阶段8的本地最后冲刺实现和隔离验证已完成：不可变配置包、镜像/配置/Commit三元绑定、`request_id`唯一Run关联、失败Run Digest兼容、成对回滚和安装副本同步均已通过本地门禁；但本轮提交尚未推送，真实CI/Release、生产固定机制安装、`apply=false`预检、正式切换和24小时观察仍未完成。阶段0—7共8个阶段已完成，阶段8进行中。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -73,7 +73,7 @@
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
-| 8 | 端到端验收与观察 | 进行中 | Portal新候选在切换前被旧v3精确版本门禁拒绝，生产未变；部署机制认证已进入本地实现与验证 |
+| 8 | 端到端验收与观察 | 进行中 | iwork最后冲刺本地实现与隔离验证完成；待提交/推送、真实CI/Release、生产安装、预检、正式切换和24小时观察 |
 
 ## 4. 已完成：阶段0——基线与纯CI
 
@@ -1126,10 +1126,101 @@ scripts\Invoke-DktCicd.ps1
 - Skill自然语言场景验收通过。
 - 24小时观察无持续异常。
 
-阶段状态：进行中（2026-08-26；iwork纯CI成功，GHCR首轮失败已定位并修复，尚未形成新的
-成功Release或执行生产预检/部署）。
+本小节状态：历史记录（2026-08-26）。首轮失败证据保持不可变，后续修复与真实交付证据见12.2节。
 
-### 12.2 2026-08-27 Portal部署阻断与机制认证迁移
+### 12.2 2026-08-27 iwork通知修复真实交付与配置漂移复盘
+
+#### 12.2.1 真实交付证据
+
+2026-08-27，Commit `4cb8e31188a0022ea5441e1e10490adc4cc8ad8a` 的站内通知详情与生产CSRF修复完成
+以下受控交付链路：
+
+- 纯CI运行[`33051286997`](https://github.com/GuChenkano/iwork/actions/runs/33051286997)：`completed / success`。
+- GHCR发布运行[`33051630263`](https://github.com/GuChenkano/iwork/actions/runs/33051630263)：`completed / success`；
+  iwork镜像Digest为
+  `sha256:6b131b70ef209073adf9e6de7e048f230e2c9ce00b8b3eea0d78187455ff3285`，OCI revision与该Commit一致。
+- 生产`apply=false`预检运行[`33053478836`](https://github.com/GuChenkano/iwork/actions/runs/33053478836)：`completed / success`。
+- 正式部署运行[`33053638336`](https://github.com/GuChenkano/iwork/actions/runs/33053638336)：`completed / success`，
+  输入为`apply=true`、`run_migrations=false`，部署摘要记录了同步服务器生产配置及通知详情CSRF修复。
+
+上述证据证明该Commit的镜像已通过CI、GHCR、生产预检和受控部署Workflow；它不等价于真实浏览器登录、
+通知点击、Remote-User和退出链路已经完成。当前仍需保留真实账号浏览器验收及24小时观察的未完成状态。
+
+#### 12.2.2 首次配置漂移根因
+
+本次修复同时暴露了生产配置交付边界：`env/production.env` 中新增的
+`DJANGO_CSRF_TRUSTED_ORIGINS` 属于版本化代码库，但既有部署Workflow只校验候选镜像的完整Digest、
+OCI revision、固定部署脚本和协调模块哈希，不校验服务器 `D:\DM\iwork\env\production.env` 的内容哈希。
+固定部署脚本也只确认配置文件存在并把它传给Compose。因此，镜像Commit可以已经更新，而服务器仍可能使用
+旧生产配置；变更说明中的“同步服务器生产配置”不是可验证的配置一致性证据。
+
+本次正式部署能够成功，不应倒推旧机制已经具备配置一致性门禁。首次漂移的根因是生产配置没有作为不可变发布
+产物进入Release、Preflight和Deploy的同一证据链，服务器Git工作区中的配置文件事实上承担了隐式运行时输入。
+
+#### 12.2.3 不可变配置包、三类Digest与request_id长期方案
+
+后续生产发布采用“镜像 + 配置包 + Commit”三元绑定，具体规则如下：
+
+1. Hosted Runner从批准Commit生成不含密码的不可变生产配置包。配置包使用严格UTF-8规范化字节（LF、无BOM）和逻辑SHA-256 Digest；
+   固定Schema清单包含`application`、完整Commit、镜像Digest、Compose哈希、生产环境文件哈希和配置包Digest。
+   `compose_sha256`与`production_env_sha256`为64位小写十六进制，`config_digest`为完整`sha256:`加64位小写十六进制值。
+   GitHub Actions Artifact仅包含清单、`docker-compose.yml`和`env/production.env`，保留90天且不允许覆盖同Run产物。
+2. Release同时发布GHCR镜像与配置Artifact，并输出镜像Digest、配置逻辑Digest和Artifact存储Digest三种稳定机器记录。生产输入必须同时提供
+   `image_digest`、`config_digest`和`expected_revision`；三者必须来自同一成功Release，不能只验证格式或只验证
+   镜像OCI revision。
+3. 生产Runner只拉取并校验不可变配置包，不从服务器Git工作区读取`env/production.env`作为候选配置。服务器
+   工作区中的同名文件即使存在，也不能替代配置包；生产密钥继续只从服务器中央密钥文件注入。
+4. iwork的Web和Alert Worker必须使用同一Commit、同一镜像Digest和同一配置包Digest；部署锁、状态收据和
+   Step Summary均保存这组绑定。Portal继续使用自己的机制认证方案，不在本轮iwork配置包提交中改造。
+5. 每次iwork Skill请求先生成不可复用的`request_id`，并原样传入CI、Release、Preflight和Deploy。该ID必须出现在
+   Workflow run-name、机器可读摘要、Digest解析结果、部署锁、状态文件和回滚收据中。`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT`
+   仍是平台Run标识，不能代替用户请求关联ID。
+6. 触发后的Run关联必须同时核对仓库、Workflow、分支、Commit、`workflow_dispatch`、`request_id`和唯一
+   `databaseId`。无法取得唯一匹配、只看到旧Run或Run字段不完整时，必须失败关闭，不猜测“最新Run”。
+7. Release必须输出每个制品的稳定`artifact_digest`记录；Skill按该记录解析并做唯一性校验，不能依赖任意Docker
+   pull输出、颜色控制码或不可稳定的自由文本。缺少制品、同一制品出现不同Digest或配置包与镜像不成对时必须拒绝部署。
+
+#### 12.2.4 TDD垂直切片与顺序
+
+每个切片必须先增加会失败的测试，再实现最小修复，最后运行本地与CI验证：
+
+| 切片 | 先失败的测试与范围 | 通过标准 |
+|---|---|---|
+| A 配置包契约 | `tests/test_production_deployment_stage4.py`：Workflow必须固定配置包路径、`config_digest`和当前版本化配置清单Digest；当前旧Workflow应失败 | Release、Preflight、Deploy使用同一配置包Digest，配置不含密码且来源Commit明确 |
+| B 配置漂移阻断 | 阶段4隔离测试：服务器配置包缺失、Digest错误、Commit不一致时，必须在Compose切换前失败关闭；正确配置必须写入预检结果 | 不读取服务器Git工作区候选配置；state、锁和摘要记录镜像/配置/Commit三元绑定 |
+| C Run唯一关联 | `tools/skills/dkt-cicd/tests/Test-DktCicd.ps1`与`Fake-Gh.ps1`增加旧Run、push Run、重复dispatch和延迟可见Run；没有唯一`request_id`匹配时必须拒绝 | `gh run watch`、详情、日志和Digest均使用同一唯一Run ID，禁止猜测最新Run |
+| D Digest解析 | 增加缺少制品、同制品多Digest、Portal双镜像错配、仅有非规范Docker输出等失败测试 | Release输出稳定`artifact_digest`；重复同值可接受，不同值、缺失或跨Commit立即失败 |
+| E 成对回滚 | 阶段4部署隔离测试注入健康失败和配置包损坏；验证Web/Worker镜像与配置包一起恢复 | 回滚收据同时记录并验证两个镜像Digest、配置包Digest、Commit和`request_id`，不自动回滚数据库 |
+| F 端到端验收 | 依次执行CI、Release、Runner smoke、`apply=false`预检、正式部署和一次故障注入；最后执行浏览器与24小时观察 | 所有证据链可按`request_id`串联，未完成项仍明确标记，不以容器healthy替代业务验收 |
+
+迁移期规则：在不可变配置包契约正式安装前，可以暂时保留旧Runner Hook的`ApprovedHeadSha`作为补偿门禁，
+但它不能替代配置包Digest、镜像/配置/Commit绑定或`request_id`关联。只有安装器、Runner Hook、固定部署脚本、
+协调协议、部署Workflow或Runner smoke契约等部署机制本身变化时，才需要重新安装生产准入；普通应用Commit或
+配置包版本变化不应强制重装机制准入。
+
+每完成一个TDD切片或一个实施阶段，都必须在同一阶段提交中更新本总方案，记录阶段状态、实际Commit、
+Actions运行链接、测试与验收证据、未完成项、风险例外和下一阶段入口；测试通过或代码提交本身不能替代真实生产证据。
+
+#### 12.2.5 迁移、成对回滚与验收边界
+
+- 数据库迁移仍必须显式批准；`apply=false`和配置包预检不得执行迁移。
+- 迁移失败时只自动恢复应用镜像和配置包，不自动覆盖数据库；仅允许已审查的expand/contract迁移，备份用于
+  受控人工恢复。
+- 普通部署失败、配置包校验失败或任一容器验收失败时，Web与Alert Worker必须以原部署收据中的旧镜像Digest
+  和旧配置包Digest成对恢复，并再次验证HTTP、Django检查、Worker、实际镜像和配置包。
+- 生产验收必须分别记录CI、Release、Runner smoke、预检、正式切换、通知点击、CSRF、真实登录/退出、权限拒绝、
+  SSE、容器健康、锁清理、回滚和24小时观察；Actions成功或容器healthy不能单独代替业务验收。
+
+本地实现状态（2026-08-28）：不可变配置包已经接入Release与Deploy Workflow；固定部署脚本会严格验证Schema、
+Commit、镜像Digest、配置逻辑Digest、文件哈希、未知文件、重解析点和敏感键，并把候选配置保存到受控状态目录。
+部署状态、活动发布指针和协调锁已记录镜像/配置/Artifact三类Digest与`request_id`；隔离故障测试已证明旧镜像和不同旧配置可以成对恢复。
+`dkt-cicd`已完成120秒Run发现、iwork `request_id`关联、双Digest解析、失败Run无Digest兼容，并已同步本机安装副本（版本源与安装副本6个文件逐项SHA-256一致）。
+本地证据为目标测试`53 passed`、Python全量`596 passed`（另有1条既有requests依赖警告）、dkt-cicd离线验收`112`个断言、
+Ruff、Compose、20个PowerShell脚本/模块解析、6个YAML、JavaScript和`git diff --check`通过。当前未完成项转为：本轮提交与推送、
+本提交的真实CI/Release、生产固定机制安装、`apply=false`预检、用户新确认后的正式切换、真实账号浏览器验收及24小时观察。
+因此阶段8继续保持“进行中”，本地证据不等价于生产认证。
+
+### 12.3 2026-08-27 Portal部署阻断与机制认证迁移
 
 Portal生产部署运行
 [`33027031233`](https://github.com/GuChenkano/DTD_nginx/actions/runs/33027031233)
@@ -1214,9 +1305,11 @@ Runner已停止的维护阶段临时给予生产执行身份必要写权限，�
 | Portal故障影响所有应用 | 候选实例、Nginx原子切换、真实登录验收和自动回滚 |
 | 看门狗误判合法维护 | 统一维护标记、超时和Run ID协议 |
 | 生产密钥泄露 | 密钥只留服务器，不传GitHub、不写日志、不进入镜像 |
+| 生产配置漂移 | 配置由批准Commit生成不可变配置包；部署只接受配置Digest，并与镜像Digest、Commit和request_id成对核验 |
 | PR代码接触生产Runner | 生产Runner禁止PR和pull_request_target触发 |
 | Runner覆盖服务器工作区 | 使用独立Runner工作目录，禁止clean/reset生产仓库 |
 | 可变镜像无法追溯 | 生产仅使用完整Digest，不使用latest |
+| Actions Run误关联或Digest误解析 | 以request_id、仓库、Workflow、分支、Commit和唯一databaseId关联；Release输出稳定artifact_digest，歧义即失败关闭 |
 | 自动回滚破坏数据 | 回滚只切换应用镜像，不回滚或重建共享数据库和卷 |
 
 ## 14. 下一步
@@ -1236,7 +1329,11 @@ Runner已停止的维护阶段临时给予生产执行身份必要写权限，�
 11. 已完成：安装并验收`dkt-cicd` Skill；72个离线断言、真实只读Actions查询、Digest提取、
     高等级生产确认门禁和独立前向测试通过，阶段7没有触发真实Workflow。
 12. 进行中：Portal运行`33027031233`因旧v3证据精确绑定旧候选而在切换前失败，生产未变。
-    当前先完成部署机制认证的本地代码、测试、审查和提交；后续需经CI/Release、生产安装、
-    一次真实机制认证和新的Portal部署。旧v1/v2/v3永久保留为非权威历史证据，不做物理清理。
+     当前先完成部署机制认证的本地代码、测试、审查和提交；后续需经CI/Release、生产安装、
+     一次真实机制认证和新的Portal部署。旧v1/v2/v3永久保留为非权威历史证据，不做物理清理。
+13. 进行中：iwork通知修复Commit `4cb8e31...` 的既有生产交付仍使用服务器生产配置文件作为运行时输入；本轮最后冲刺已在本地
+     完成不可变配置包、镜像/配置/Commit三元绑定、`request_id`唯一Run关联、配置成对回滚和故障隔离测试，并将版本化
+     dkt-cicd Skill与用户安装副本同步。当前仍需提交/推送本轮变更、用新Commit跑真实CI/Release、安装生产固定机制、完成
+     `apply=false`预检、正式切换、真实账号业务验收和24小时观察，详见12.2节和本轮最后冲刺文档。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。

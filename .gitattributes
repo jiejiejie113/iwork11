@@ -1,4 +1,9 @@
 *.sh text eol=lf
+.github/workflows/*.yml text eol=lf
+docker-compose.yml text eol=lf
+env/production.env text eol=lf
 scripts/Install-IworkProductionDeployment.ps1 text eol=lf
 scripts/Invoke-IworkProductionDeployment.ps1 text eol=lf
+scripts/New-IworkProductionConfigBundle.ps1 text eol=lf
 scripts/ProductionCoordination.psm1 text eol=lf
+tests/test_production_config_bundle.py text eol=lf

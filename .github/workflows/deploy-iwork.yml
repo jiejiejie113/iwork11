@@ -1,17 +1,44 @@
 name: iwork controlled production deployment
 run-name: >-
   iwork ${{ inputs.apply && 'deploy' || 'preflight' }} ·
-  ${{ inputs.expected_revision }} · ${{ github.run_id }}
+  ${{ inputs.expected_revision }} ·
+  ${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      request_id:
+        description: 本次触发的唯一关联ID
+        required: true
+        type: string
       image_digest:
         description: GHCR镜像Digest（sha256:加64位小写十六进制）
         required: true
         type: string
+      config_digest:
+        description: 不可变生产配置包逻辑Digest（sha256:加64位小写十六进制）
+        required: true
+        type: string
+      config_artifact_digest:
+        description: GitHub配置Artifact存储Digest（sha256:加64位小写十六进制）
+        required: true
+        type: string
       expected_revision:
         description: 镜像OCI revision（40位Commit SHA）
+        required: true
+        type: string
+      preflight_run_id:
+        description: 成功apply=false预检Run标识（workflow_run_id-run_attempt；正式部署必填）
+        required: false
+        default: none
+        type: string
+      preflight_request_id:
+        description: 成功预检Run的request_id（正式部署必填）
+        required: false
+        default: none
+        type: string
+      release_request_id:
+        description: 成功Release Run的request_id（预检和正式部署必填）
         required: true
         type: string
       apply:
@@ -64,17 +91,150 @@ jobs:
       packages: read
     env:
       IMAGE_DIGEST: ${{ inputs.image_digest }}
+      CONFIG_DIGEST: ${{ inputs.config_digest }}
+      CONFIG_ARTIFACT_DIGEST: ${{ inputs.config_artifact_digest }}
+      CONFIG_BUNDLE_PATH: ${{ runner.temp }}\iwork-production-config
+      REQUEST_ID: ${{ inputs.request_id }}
       EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      PREFLIGHT_RUN_ID: ${{ inputs.preflight_run_id }}
+      PREFLIGHT_REQUEST_ID: ${{ inputs.preflight_request_id }}
+      RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
       APPLY: ${{ inputs.apply }}
       ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
       RUN_MIGRATIONS: ${{ inputs.run_migrations }}
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: 7320713f6f9b0c445eb371ccf7c9f0926cfa020c88478ff1926453c59d44d7cd
+      DEPLOY_SCRIPT_SHA256: 60d90367a9a3011264f76d3043caa15f14f92e261ae7056e9c5e1b6f48fa322d
       DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
-      DEPLOY_COORDINATION_MODULE_SHA256: 39f04a102c13acc473d46f6d4dc58906619682890d65312aed1f39836318bee3
+      DEPLOY_COORDINATION_MODULE_SHA256: beb88d9bf07143102c0398edf75f6665dcd1ee48fc1604b22ecae3bafc1cf882
     steps:
+      - name: 解析同一提交的配置包发布Run
+        id: release
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') {
+              throw 'Production deploy must use workflow_dispatch.'
+          }
+          if ($env:GITHUB_ACTOR -cne 'GuChenkano') {
+              throw 'Production deploy actor is not approved.'
+          }
+          if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') {
+              throw 'Invalid OCI revision format.'
+          }
+          if ($env:REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+              throw 'Invalid request ID format.'
+          }
+          if ($env:RELEASE_REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+              throw 'Invalid release request ID format.'
+          }
+          if ($env:CONFIG_ARTIFACT_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') {
+              throw 'Invalid production config artifact digest format.'
+          }
+          $headers = @{
+              Authorization = "Bearer $env:GITHUB_TOKEN"
+              Accept = 'application/vnd.github+json'
+              'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $hasPreflight = (
+              $env:APPLY -eq 'true' -and
+              $env:PREFLIGHT_RUN_ID -ne 'none' -and
+              $env:PREFLIGHT_REQUEST_ID -ne 'none'
+          )
+          if ($env:APPLY -eq 'true' -and -not $hasPreflight) {
+              throw 'Deploy mode requires a successful apply=false preflight run.'
+          }
+          if ($env:APPLY -ne 'true' -and ($env:PREFLIGHT_RUN_ID -ne 'none' -or $env:PREFLIGHT_REQUEST_ID -ne 'none')) {
+              throw 'Preflight mode must not bind a previous preflight run.'
+          }
+          if ($hasPreflight) {
+              if ($env:PREFLIGHT_RUN_ID -notmatch '^[0-9]+-[1-9][0-9]*$') {
+                  throw 'Invalid preflight run identifier.'
+              }
+              if ($env:PREFLIGHT_REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+                  throw 'Invalid preflight request ID.'
+              }
+              $preflightMatch = [Regex]::Match($env:PREFLIGHT_RUN_ID, '^(?<id>[0-9]+)-(?<attempt>[1-9][0-9]*)$')
+              $preflightUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($preflightMatch.Groups['id'].Value)"
+              $preflightDetails = Invoke-RestMethod `
+                  -UseBasicParsing `
+                  -Uri $preflightUri `
+                  -Headers $headers `
+                  -Method Get `
+                  -TimeoutSec 30
+              if (
+                  $preflightDetails.status -ne 'completed' -or
+                  $preflightDetails.conclusion -ne 'success' -or
+                  $preflightDetails.event -ne 'workflow_dispatch' -or
+                  [string]$preflightDetails.path -cne '.github/workflows/deploy-iwork.yml' -or
+                  $preflightDetails.head_branch -ne 'Keycloak' -or
+                  $preflightDetails.head_sha -cne $env:EXPECTED_REVISION -or
+                  [string]$preflightDetails.run_attempt -cne $preflightMatch.Groups['attempt'].Value -or
+                  -not ([string]$preflightDetails.display_title).Contains($env:PREFLIGHT_REQUEST_ID)
+              ) {
+                  throw 'Bound preflight run is not a successful matching deploy workflow_dispatch run.'
+              }
+          }
+          $uri = (
+              "https://api.github.com/repos/$env:GITHUB_REPOSITORY/" +
+              'actions/workflows/release.yml/runs' +
+              "?head_sha=$env:EXPECTED_REVISION&status=completed&per_page=100"
+          )
+          $response = Invoke-RestMethod `
+              -UseBasicParsing `
+              -Uri $uri `
+              -Headers $headers `
+              -Method Get `
+              -TimeoutSec 30
+          $releaseCandidates = @($response.workflow_runs | Where-Object {
+              $_.status -eq 'completed' -and
+              $_.conclusion -eq 'success' -and
+              $_.event -eq 'workflow_dispatch' -and
+              [string]$_.path -ceq '.github/workflows/release.yml' -and
+              $_.head_branch -eq 'Keycloak' -and
+              $_.head_sha -eq $env:EXPECTED_REVISION -and
+              ([string]$_.display_title).Contains($env:RELEASE_REQUEST_ID)
+          })
+          $matchingReleaseRuns = @()
+          foreach ($candidate in $releaseCandidates) {
+              $artifactUri = (
+                  "https://api.github.com/repos/$env:GITHUB_REPOSITORY/" +
+                  "actions/runs/$($candidate.id)/artifacts?per_page=100"
+              )
+              $artifactResponse = Invoke-RestMethod `
+                  -UseBasicParsing `
+                  -Uri $artifactUri `
+                  -Headers $headers `
+                  -Method Get `
+                  -TimeoutSec 30
+              $matchingArtifacts = @($artifactResponse.artifacts | Where-Object {
+                  $_.name -ceq "iwork-production-config-$env:EXPECTED_REVISION" -and
+                  -not $_.expired -and
+                  $_.digest -ceq $env:CONFIG_ARTIFACT_DIGEST
+              })
+              if ($matchingArtifacts.Count -eq 1) {
+                  $matchingReleaseRuns += $candidate
+              }
+          }
+          if ($matchingReleaseRuns.Count -ne 1) {
+              throw 'Expected exactly one successful release run with the approved config artifact digest.'
+          }
+          $releaseRun = $matchingReleaseRuns[0]
+          "run_id=$($releaseRun.id)" >> $env:GITHUB_OUTPUT
+          "release_url=$($releaseRun.html_url)" >> $env:GITHUB_OUTPUT
+
+      - name: 下载同一Release的不可变生产配置包
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: iwork-production-config-${{ inputs.expected_revision }}
+          path: ${{ env.CONFIG_BUNDLE_PATH }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.release.outputs.run_id }}
+
       - name: 校验候选镜像并执行预检或部署
         shell: powershell
         env:
@@ -85,6 +245,12 @@ jobs:
 
           if ($env:IMAGE_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') {
               throw 'Invalid image digest format.'
+          }
+          if ($env:CONFIG_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') {
+              throw 'Invalid production config digest format.'
+          }
+          if ($env:REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+              throw 'Invalid request ID format.'
           }
           if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') {
               throw 'Invalid OCI revision format.'
@@ -108,7 +274,9 @@ jobs:
                   [string]$WorkflowFile,
 
                   [Parameter(Mandatory = $true)]
-                  [string]$Description
+                  [string]$Description,
+
+                  [string]$ExpectedRequestId
               )
 
               $uri = (
@@ -133,15 +301,58 @@ jobs:
                   throw "$Description run lookup failed."
               }
               $successfulRun = @($response.workflow_runs | Where-Object {
-                  $_.conclusion -eq 'success'
-              }) | Select-Object -First 1
+                   $_.status -eq 'completed' -and
+                   $_.conclusion -eq 'success' -and
+                   $_.event -eq 'workflow_dispatch' -and
+                   $_.head_branch -eq 'Keycloak' -and
+                   $_.head_sha -eq $env:EXPECTED_REVISION -and
+                   ([String]::IsNullOrWhiteSpace($ExpectedRequestId) -or
+                       ([string]$_.display_title).Contains($ExpectedRequestId))
+               }) | Select-Object -First 1
               if (-not $successfulRun) {
                   throw "No successful $Description run found for the approved revision."
               }
           }
 
           Assert-SuccessfulWorkflowRun -WorkflowFile 'ci.yml' -Description 'CI'
-          Assert-SuccessfulWorkflowRun -WorkflowFile 'release.yml' -Description 'GHCR release'
+           Assert-SuccessfulWorkflowRun `
+               -WorkflowFile 'release.yml' `
+               -Description 'GHCR release' `
+               -ExpectedRequestId $env:RELEASE_REQUEST_ID
+
+          $manifestPath = Join-Path $env:CONFIG_BUNDLE_PATH 'config-manifest.json'
+          $composePath = Join-Path $env:CONFIG_BUNDLE_PATH 'docker-compose.yml'
+          $profilePath = Join-Path $env:CONFIG_BUNDLE_PATH 'env\production.env'
+          foreach ($requiredPath in @($manifestPath, $composePath, $profilePath)) {
+              if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                  throw "Production config bundle file is missing: $requiredPath"
+              }
+          }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.schema -cne 'iwork-production-config/v1') {
+              throw 'Production config schema mismatch.'
+          }
+          if ($manifest.source_commit -cne $env:EXPECTED_REVISION) {
+              throw 'Production config commit mismatch.'
+          }
+          if ($manifest.image_digest -cne $env:IMAGE_DIGEST) {
+              throw 'Production config image digest mismatch.'
+          }
+          if ($manifest.config_digest -cne $env:CONFIG_DIGEST) {
+              throw 'Production config digest mismatch.'
+          }
+          $composeHash = (
+              Get-FileHash -LiteralPath $composePath -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          $profileHash = (
+              Get-FileHash -LiteralPath $profilePath -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($composeHash -cne $manifest.compose_sha256) {
+              throw 'Production compose hash mismatch.'
+          }
+          if ($profileHash -cne $manifest.production_env_sha256) {
+              throw 'Production profile hash mismatch.'
+          }
 
           $mode = if ($env:APPLY -eq 'true') { 'Deploy' } else { 'Preflight' }
           $expectedConfirmation = if ($env:ROLLBACK_DRILL -eq 'true') {
@@ -224,6 +435,12 @@ jobs:
                   -Mode $mode `
                   -ImageDigest $env:IMAGE_DIGEST `
                   -ExpectedRevision $env:EXPECTED_REVISION `
+                   -ConfigDigest $env:CONFIG_DIGEST `
+                   -ConfigArtifactDigest $env:CONFIG_ARTIFACT_DIGEST `
+                   -ConfigBundlePath $env:CONFIG_BUNDLE_PATH `
+                   -PreflightRunId $env:PREFLIGHT_RUN_ID `
+                   -PreflightRequestId $env:PREFLIGHT_REQUEST_ID `
+                   -RequestId $env:REQUEST_ID `
                   -RunId $deploymentRunId `
                   -Actor $env:GITHUB_ACTOR `
                   -ChangeDescription $env:CHANGE_DESCRIPTION `
@@ -234,15 +451,29 @@ jobs:
               }
 
               $result = ($summary -join "`n") | ConvertFrom-Json
+              "IWORK_IMAGE_DIGEST=$env:IMAGE_DIGEST"
+              "IWORK_CONFIG_DIGEST=$env:CONFIG_DIGEST"
+              "IWORK_CONFIG_ARTIFACT_DIGEST=$env:CONFIG_ARTIFACT_DIGEST"
+              "IWORK_REQUEST_ID=$env:REQUEST_ID"
+              "IWORK_RELEASE_REQUEST_ID=$env:RELEASE_REQUEST_ID"
               @(
                   '## iwork production deployment result'
                   ''
                   "- Mode: $mode"
                   "- Image: $candidateImage"
-                  "- OCI revision: $env:EXPECTED_REVISION"
+                  "- Config digest: $env:CONFIG_DIGEST"
+                  "- Config artifact digest: $env:CONFIG_ARTIFACT_DIGEST"
+                  "- Config bundle: ``$($result.ConfigBundlePath)``"
+                  "- Compose SHA-256: ``$($result.ComposeSha256)``"
+                   "- Production env SHA-256: ``$($result.ProductionEnvSha256)``"
+                   "- OCI revision: $env:EXPECTED_REVISION"
+                   "- Preflight Run: ``$env:PREFLIGHT_RUN_ID``"
+                   "- Preflight request ID: ``$env:PREFLIGHT_REQUEST_ID``"
                   "- Run migrations: $env:RUN_MIGRATIONS"
                   "- Rollback drill: $env:ROLLBACK_DRILL"
                   "- Deployment ID: ``$deploymentRunId``"
+                   "- Request ID: ``$env:REQUEST_ID``"
+                   "- Release request ID: ``$env:RELEASE_REQUEST_ID``"
                   "- Previous web image ID: ``$($result.PreviousWebImageId)``"
                   "- Previous alert worker image ID: ``$($result.PreviousAlertWorkerImageId)``"
                   "- Duration: $($result.DurationSeconds) seconds"
@@ -259,7 +490,9 @@ jobs:
                   "- Image: $candidateImage"
                   "- OCI revision: $env:EXPECTED_REVISION"
                   "- Rollback drill: $env:ROLLBACK_DRILL"
-                  "- Deployment ID: ``$deploymentRunId``"
+                   "- Deployment ID: ``$deploymentRunId``"
+                   "- Request ID: ``$env:REQUEST_ID``"
+                   "- Release request ID: ``$env:RELEASE_REQUEST_ID``"
               )
               if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
                   $failureState = Get-Content -LiteralPath $stateFile -Raw |
@@ -283,4 +516,5 @@ jobs:
               Remove-Variable basicValue, encodedAuth, dockerConfig -ErrorAction SilentlyContinue
               Remove-Item -LiteralPath $env:DOCKER_CONFIG -Recurse -Force -ErrorAction SilentlyContinue
               Remove-Item -LiteralPath Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $env:CONFIG_BUNDLE_PATH -Recurse -Force -ErrorAction SilentlyContinue
           }

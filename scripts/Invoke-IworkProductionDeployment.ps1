@@ -6,6 +6,15 @@ param(
 
     [string]$ImageDigest,
     [string]$ExpectedRevision,
+    [string]$ConfigDigest,
+    [string]$ConfigBundlePath,
+    [string]$ConfigArtifactDigest,
+    [string]$PreflightRunId = 'none',
+    [string]$PreflightRequestId = 'none',
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
+    [string]$RequestId,
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
@@ -45,9 +54,11 @@ $OutputEncoding = [Text.Encoding]::UTF8
 # ======
 # 固定部署配置
 $IMAGE_REPOSITORY = 'ghcr.io/guchenkano/iwork'
-$COMPOSE_FILE = Join-Path $IworkRoot 'docker-compose.yml'
-$PROFILE_FILE = Join-Path $IworkRoot 'env\production.env'
 $DEPLOYMENT_LOCK_FILE = Join-Path $LockRoot 'production-deploy.lock'
+$RELEASE_CONFIG_ROOT = Join-Path $StateRoot 'release-config'
+$ACTIVE_RELEASE_FILE = Join-Path $StateRoot 'active-release.json'
+$LEGACY_COMPOSE_FILE = Join-Path $IworkRoot 'docker-compose.yml'
+$LEGACY_PROFILE_FILE = Join-Path $IworkRoot 'env\production.env'
 $EXPECTED_CONTAINERS = @('DKT_iwork', 'DKT_iwork_alert_worker')
 $RUN_MIGRATIONS_ENABLED = $RunMigrations -eq 'true'
 $ROLLBACK_DRILL_ENABLED = $RollbackDrill -eq 'true'
@@ -84,6 +95,34 @@ function Invoke-DockerCommand {
     return @($output)
 }
 
+function Invoke-DockerCommandWithProfile {
+    <#
+    .SYNOPSIS
+    在单次Compose调用期间固定服务env_file为已验证配置包文件。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileFile,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $previousProfile = $env:IWORK_RELEASE_PROFILE_FILE
+    $hadPreviousProfile = Test-Path -LiteralPath Env:IWORK_RELEASE_PROFILE_FILE
+    try {
+        $env:IWORK_RELEASE_PROFILE_FILE = $ProfileFile
+        return Invoke-DockerCommand -Arguments $Arguments
+    }
+    finally {
+        if ($hadPreviousProfile) {
+            $env:IWORK_RELEASE_PROFILE_FILE = $previousProfile
+        }
+        else {
+            Remove-Item `
+                -LiteralPath Env:IWORK_RELEASE_PROFILE_FILE `
+                -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Assert-RequiredFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -95,6 +134,269 @@ function Assert-RequiredFile {
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Description 不存在：$Path"
+    }
+}
+
+function Get-Sha256 {
+    <#
+    .SYNOPSIS
+    计算文件的小写SHA-256。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($stream)
+        return (
+            [BitConverter]::ToString($hash) -replace '-', ''
+        ).ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Get-CanonicalTextSha256 {
+    <#
+    .SYNOPSIS
+    规范化UTF-8文本的BOM和换行后计算SHA-256。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+    try {
+        $text = $strictUtf8.GetString([IO.File]::ReadAllBytes($Path))
+    }
+    catch {
+        throw "配置文件不是有效UTF-8：$Path"
+    }
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+        $text = $text.Substring(1)
+    }
+    $text = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return (
+            [BitConverter]::ToString($sha256.ComputeHash($bytes)) -replace '-', ''
+        ).ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-ConfigDigestValue {
+    <#
+    .SYNOPSIS
+    按固定字段和LF编码计算生产配置逻辑Digest。
+    #>
+    param([Parameter(Mandatory = $true)][object]$Manifest)
+
+    $canonical = @(
+        "schema=$($Manifest.schema)"
+        "application=$($Manifest.application)"
+        "source_commit=$($Manifest.source_commit)"
+        "image_digest=$($Manifest.image_digest)"
+        "compose_sha256=$($Manifest.compose_sha256)"
+        "production_env_sha256=$($Manifest.production_env_sha256)"
+    ) -join "`n"
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes("$canonical`n")
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($bytes)
+        return 'sha256:' + (
+            [BitConverter]::ToString($hash) -replace '-', ''
+        ).ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Assert-ProductionConfigBundle {
+    <#
+    .SYNOPSIS
+    验证配置包结构、清单、来源身份、文件哈希和敏感键边界。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$BundlePath,
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigDigest,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceCommit,
+        [Parameter(Mandatory = $true)][string]$ExpectedImageDigest
+    )
+
+    if (-not (Test-Path -LiteralPath $BundlePath -PathType Container)) {
+        throw "生产配置包目录不存在：$BundlePath"
+    }
+    $rootItem = Get-Item -LiteralPath $BundlePath -Force
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw '生产配置包根目录不能是重解析点。'
+    }
+    $rootFullPath = [IO.Path]::GetFullPath($rootItem.FullName).TrimEnd('\') + '\'
+    $allowedFiles = @(
+        'config-manifest.json',
+        'docker-compose.yml',
+        'env/production.env'
+    )
+    $actualFiles = @()
+    foreach ($item in Get-ChildItem -LiteralPath $BundlePath -Recurse -Force) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "生产配置包包含重解析点：$($item.FullName)"
+        }
+        $fullPath = [IO.Path]::GetFullPath($item.FullName)
+        if (-not $fullPath.StartsWith($rootFullPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "生产配置包路径越界：$fullPath"
+        }
+        if (-not $item.PSIsContainer) {
+            $actualFiles += $fullPath.Substring($rootFullPath.Length).Replace('\', '/')
+        }
+    }
+    $unexpectedFiles = @($actualFiles | Where-Object { $_ -notin $allowedFiles })
+    $missingFiles = @($allowedFiles | Where-Object { $_ -notin $actualFiles })
+    if ($unexpectedFiles.Count -gt 0 -or $missingFiles.Count -gt 0) {
+        throw (
+            '生产配置包文件集合不符合契约；unexpected=' +
+            ($unexpectedFiles -join ',') + '; missing=' + ($missingFiles -join ',')
+        )
+    }
+
+    $manifestPath = Join-Path $BundlePath 'config-manifest.json'
+    $composePath = Join-Path $BundlePath 'docker-compose.yml'
+    $profilePath = Join-Path $BundlePath 'env\production.env'
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw '生产配置清单不是有效JSON对象。'
+    }
+    $requiredFields = @(
+        'schema', 'application', 'source_commit', 'image_digest',
+        'compose_sha256', 'production_env_sha256', 'config_digest'
+    )
+    $manifestFields = @($manifest.PSObject.Properties.Name)
+    if (
+        @($requiredFields | Where-Object { $_ -notin $manifestFields }).Count -gt 0 -or
+        @($manifestFields | Where-Object { $_ -notin $requiredFields }).Count -gt 0
+    ) {
+        throw '生产配置清单字段集合不符合固定Schema。'
+    }
+    if ($manifest.schema -cne 'iwork-production-config/v1') {
+        throw "生产配置Schema不受支持：$($manifest.schema)"
+    }
+    if ($manifest.application -cne 'iwork') {
+        throw "生产配置应用标识不正确：$($manifest.application)"
+    }
+    if ([string]$manifest.source_commit -cne $ExpectedSourceCommit) {
+        throw '生产配置包Commit与候选提交不一致。'
+    }
+    if ([string]$manifest.image_digest -cne $ExpectedImageDigest) {
+        throw '生产配置包镜像Digest与候选镜像不一致。'
+    }
+    $composeSha = Get-Sha256 -Path $composePath
+    $profileSha = Get-Sha256 -Path $profilePath
+    if ([string]$manifest.compose_sha256 -cne $composeSha) {
+        throw '生产Compose文件SHA-256不匹配。'
+    }
+    if ([string]$manifest.production_env_sha256 -cne $profileSha) {
+        throw '生产环境配置SHA-256不匹配。'
+    }
+    $calculatedDigest = Get-ConfigDigestValue -Manifest $manifest
+    if (
+        [string]$manifest.config_digest -cne $calculatedDigest -or
+        $ExpectedConfigDigest -cne $calculatedDigest
+    ) {
+        throw '生产配置逻辑Digest不匹配。'
+    }
+
+    foreach ($line in Get-Content -LiteralPath $profilePath) {
+        if ($line -match '^\s*(?:#|$)') { continue }
+        if ($line -notmatch '^([A-Z][A-Z0-9_]*)=') {
+            throw '生产环境配置包含无效键。'
+        }
+        $key = $Matches[1]
+        if ($key -match '(?i)(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|CERTIFICATE|COOKIE)') {
+            throw "生产配置包禁止包含敏感键：$key"
+        }
+        if ($line -match '(?i)BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY') {
+            throw '生产配置包禁止包含私钥内容。'
+        }
+    }
+
+    foreach ($line in Get-Content -LiteralPath $composePath) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^(?:-\s*)?(?<key>[A-Z][A-Z0-9_]*)\s*(?:=|:)\s*(?<value>.*)$') {
+            $key = $Matches['key']
+            $value = $Matches['value'].Trim()
+            if ($key -notmatch '(?i)(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|CERTIFICATE|COOKIE)') {
+                continue
+            }
+            if ($value -notmatch '^[''\"]?\$\{[A-Z][A-Z0-9_]*(?::[^}]*)?\}[''\"]?$') {
+                throw "生产Compose禁止包含敏感明文：$key"
+            }
+        }
+        if ($trimmed -match '(?i)BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY') {
+            throw '生产Compose禁止包含私钥内容。'
+        }
+    }
+
+    return [pscustomobject]@{
+        ConfigDigest = $calculatedDigest
+        BundlePath = [IO.Path]::GetFullPath($BundlePath)
+        ComposePath = [IO.Path]::GetFullPath($composePath)
+        ProfilePath = [IO.Path]::GetFullPath($profilePath)
+        ComposeSha256 = $composeSha
+        ProductionEnvSha256 = $profileSha
+        SourceCommit = [string]$manifest.source_commit
+        ImageDigest = [string]$manifest.image_digest
+    }
+}
+
+function Save-ProductionConfigBundle {
+    <#
+    .SYNOPSIS
+    将已验证配置包原子保存到受控状态目录并再次复验。
+    #>
+    param([Parameter(Mandatory = $true)][object]$ValidatedBundle)
+
+    $digestHex = $ValidatedBundle.ConfigDigest.Substring('sha256:'.Length)
+    $targetPath = Join-Path $RELEASE_CONFIG_ROOT $digestHex
+    if (Test-Path -LiteralPath $targetPath -PathType Container) {
+        return Assert-ProductionConfigBundle `
+            -BundlePath $targetPath `
+            -ExpectedConfigDigest $ValidatedBundle.ConfigDigest `
+            -ExpectedSourceCommit $ValidatedBundle.SourceCommit `
+            -ExpectedImageDigest $ValidatedBundle.ImageDigest
+    }
+    New-Item -ItemType Directory -Path $RELEASE_CONFIG_ROOT -Force | Out-Null
+    $temporaryPath = "$targetPath.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $temporaryPath 'env') -Force |
+            Out-Null
+        foreach ($relativePath in @(
+            'config-manifest.json', 'docker-compose.yml', 'env\production.env'
+        )) {
+            $destinationPath = Join-Path $temporaryPath $relativePath
+            Copy-Item `
+                -LiteralPath (Join-Path $ValidatedBundle.BundlePath $relativePath) `
+                -Destination $destinationPath
+        }
+        $copied = Assert-ProductionConfigBundle `
+            -BundlePath $temporaryPath `
+            -ExpectedConfigDigest $ValidatedBundle.ConfigDigest `
+            -ExpectedSourceCommit $ValidatedBundle.SourceCommit `
+            -ExpectedImageDigest $ValidatedBundle.ImageDigest
+        Move-Item -LiteralPath $temporaryPath -Destination $targetPath
+        return Assert-ProductionConfigBundle `
+            -BundlePath $targetPath `
+            -ExpectedConfigDigest $copied.ConfigDigest `
+            -ExpectedSourceCommit $copied.SourceCommit `
+            -ExpectedImageDigest $copied.ImageDigest
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -193,12 +495,21 @@ function Archive-ExpiredIworkDeploymentMarker {
 }
 
 function Assert-PreflightInputs {
-    param([object]$CoordinationLock)
+    param(
+        [object]$CoordinationLock,
+        [switch]$DeferMaintenanceMarker
+    )
     if ($ImageDigest -notmatch '^sha256:[0-9a-f]{64}$') {
         throw 'ImageDigest必须是sha256加64位小写十六进制。'
     }
     if ($ExpectedRevision -notmatch '^[0-9a-f]{40}$') {
         throw 'ExpectedRevision必须是40位小写Commit SHA。'
+    }
+    if ($ConfigDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+        throw 'ConfigDigest必须是sha256加64位小写十六进制。'
+    }
+    if ($ConfigArtifactDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+        throw 'ConfigArtifactDigest必须是sha256加64位小写十六进制。'
     }
     if ($Actor -cne 'GuChenkano') {
         throw "部署触发账号不正确：$Actor"
@@ -209,14 +520,34 @@ function Assert-PreflightInputs {
     if ($ROLLBACK_DRILL_ENABLED -and $RUN_MIGRATIONS_ENABLED) {
         throw '受控回滚演练禁止执行数据库迁移。'
     }
+    $hasPreflight = (
+        -not [String]::IsNullOrWhiteSpace($PreflightRunId) -and
+        $PreflightRunId -cne 'none'
+    )
+    if ($Mode -eq 'Preflight' -and $hasPreflight) {
+        throw '预检模式不接受上一次预检Run。'
+    }
+    if ($Mode -eq 'Deploy' -and -not $hasPreflight) {
+        throw '正式部署必须绑定成功的apply=false预检Run。'
+    }
+    if ($hasPreflight -and $PreflightRunId -notmatch '^[0-9]+-[1-9][0-9]*$') {
+        throw 'PreflightRunId必须是<workflow_run_id>-<run_attempt>。'
+    }
+    if ($hasPreflight -and $PreflightRequestId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+        throw 'PreflightRequestId必须是有效GUID。'
+    }
+    if (-not $hasPreflight -and $PreflightRequestId -cne 'none' -and -not [String]::IsNullOrWhiteSpace($PreflightRequestId)) {
+        throw '未绑定预检Run时不应提供PreflightRequestId。'
+    }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     if ($identity -ine $ExpectedIdentity) {
         throw "部署身份不正确：$identity"
     }
 
-    Assert-RequiredFile -Path $COMPOSE_FILE -Description '生产Compose文件'
-    Assert-RequiredFile -Path $PROFILE_FILE -Description '生产环境配置'
+    if (-not (Test-Path -LiteralPath $ConfigBundlePath -PathType Container)) {
+        throw "生产配置包目录不存在：$ConfigBundlePath"
+    }
     Assert-RequiredFile -Path $SecretsFile -Description '中央密钥文件'
     Assert-RequiredFile -Path $WatchdogScript -Description 'Docker看门狗脚本'
     $watchdogContent = Get-Content -LiteralPath $WatchdogScript -Raw
@@ -231,10 +562,16 @@ function Assert-PreflightInputs {
         throw "部署锁目录不存在：$LockRoot"
     }
     if (Test-Path -LiteralPath $MaintenanceFile -PathType Leaf) {
-        if ($null -eq $CoordinationLock) {
+        if ($DeferMaintenanceMarker) {
+            # Deploy模式先做格式/身份预检；维护标记必须在取得双Mutex和协调锁后再判断，
+            # 这样可信的过期标记才可以由当前持锁者原子归档，活动标记仍然失败关闭。
+        }
+        elseif ($null -eq $CoordinationLock) {
             throw "已有iwork部署维护标记：$MaintenanceFile"
         }
-        Archive-ExpiredIworkDeploymentMarker -CoordinationLock $CoordinationLock
+        else {
+            Archive-ExpiredIworkDeploymentMarker -CoordinationLock $CoordinationLock
+        }
     }
     if (Test-Path -LiteralPath $WeeklyMaintenanceFile -PathType Leaf) {
         throw "Docker周重启维护标记存在，拒绝开始iwork部署：$WeeklyMaintenanceFile"
@@ -247,11 +584,124 @@ function Assert-PreflightInputs {
     }
 }
 
+function Get-PreflightReceiptPath {
+    <#
+    .SYNOPSIS
+    根据预检Run标识生成受控状态文件路径。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Identifier)
+
+    if ($Identifier -notmatch '^[0-9]+-[1-9][0-9]*$') {
+        throw '预检Run标识格式无效。'
+    }
+    return Join-Path $StateRoot "preflight-$Identifier.json"
+}
+
+function Write-PreflightReceipt {
+    <#
+    .SYNOPSIS
+    以不可覆盖方式保存本次apply=false预检证据。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$ValidatedConfig,
+        [Parameter(Mandatory = $true)][object[]]$ContainerBaseline
+    )
+
+    $receiptPath = Get-PreflightReceiptPath -Identifier $RunId
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+        throw "预检Run证据已存在，不允许覆盖：$receiptPath"
+    }
+    $receipt = [ordered]@{
+        schema = 'iwork-preflight-receipt/v1'
+        mode = 'Preflight'
+        run_id = $RunId
+        request_id = $RequestId
+        actor = $Actor
+        expected_revision = $ExpectedRevision
+        image_digest = $ImageDigest
+        config_digest = $ValidatedConfig.ConfigDigest
+        config_artifact_digest = $ConfigArtifactDigest
+        compose_sha256 = $ValidatedConfig.ComposeSha256
+        production_env_sha256 = $ValidatedConfig.ProductionEnvSha256
+        run_migrations = $RUN_MIGRATIONS_ENABLED
+        rollback_drill = $ROLLBACK_DRILL_ENABLED
+        container_baseline = $ContainerBaseline
+        created_at = [DateTimeOffset]::UtcNow.ToString('o')
+        result = 'validated'
+    }
+    Write-JsonAtomic -Path $receiptPath -Value $receipt
+    return $receiptPath
+}
+
+function Assert-PreflightReceipt {
+    <#
+    .SYNOPSIS
+    验证正式部署绑定的预检Run及三类Digest证据。
+    #>
+    param()
+
+    if ($Mode -ne 'Deploy') { return $null }
+    $receiptPath = Get-PreflightReceiptPath -Identifier $PreflightRunId
+    Assert-RequiredFile -Path $receiptPath -Description '绑定的预检证据'
+    try {
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw |
+            ConvertFrom-Json
+    }
+    catch {
+        throw "预检证据无法解析：$receiptPath"
+    }
+    $expected = @{
+        schema = 'iwork-preflight-receipt/v1'
+        mode = 'Preflight'
+        run_id = $PreflightRunId
+        request_id = $PreflightRequestId
+        actor = $Actor
+        expected_revision = $ExpectedRevision
+        image_digest = $ImageDigest
+        config_digest = $ConfigDigest
+        config_artifact_digest = $ConfigArtifactDigest
+        run_migrations = $false
+        rollback_drill = $false
+        result = 'validated'
+    }
+    foreach ($name in $expected.Keys) {
+        if ($name -in @('run_migrations', 'rollback_drill')) {
+            if ([bool]$receipt.$name -ne [bool]$expected[$name]) {
+                throw "预检证据字段不匹配：$name"
+            }
+        }
+        elseif ([string]$receipt.$name -cne [string]$expected[$name]) {
+            throw "预检证据字段不匹配：$name"
+        }
+    }
+    if (@($receipt.container_baseline).Count -ne $EXPECTED_CONTAINERS.Count) {
+        throw '预检证据缺少完整双容器基线。'
+    }
+    return [pscustomobject]@{
+        Path = $receiptPath
+        Receipt = $receipt
+    }
+}
+
 function Invoke-Preflight {
-    param([object]$CoordinationLock)
+    param(
+        [object]$CoordinationLock,
+        [object]$ValidatedConfig,
+        [switch]$PersistReceipt
+    )
     $startedAt = [DateTimeOffset]::UtcNow
     Assert-PreflightInputs -CoordinationLock $CoordinationLock
     $candidateImage = "$IMAGE_REPOSITORY@$ImageDigest"
+    if ($null -eq $ValidatedConfig) {
+        $ValidatedConfig = Assert-ProductionConfigBundle `
+            -BundlePath $ConfigBundlePath `
+            -ExpectedConfigDigest $ConfigDigest `
+            -ExpectedSourceCommit $ExpectedRevision `
+            -ExpectedImageDigest $ImageDigest
+    }
+    if ($null -ne $CoordinationLock) {
+        $ValidatedConfig = Save-ProductionConfigBundle -ValidatedBundle $ValidatedConfig
+    }
 
     $null = Invoke-DockerCommand -Arguments @('info', '--format', '{{.ServerVersion}}')
     $labelsJson = Invoke-DockerCommand -Arguments @(
@@ -270,21 +720,35 @@ function Invoke-Preflight {
     }
     $containerBaseline = @($containerBaseline)
 
-    $null = Invoke-DockerCommand -Arguments @(
+    $null = Invoke-DockerCommandWithProfile `
+        -ProfileFile $ValidatedConfig.ProfilePath `
+        -Arguments @(
         'compose',
         '--project-directory', $IworkRoot,
-        '-f', $COMPOSE_FILE,
-        '--env-file', $PROFILE_FILE,
+        '-f', $ValidatedConfig.ComposePath,
+        '--env-file', $ValidatedConfig.ProfilePath,
         '--env-file', $SecretsFile,
         'config', '--quiet'
-    )
+        )
 
+    $receiptPath = $null
+    if ($PersistReceipt) {
+        $receiptPath = Write-PreflightReceipt `
+            -ValidatedConfig $ValidatedConfig `
+            -ContainerBaseline $containerBaseline
+    }
     [pscustomobject]@{
         Mode = 'Preflight'
         RunId = $RunId
+        RequestId = $RequestId
         Actor = $Actor
         CandidateImage = $candidateImage
         ExpectedRevision = $ExpectedRevision
+        ConfigDigest = $ValidatedConfig.ConfigDigest
+        ConfigArtifactDigest = $ConfigArtifactDigest
+        ConfigBundlePath = $ValidatedConfig.BundlePath
+        ComposeSha256 = $ValidatedConfig.ComposeSha256
+        ProductionEnvSha256 = $ValidatedConfig.ProductionEnvSha256
         RunMigrations = $RUN_MIGRATIONS_ENABLED
         Containers = $EXPECTED_CONTAINERS
         ContainerBaseline = $containerBaseline
@@ -292,6 +756,7 @@ function Invoke-Preflight {
         PreviousWebImageId = $containerBaseline[0].ImageId
         PreviousAlertWorkerImageId = $containerBaseline[1].ImageId
         StateFile = $null
+        ReceiptFile = $receiptPath
         DurationSeconds = [Math]::Round(
             ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds,
             1
@@ -362,6 +827,32 @@ function Get-ContainerImageId {
     return $imageId
 }
 
+function Get-ImageRevision {
+    <#
+    .SYNOPSIS
+    读取镜像中固定的OCI来源提交标签。
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ImageReference
+    )
+
+    $labelsJson = Invoke-DockerCommand -Arguments @(
+        'image', 'inspect', $ImageReference, '--format', '{{json .Config.Labels}}'
+    )
+    try {
+        $labels = ($labelsJson -join "`n") | ConvertFrom-Json
+    }
+    catch {
+        throw "无法解析镜像OCI标签：$ImageReference"
+    }
+    $revision = [string]$labels.'org.opencontainers.image.revision'
+    if ($revision -notmatch '^[0-9a-f]{40}$') {
+        throw "镜像缺少有效的OCI revision标签：$ImageReference"
+    }
+    return $revision
+}
+
 function Get-ContainerBaseline {
     param(
         [Parameter(Mandatory = $true)]
@@ -387,7 +878,14 @@ function Get-ContainerBaseline {
         'inspect', $ContainerName, '--format', '{{json .State}}'
     )
     $state = (($stateJson -join "`n") | ConvertFrom-Json)
+    $configuredImage = $configuredImage.Trim()
+    $expectedPrefix = [Regex]::Escape("$IMAGE_REPOSITORY@")
+    if ($configuredImage -notmatch "^$expectedPrefix(?<digest>sha256:[0-9a-f]{64})$") {
+        throw "容器未使用可追溯的iwork镜像Digest：$ContainerName"
+    }
+    $imageDigest = $Matches['digest']
     $imageId = Get-ContainerImageId -ContainerName $ContainerName
+    $revision = Get-ImageRevision -ImageReference $configuredImage
 
     $restartCount = 0
     if (-not [int]::TryParse($restartCountText.Trim(), [ref]$restartCount)) {
@@ -397,7 +895,9 @@ function Get-ContainerBaseline {
     return [ordered]@{
         Name = $ContainerName
         ContainerId = $containerId.Trim()
-        ConfiguredImage = $configuredImage.Trim()
+        ConfiguredImage = $configuredImage
+        ImageDigest = $imageDigest
+        Revision = $revision
         ImageId = $imageId
         Status = [string]$state.Status
         Health = [string]$state.Health.Status
@@ -439,6 +939,12 @@ function Invoke-ComposeCommand {
         [string]$OverrideFile,
 
         [Parameter(Mandatory = $true)]
+        [string]$ComposeFile,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileFile,
+
+        [Parameter(Mandatory = $true)]
         [string[]]$CommandArguments
     )
 
@@ -446,12 +952,14 @@ function Invoke-ComposeCommand {
         'compose',
         '--project-directory', $IworkRoot,
         '--project-name', 'iwork',
-        '-f', $COMPOSE_FILE,
+        '-f', $ComposeFile,
         '-f', $OverrideFile,
-        '--env-file', $PROFILE_FILE,
+        '--env-file', $ProfileFile,
         '--env-file', $SecretsFile
     ) + $CommandArguments
-    return Invoke-DockerCommand -Arguments $arguments
+    return Invoke-DockerCommandWithProfile `
+        -ProfileFile $ProfileFile `
+        -Arguments $arguments
 }
 
 function Wait-IworkReleaseHealthy {
@@ -641,14 +1149,104 @@ function Backup-IworkDatabases {
     }
 }
 
+function Get-PreviousProductionConfig {
+    <#
+    .SYNOPSIS
+    读取上一活动配置；首次迁移时只允许与候选配置完全相同的旧工作区基线。
+    #>
+    param([Parameter(Mandatory = $true)][object]$CandidateConfig)
+
+    if (Test-Path -LiteralPath $ACTIVE_RELEASE_FILE -PathType Leaf) {
+        try {
+            $active = Get-Content -LiteralPath $ACTIVE_RELEASE_FILE -Raw |
+                ConvertFrom-Json
+        }
+        catch {
+            throw "活动发布指针无法解析：$ACTIVE_RELEASE_FILE"
+        }
+        if (
+            $active.schema -cne 'iwork-active-release/v1' -or
+            [string]$active.request_id -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+            [string]$active.config_digest -notmatch '^sha256:[0-9a-f]{64}$' -or
+            [string]$active.config_artifact_digest -notmatch '^sha256:[0-9a-f]{64}$' -or
+            [string]$active.source_commit -notmatch '^[0-9a-f]{40}$' -or
+            [string]$active.image_digest -notmatch '^sha256:[0-9a-f]{64}$' -or
+            [string]$active.compose_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$active.production_env_sha256 -notmatch '^[0-9a-f]{64}$'
+        ) {
+            throw '活动发布指针字段无效。'
+        }
+        $activeConfigArtifactDigest = [string]$active.config_artifact_digest
+        $bundlePath = Join-Path `
+            $RELEASE_CONFIG_ROOT `
+            ([string]$active.config_digest).Substring('sha256:'.Length)
+        $validated = Assert-ProductionConfigBundle `
+            -BundlePath $bundlePath `
+            -ExpectedConfigDigest ([string]$active.config_digest) `
+            -ExpectedSourceCommit ([string]$active.source_commit) `
+            -ExpectedImageDigest ([string]$active.image_digest)
+        if (
+            [string]$active.compose_sha256 -cne $validated.ComposeSha256 -or
+            [string]$active.production_env_sha256 -cne $validated.ProductionEnvSha256
+        ) {
+            throw '活动发布指针中的配置文件哈希与实际配置包不一致。'
+        }
+        return [pscustomobject]@{
+            Config = $validated
+            Bootstrap = $false
+            ConfigArtifactDigest = $activeConfigArtifactDigest
+        }
+    }
+
+    Assert-RequiredFile -Path $LEGACY_COMPOSE_FILE -Description '迁移期旧生产Compose文件'
+    Assert-RequiredFile -Path $LEGACY_PROFILE_FILE -Description '迁移期旧生产环境配置'
+    if (
+        (Get-CanonicalTextSha256 -Path $LEGACY_COMPOSE_FILE) -cne
+        $CandidateConfig.ComposeSha256
+    ) {
+        throw '首次配置包迁移时，服务器旧Compose与候选配置不一致。'
+    }
+    if (
+        (Get-CanonicalTextSha256 -Path $LEGACY_PROFILE_FILE) -cne
+        $CandidateConfig.ProductionEnvSha256
+    ) {
+        throw '首次配置包迁移时，服务器旧生产环境配置与候选配置不一致。'
+    }
+    return [pscustomobject]@{
+        Config = $CandidateConfig
+        Bootstrap = $true
+        ConfigArtifactDigest = $ConfigArtifactDigest
+    }
+}
+
+function Write-ActiveRelease {
+    <#
+    .SYNOPSIS
+    在发布验证成功后原子更新活动镜像与配置指针。
+    #>
+    param([Parameter(Mandatory = $true)][object]$CandidateConfig)
+
+    $active = [ordered]@{
+        schema = 'iwork-active-release/v1'
+        source_commit = $ExpectedRevision
+        image_digest = $ImageDigest
+        config_digest = $CandidateConfig.ConfigDigest
+        config_artifact_digest = $ConfigArtifactDigest
+        compose_sha256 = $CandidateConfig.ComposeSha256
+        production_env_sha256 = $CandidateConfig.ProductionEnvSha256
+        deployment_run_id = $RunId
+        request_id = $RequestId
+        activated_at = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    Write-JsonAtomic -Path $ACTIVE_RELEASE_FILE -Value $active
+}
+
 function Invoke-Deploy {
     $startedAt = [DateTimeOffset]::UtcNow
     $candidateImage = "$IMAGE_REPOSITORY@$ImageDigest"
     $stateFile = Join-Path $StateRoot "$RunId.json"
     $candidateOverride = Join-Path $StateRoot "$RunId.candidate.yml"
     $rollbackOverride = Join-Path $StateRoot "$RunId.rollback.yml"
-    $webRollbackTag = "dkt-cicd/iwork-web-rollback:$RunId"
-    $alertRollbackTag = "dkt-cicd/iwork-alert-worker-rollback:$RunId"
     $productionMutex = $null
     $recoveryMutex = $null
     $coordinationLock = $null
@@ -658,9 +1256,17 @@ function Invoke-Deploy {
     $ownsDrillAttempt = $false
     $controlledRollbackRequested = $false
     $drillAttempt = $null
+    $candidateConfig = $null
+    $previousConfig = $null
+    $previousConfigBootstrap = $false
+    $previousActiveReleaseBytes = $null
+    $activeReleaseUpdated = $false
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 
     try {
+        Assert-PreflightInputs `
+            -CoordinationLock $null `
+            -DeferMaintenanceMarker
         $productionMutex = Enter-DeploymentMutex -Name $ProductionMutexName
         $recoveryMutex = Enter-DeploymentMutex -Name $RecoveryMutexName
         $coordinationLock = Enter-ProductionCoordinationLock `
@@ -670,11 +1276,34 @@ function Invoke-Deploy {
             -RunId $RunId `
             -Actor $Actor `
             -ExpectedRevision $ExpectedRevision `
-            -ArtifactDigests @{ iwork = $ImageDigest }
+            -RequestId $RequestId `
+            -ArtifactDigests @{
+                iwork = $ImageDigest
+                iwork_config = $ConfigDigest
+                iwork_config_artifact = $ConfigArtifactDigest
+            }
+        Assert-PreflightInputs -CoordinationLock $coordinationLock
         Update-ProductionCoordinationLock `
             -Lock $coordinationLock `
             -Phase 'candidate_validation'
-        $null = Invoke-Preflight -CoordinationLock $coordinationLock
+        $preflightReceipt = Assert-PreflightReceipt
+        $candidateConfig = Assert-ProductionConfigBundle `
+            -BundlePath $ConfigBundlePath `
+            -ExpectedConfigDigest $ConfigDigest `
+            -ExpectedSourceCommit $ExpectedRevision `
+            -ExpectedImageDigest $ImageDigest
+        $candidateConfig = Save-ProductionConfigBundle -ValidatedBundle $candidateConfig
+        $null = Invoke-Preflight `
+            -CoordinationLock $coordinationLock `
+            -ValidatedConfig $candidateConfig
+        $previousConfigSelection = Get-PreviousProductionConfig `
+            -CandidateConfig $candidateConfig
+        $previousConfig = $previousConfigSelection.Config
+        $previousConfigBootstrap = $previousConfigSelection.Bootstrap
+        $previousConfigArtifactDigest = $previousConfigSelection.ConfigArtifactDigest
+        if (Test-Path -LiteralPath $ACTIVE_RELEASE_FILE -PathType Leaf) {
+            $previousActiveReleaseBytes = [IO.File]::ReadAllBytes($ACTIVE_RELEASE_FILE)
+        }
         Update-ProductionCoordinationLock `
             -Lock $coordinationLock `
             -Phase 'preflight_complete'
@@ -683,19 +1312,68 @@ function Invoke-Deploy {
             Get-ContainerBaseline -ContainerName $containerName
         }
         $previousContainers = @($previousContainers)
+        if ($null -ne $preflightReceipt) {
+            foreach ($containerName in $EXPECTED_CONTAINERS) {
+                $preflightContainer = @(
+                    $preflightReceipt.Receipt.container_baseline |
+                        Where-Object { [string]$_.Name -ceq $containerName }
+                )
+                $currentContainer = @(
+                    $previousContainers |
+                        Where-Object { [string]$_.Name -ceq $containerName }
+                )
+                if (
+                    $preflightContainer.Count -ne 1 -or
+                    $currentContainer.Count -ne 1 -or
+                    [string]$preflightContainer[0].ContainerId -cne [string]$currentContainer[0].ContainerId -or
+                    [string]$preflightContainer[0].ImageId -cne [string]$currentContainer[0].ImageId -or
+                    [int]$preflightContainer[0].RestartCount -ne [int]$currentContainer[0].RestartCount
+                ) {
+                    throw "预检后生产容器基线已变化：$containerName"
+                }
+            }
+        }
+        $previousImageDigests = @(
+            $previousContainers.ImageDigest | Select-Object -Unique
+        )
+        $previousRevisions = @(
+            $previousContainers.Revision | Select-Object -Unique
+        )
+        if ($previousImageDigests.Count -ne 1 -or $previousRevisions.Count -ne 1) {
+            throw '当前iwork双容器的镜像Digest或OCI revision不一致。'
+        }
+        $previousImageDigest = [string]$previousImageDigests[0]
+        $previousRevision = [string]$previousRevisions[0]
+        if (
+            -not $previousConfigBootstrap -and
+            (
+                $previousConfig.ImageDigest -cne $previousImageDigest -or
+                $previousConfig.SourceCommit -cne $previousRevision
+            )
+        ) {
+            throw '活动发布指针与当前运行容器的镜像身份不一致。'
+        }
         $previousWebImageId = $previousContainers[0].ImageId
         $previousAlertImageId = $previousContainers[1].ImageId
-        $null = Invoke-DockerCommand -Arguments @('tag', $previousWebImageId, $webRollbackTag)
-        $null = Invoke-DockerCommand -Arguments @('tag', $previousAlertImageId, $alertRollbackTag)
+        $previousImage = "$IMAGE_REPOSITORY@$previousImageDigest"
 
         if ($ROLLBACK_DRILL_ENABLED) {
             $drillAttempt = [ordered]@{
                 Version = 1
                 RunId = $RunId
+                RequestId = $RequestId
                 Actor = $Actor
                 Status = 'started'
                 CandidateImage = $candidateImage
                 ExpectedRevision = $ExpectedRevision
+                CandidateConfigDigest = $candidateConfig.ConfigDigest
+                CandidateConfigArtifactDigest = $ConfigArtifactDigest
+                CandidateComposeSha256 = $candidateConfig.ComposeSha256
+                CandidateProductionEnvSha256 = $candidateConfig.ProductionEnvSha256
+                PreviousConfigDigest = $previousConfig.ConfigDigest
+                PreviousConfigArtifactDigest = $previousConfigArtifactDigest
+                PreviousImageDigest = $previousImageDigest
+                PreviousRevision = $previousRevision
                 PreviousWebImageId = $previousWebImageId
                 PreviousAlertWorkerImageId = $previousAlertImageId
                 StartedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -709,19 +1387,35 @@ function Invoke-Deploy {
 
         $state = [ordered]@{
             RunId = $RunId
+            RequestId = $RequestId
             Actor = $Actor
             Mode = 'Deploy'
             Status = 'deploying'
             CandidateImage = $candidateImage
             ExpectedRevision = $ExpectedRevision
+            CandidateConfigDigest = $candidateConfig.ConfigDigest
+            CandidateConfigArtifactDigest = $ConfigArtifactDigest
+            CandidateComposeSha256 = $candidateConfig.ComposeSha256
+            CandidateProductionEnvSha256 = $candidateConfig.ProductionEnvSha256
+            CandidateConfigBundlePath = $candidateConfig.BundlePath
+            PreviousConfigDigest = $previousConfig.ConfigDigest
+            PreviousConfigArtifactDigest = $previousConfigArtifactDigest
+            PreviousComposeSha256 = $previousConfig.ComposeSha256
+            PreviousProductionEnvSha256 = $previousConfig.ProductionEnvSha256
+            PreviousConfigBundlePath = $previousConfig.BundlePath
+            PreviousConfigBootstrap = $previousConfigBootstrap
+            PreviousImageDigest = $previousImageDigest
+            PreviousRevision = $previousRevision
+            PreflightRunId = $PreflightRunId
+            PreflightRequestId = $PreflightRequestId
             RunMigrations = $RUN_MIGRATIONS_ENABLED
             RollbackDrill = $ROLLBACK_DRILL_ENABLED
             ChangeDescription = $ChangeDescription
             PreviousWebImageId = $previousWebImageId
             PreviousAlertWorkerImageId = $previousAlertImageId
             PreviousContainers = $previousContainers
-            WebRollbackTag = $webRollbackTag
-            AlertWorkerRollbackTag = $alertRollbackTag
+            WebRollbackImage = $previousImage
+            AlertWorkerRollbackImage = $previousImage
             StartedAt = [DateTimeOffset]::UtcNow.ToString('o')
             CompletedAt = $null
             RollbackSucceeded = $false
@@ -744,8 +1438,8 @@ function Invoke-Deploy {
             -AllowMigrations $RUN_MIGRATIONS_ENABLED
         Write-ComposeOverride `
             -Path $rollbackOverride `
-            -WebImage $webRollbackTag `
-            -AlertWorkerImage $alertRollbackTag `
+            -WebImage $previousImage `
+            -AlertWorkerImage $previousImage `
             -AllowMigrations $false
 
         Update-ProductionCoordinationLock `
@@ -756,7 +1450,11 @@ function Invoke-Deploy {
             application = 'iwork'
             operation = 'production_deployment'
             workflow_run_id = $RunId
+            request_id = $RequestId
             actor = $Actor
+            image_digest = $ImageDigest
+            config_digest = $candidateConfig.ConfigDigest
+            config_artifact_digest = $ConfigArtifactDigest
             started_at = [DateTimeOffset]::UtcNow.ToString('o')
             expires_at = [DateTimeOffset]::UtcNow.AddMinutes(20).ToString('o')
         }
@@ -765,6 +1463,8 @@ function Invoke-Deploy {
 
         $null = Invoke-ComposeCommand `
             -OverrideFile $candidateOverride `
+            -ComposeFile $candidateConfig.ComposePath `
+            -ProfileFile $candidateConfig.ProfilePath `
             -CommandArguments @('config', '--quiet')
         $switchAttempted = $true
         Update-ProductionCoordinationLock `
@@ -772,6 +1472,8 @@ function Invoke-Deploy {
             -Phase 'production_validation'
         $null = Invoke-ComposeCommand `
             -OverrideFile $candidateOverride `
+            -ComposeFile $candidateConfig.ComposePath `
+            -ProfileFile $candidateConfig.ProfilePath `
             -CommandArguments @(
                 'up', '-d', '--no-build', '--no-deps', 'iwork', 'alert-worker'
             )
@@ -787,6 +1489,8 @@ function Invoke-Deploy {
             throw '受控回滚演练触发'
         }
 
+        Write-ActiveRelease -CandidateConfig $candidateConfig
+        $activeReleaseUpdated = $true
         $state.Status = 'deployed'
         $state.CompletedAt = [DateTimeOffset]::UtcNow.ToString('o')
         Write-JsonAtomic -Path $stateFile -Value $state
@@ -797,7 +1501,13 @@ function Invoke-Deploy {
         [pscustomobject]@{
             Mode = 'Deploy'
             RunId = $RunId
+            RequestId = $RequestId
             CandidateImage = $candidateImage
+            ConfigDigest = $candidateConfig.ConfigDigest
+            ConfigArtifactDigest = $ConfigArtifactDigest
+            ConfigBundlePath = $candidateConfig.BundlePath
+            ComposeSha256 = $candidateConfig.ComposeSha256
+            ProductionEnvSha256 = $candidateConfig.ProductionEnvSha256
             Result = 'deployed'
             StateFile = $stateFile
             PreviousWebImageId = $previousWebImageId
@@ -833,16 +1543,18 @@ function Invoke-Deploy {
             try {
                 $null = Invoke-ComposeCommand `
                     -OverrideFile $rollbackOverride `
+                    -ComposeFile $previousConfig.ComposePath `
+                    -ProfileFile $previousConfig.ProfilePath `
                     -CommandArguments @(
                         'up', '-d', '--no-build', '--no-deps', 'iwork', 'alert-worker'
                 )
                 Wait-IworkReleaseHealthy
                 Assert-DeployedImage `
                     -ContainerName 'DKT_iwork' `
-                    -ExpectedImage $webRollbackTag
+                    -ExpectedImage $previousImage
                 Assert-DeployedImage `
                     -ContainerName 'DKT_iwork_alert_worker' `
-                    -ExpectedImage $alertRollbackTag
+                    -ExpectedImage $previousImage
                 Assert-ContainerImageId `
                     -ContainerName 'DKT_iwork' `
                     -ExpectedImageId $previousWebImageId
@@ -850,6 +1562,36 @@ function Invoke-Deploy {
                     -ContainerName 'DKT_iwork_alert_worker' `
                     -ExpectedImageId $previousAlertImageId
                 Assert-IworkApplication
+                if ($activeReleaseUpdated) {
+                    if ($null -eq $previousActiveReleaseBytes) {
+                        Remove-Item `
+                            -LiteralPath $ACTIVE_RELEASE_FILE `
+                            -Force `
+                            -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $activeTemporaryPath = (
+                            "$ACTIVE_RELEASE_FILE." +
+                            "$([Guid]::NewGuid().ToString('N')).rollback.tmp"
+                        )
+                        try {
+                            [IO.File]::WriteAllBytes(
+                                $activeTemporaryPath,
+                                $previousActiveReleaseBytes
+                            )
+                            Move-Item `
+                                -LiteralPath $activeTemporaryPath `
+                                -Destination $ACTIVE_RELEASE_FILE `
+                                -Force
+                        }
+                        finally {
+                            Remove-Item `
+                                -LiteralPath $activeTemporaryPath `
+                                -Force `
+                                -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
                 $state.Status = 'rolled_back'
                 $state.RollbackSucceeded = $true
             }
@@ -890,7 +1632,14 @@ function Invoke-Deploy {
                 return [pscustomobject]@{
                     Mode = 'Deploy'
                     RunId = $RunId
+                    RequestId = $RequestId
                     CandidateImage = $candidateImage
+                    ConfigDigest = $candidateConfig.ConfigDigest
+                    ConfigArtifactDigest = $ConfigArtifactDigest
+                    PreviousConfigDigest = $previousConfig.ConfigDigest
+                    PreviousConfigArtifactDigest = $previousConfigArtifactDigest
+                    PreviousImageDigest = $previousImageDigest
+                    PreviousRevision = $previousRevision
                     Result = 'rolled_back'
                     RollbackDrill = $true
                     StateFile = $stateFile
@@ -981,7 +1730,7 @@ function Invoke-Deploy {
 
 switch ($Mode) {
     'Preflight' {
-        Invoke-Preflight
+        Invoke-Preflight -PersistReceipt
     }
     'Deploy' {
         Invoke-Deploy

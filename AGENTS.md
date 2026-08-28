@@ -20,7 +20,7 @@
 - 开发过程中允许将尚未提交、尚未推送的修改部署到本地 Docker 做中间验证，但不能替代完成修改后的 Git 提交和最终重建验收。
 - 本地部署前应确认差异范围，避免把无关文件或敏感配置打入镜像；未经用户明确要求，不自动推送远程。
 - 本规则仅适用于 `local` 环境，不代表允许把未提交代码部署到服务器或生产环境。
-- 服务器或生产部署继续以已审查、可追溯的 Git 提交为准，并遵守既有拉取、重建和回滚流程。
+- 服务器或生产部署必须以已审查、可追溯的 Git 提交所生成的不可变配置包和镜像为准；生产配置不得直接从服务器 Git 工作区读取或作为部署输入。服务器 Git 工作区仅用于受控运维上下文，不能替代配置包。
 
 ## 测试入口
 
@@ -44,4 +44,9 @@
 - 在该文档所有阶段标记为“已完成”前，后续Agent必须延续维护；不得另建重复的CI/CD总方案替代本文件。
 - 当前GitHub套餐无法启用Environment Required Reviewer和`Keycloak`分支保护；不得把Workflow的`environment`声明视为有效审批。生产准入必须固定人工批准的完整Commit SHA、Workflow路径、actor、仓库、分支和服务器部署脚本SHA-256。
 - 每批准一个新的部署Workflow提交，都必须在Runner空闲时更新服务器准入策略；旧的、已删除或当前不可拉取的GHCR Digest不得作为生产部署输入。
+- 生产发布必须使用同一批准Commit绑定的不可变配置包和镜像Digest；配置包Digest、镜像Digest与Commit必须逐项成对核验并写入Workflow摘要、部署状态和锁事件。配置包不得包含生产密码，生产密钥仍只来自服务器中央密钥文件。
+- 生产配置包必须由受控发布流程生成并按完整Digest引用，部署Workflow不得从服务器 Git 工作区读取 `env/production.env` 作为候选配置；服务器只接受已核验的配置包并在切换前后记录其Digest。
+- `scripts/New-IworkProductionConfigBundle.ps1` 是配置包唯一生成入口；包只包含清单、Compose和生产环境文件，配置文本统一为严格UTF-8、LF、无BOM，`config_digest`必须是完整的`sha256:`加64位小写十六进制值。
+- 每次用户请求生成唯一`request_id`，并贯穿Skill、CI/Release/Deploy Run、Digest解析、部署锁、状态收据和回滚收据；Actions的`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT`只作为平台Run标识，不能替代或复用`request_id`。
+- 只有部署机制本身（安装器、Runner准入Hook、固定部署脚本、协调协议、部署Workflow或Runner smoke契约）变化时，才必须重新安装生产准入策略。迁移期可以暂时保留`ApprovedHeadSha`作为旧Hook的补偿门禁，但不得因此跳过不可变配置包、镜像/配置/Commit绑定或`request_id`核验；迁移完成后应切换到机制指纹准入。
 - `dkt-cicd` Skill的Git版本源固定为`tools/skills/dkt-cicd`，`%USERPROFILE%\.agents\skills\dkt-cicd`仅是安装副本。修改Skill后必须运行`scripts/Install-DktCicdSkill.ps1`并验证逐文件SHA-256一致，禁止只改用户目录而不提交版本源。

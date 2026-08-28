@@ -1,4 +1,6 @@
 name: iwork CI
+run-name: >-
+  iwork ci · ${{ inputs.request_id || github.sha }}
 
 on:
   push:
@@ -8,6 +10,11 @@ on:
     branches:
       - Keycloak
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: 本次触发的唯一关联ID
+        required: true
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +29,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
+      - name: 记录请求关联ID
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          if ($env:REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+              throw 'Invalid request ID format.'
+          }
+          "IWORK_REQUEST_ID=$env:REQUEST_ID"
+
       - name: 检出代码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

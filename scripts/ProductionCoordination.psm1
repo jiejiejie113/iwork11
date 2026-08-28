@@ -326,6 +326,12 @@ function Write-ProductionCoordinationEvent {
         owner_pid = [string]$Fields['owner_pid']
         phase = [string]$Fields['phase']
     }
+    if ($Fields.Contains('request_id')) {
+        $record.request_id = [string]$Fields['request_id']
+    }
+    foreach ($fieldName in @($Fields.Keys | Where-Object { [string]$_ -like 'artifact_*' } | Sort-Object)) {
+        $record[[string]$fieldName] = [string]$Fields[$fieldName]
+    }
     $json = ($record | ConvertTo-Json -Compress) + "`n"
     $mutex = [Threading.Mutex]::new($false, $PRODUCTION_COORDINATION_AUDIT_MUTEX)
     $acquired = $false
@@ -386,6 +392,9 @@ function Enter-ProductionCoordinationLock {
         [Parameter(Mandatory = $true)]
         [Collections.IDictionary]$ArtifactDigests,
 
+        [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
+        [string]$RequestId,
+
         [scriptblock]$RunStateResolver = ${function:Get-GitHubWorkflowRunState},
 
         [ValidateRange(1, 180)]
@@ -404,6 +413,9 @@ function Enter-ProductionCoordinationLock {
         actor = $Actor
         owner_pid = $PID
         phase = 'acquire_attempt'
+    }
+    if (-not [String]::IsNullOrWhiteSpace($RequestId)) {
+        $attemptFields['request_id'] = $RequestId
     }
     Write-ProductionCoordinationEvent `
         -EventPath $eventPath `
@@ -459,6 +471,9 @@ function Enter-ProductionCoordinationLock {
             owner_process_started_at = ([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString('o')
             host = [Environment]::MachineName
             expected_revision = $ExpectedRevision
+        }
+        if (-not [String]::IsNullOrWhiteSpace($RequestId)) {
+            $fields['request_id'] = $RequestId
         }
         foreach ($name in @($ArtifactDigests.Keys | Sort-Object)) {
             $fields["artifact_$name"] = [string]$ArtifactDigests[$name]

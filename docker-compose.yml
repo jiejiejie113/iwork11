@@ -6,7 +6,7 @@ services:
     expose:
       - "8000"
     env_file:
-      - ./env/${DKT_ENVIRONMENT:-production}.env
+      - ${IWORK_RELEASE_PROFILE_FILE:-./env/${DKT_ENVIRONMENT:-production}.env}
     environment:
       DJANGO_SECRET_KEY: ${IWORK_DJANGO_SECRET_KEY:?Set IWORK_DJANGO_SECRET_KEY in dkt-secrets.env}
       ACCESS_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
@@ -34,7 +34,7 @@ services:
     container_name: DKT_iwork_alert_worker
     restart: unless-stopped
     env_file:
-      - ./env/${DKT_ENVIRONMENT:-production}.env
+      - ${IWORK_RELEASE_PROFILE_FILE:-./env/${DKT_ENVIRONMENT:-production}.env}
     environment:
       IWORK_CONTAINER_ROLE: alert-worker
       DJANGO_SECRET_KEY: ${IWORK_DJANGO_SECRET_KEY:?Set IWORK_DJANGO_SECRET_KEY in dkt-secrets.env}
