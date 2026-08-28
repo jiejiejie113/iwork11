@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-28，阶段0—7的既有交付仍保留：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力均已有隔离或历史生产证据；阶段6的跨仓库部署锁与运维任务协调也已完成隔离验收。阶段8曾以`774283a5`为基础完成本地配置包和Digest链路实现，随后修复到远程 HEAD `029fa6f`并执行真实 CI/Release/预检；正式部署 Run `33146302986` 在生产切换前因跨身份 Mutex ACL 拒绝失败，生产未变。当前正在统一修复 iwork、Portal、生产协调模块和Docker看门狗的共享 Mutex ACL，并重新收口本地门禁；旧Release、配置包和预检证据不可复用。真实账号浏览器登录验收仍按用户明确决定记录为风险豁免，不将其表述为实际验收通过。阶段8继续进行中。
+截至2026-08-28，阶段0—7的既有交付仍保留：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力均已有隔离或历史生产证据；阶段6的跨仓库部署锁与运维任务协调也已完成隔离验收。阶段8本轮已以远程 HEAD `285da66c2fcc04b2477a68a7617a7e24cce4406b` 完成真实 CI、Release、生产准入、`apply=false` 预检和正式部署，生产切换成功且两容器健康。真实账号浏览器登录验收仍按用户明确决定记录为风险豁免，不将其表述为实际验收通过；24小时稳定观察尚未完成，阶段8继续进行中。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -73,7 +73,7 @@
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
-| 8 | 端到端验收与观察 | 进行中 | `029fa6f`正式部署在切换前被跨身份Mutex ACL阻断；修复中，待新Commit推送、真实CI/Release、生产机制安装、预检、正式切换和24小时观察 |
+| 8 | 端到端验收与观察 | 进行中 | `285da66c`已完成真实CI/Release、生产准入、预检和正式切换；当前待24小时稳定观察，真实账号浏览器验收按风险豁免记录 |
 
 ## 4. 已完成：阶段0——基线与纯CI
 
@@ -1340,11 +1340,11 @@ Runner已停止的维护阶段临时给予生产执行身份必要写权限，�
 12. 进行中：Portal运行`33027031233`因旧v3证据精确绑定旧候选而在切换前失败，生产未变。
      当前先完成部署机制认证的本地代码、测试、审查和提交；后续需经CI/Release、生产安装、
      一次真实机制认证和新的Portal部署。旧v1/v2/v3永久保留为非权威历史证据，不做物理清理。
-13. 进行中：iwork通知修复Commit `4cb8e31...` 的既有生产交付仍使用服务器生产配置文件作为运行时输入；本轮最后冲刺已在本地
-     完成不可变配置包、镜像/配置/Commit三元绑定、`request_id`唯一Run关联、配置成对回滚和故障隔离测试，并将版本化
-     dkt-cicd Skill与用户安装副本同步。本轮实现已提交为`774283a5ac293c9209a09f07e721b8880a9b3098`；本次实时读模型
-     缓存残留修复已完成红绿测试，本地全量`602 passed`，但尚未形成新提交。当前仍需提交并推送本次修复、用新Commit跑真实CI/Release、
-     安装生产固定机制、完成`apply=false`预检、正式切换、真实账号业务验收和24小时观察，详见12.2节和本轮最后冲刺文档。
+13. 已完成代码交付与生产切换：iwork实时读模型缓存残留修复已提交为`285da66c2fcc04b2477a68a7617a7e24cce4406b`，
+      本地全量`602 passed`，并完成真实CI、Release、生产准入、`apply=false`预检和正式部署。CI运行
+      `33156467031`、Release运行`33156869242`、预检运行`33157349938`、正式部署运行`33157867624`均为
+      `completed/success`；三类Digest和四个`request_id`已在证据链中逐项一致，服务器`active-release.json`与两容器
+      均已切换到该Commit和镜像。真实账号浏览器验收按风险豁免记录，阶段8仅剩24小时稳定观察。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
 
@@ -1365,3 +1365,18 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 本轮当前已完成两仓库本地修复与回归：iwork 协调模块新SHA-256为`0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7`，Workflow已同步固定该哈希，阶段4测试`39 passed`、全量测试`601 passed`；DTD_nginx 协调模块新SHA-256为`5a19f0a43735f2e4ac73dde516c755a7a4fb42391fe5b705c631e5ca6fee077c`，机制清单已同步，目标测试`90 passed`且协调、并发和看门狗PowerShell测试通过。待完成两仓库提交推送、真实Hosted CI、生产固定机制安装与Portal机制重新认证、iwork Release、`apply=false`预检和一次正式部署。`029fa6f` 的旧 Release、配置包、预检与失败 Deploy 证据不可复用；正式部署必须使用修复后新 Commit 的完整三类 Digest和新的`request_id`。阶段8继续保持“进行中”。
 
 首次修复提交 `7ac31b9...` 的 CI Run `33148404438` 暴露托管Runner身份兼容问题：Hosted Runner 没有 `DONGMING\\shuju` 域账号，协调审计 Mutex 的无条件SID解析使隔离测试失败，生产未受影响。当前修复为协调审计ACL仅授权`SYSTEM`、本机Administrators和当前执行SID，完全移除生产域账号解析；生产入口仍严格校验真实 `ExpectedIdentity`，错误身份继续失败关闭。新增真实协调锁/审计写入和错误身份门禁回归，阶段4目标测试本地`39 passed`；当前改动尚未提交，必须重新通过真实CI后才能进入Release和生产准入。
+
+## 14.2 2026-08-28 iwork 最终生产交付与观察
+
+本节覆盖并更新14.1之后的实际证据；旧失败Run和旧Digest仍只作历史审计，未被复用。
+
+- 最终提交：`285da66c2fcc04b2477a68a7617a7e24cce4406b`，本地、`origin/Keycloak`和服务器部署收据一致。
+- CI：[`33156467031`](https://github.com/GuChenkano/iwork/actions/runs/33156467031)，`completed/success`，`request_id=3fec1a71-ffca-40d4-81b8-f51349b542a9`。
+- Release：[`33156869242`](https://github.com/GuChenkano/iwork/actions/runs/33156869242)，`completed/success`，`request_id=c11b9b6a-7b8f-4c1d-8b6a-4f4b3120497e`。
+- Release三类Digest：Image=`sha256:ff24fa37f26f461005fa52838c9f49078a0b605171470dccb5064a8da3403be3`；Config=`sha256:979bbbf1dfecd37a37f8eb654911ed9075c94df3f981b24198699301364fb53b`；Config Artifact=`sha256:a304118c8bad767a4b678a3f8d5d40737c1db3a25a917eb00f3c75b7538532a1`。
+- 生产准入已更新到最终机制哈希；预检：[`33157349938`](https://github.com/GuChenkano/iwork/actions/runs/33157349938)，`completed/success`，`request_id=c8b494ee-b4be-4c1f-9c94-9a4b09bc3156`，`PreflightRunId=33157349938-1`。
+- 正式部署：[`33157867624`](https://github.com/GuChenkano/iwork/actions/runs/33157867624)，`completed/success`，`request_id=bb2051bf-b3bb-4a58-9c1c-ca0a5f142628`，耗时76秒；确认词为`DEPLOY IWORK 285da66c2fcc04b2477a68a7617a7e24cce4406b`。服务器收据`33157867624-1.json`为`deployed`，`active-release.json`四项绑定值与Release一致。
+- 生产只读核验（2026-08-28 17:08 +08:00）：`DKT_iwork`和`DKT_iwork_alert_worker`均`running/healthy`、RestartCount=0，配置镜像均为上述Image Digest且OCI revision为最终Commit；`DKT_iwork_redis`、`DKT_mysql`健康，Celery ping为`pong`，Redis为`PONG`。
+- 业务探针：HTTPS健康端点`204`；容器内应用根路径`200`；实时API`200 application/json`；SSE`200 text/event-stream`。外部未带用户会话的实时API/SSE返回`401`，符合认证预期。部署后最近10分钟iwork/worker日志未发现错误或连接失败。
+- 收尾：部署锁、维护标记、候选/回滚运行容器均不存在；历史`.candidate.yml/.rollback.yml`仅作为审计留存。未执行数据库迁移、Redis清理、Keycloak/共享卷/网络/Nginx重建。
+- 当前状态：阶段8仍为“进行中”，原因仅为24小时稳定观察尚未完成；真实账号浏览器验收按用户决定作为风险豁免，不宣称实际通过。

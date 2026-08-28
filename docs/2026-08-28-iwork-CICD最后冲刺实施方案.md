@@ -6,7 +6,8 @@
 > 变更前生产基线：`4cb8e31188a0022ea5441e1e10490adc4cc8ad8a`
 > 原始实现提交：`774283a5ac293c9209a09f07e721b8880a9b3098`
 > 本轮修复提交前远程基线：`029fa6fc6203f5b4f785d800e649d4eac7c7521f`
-> 方案状态：S1 修复中；本地Mutex修复与回归已形成，尚未提交或通过真实 CI，生产尚未切换
+> 本轮最终提交：`285da66c2fcc04b2477a68a7617a7e24cce4406b`
+> 方案状态：S2 生产切换已完成，进入24小时稳定观察；真实账号浏览器验收按风险豁免记录
 > 总进度基线：[2026-08-21-GitHub-Actions-CICD完整实施方案.md](./2026-08-21-GitHub-Actions-CICD完整实施方案.md)
 
 ## 1. 文档定位
@@ -46,9 +47,9 @@
 仓库：C:\Users\lipengfei\ZCodeProject\iwork
 分支：Keycloak
 基线：4cb8e31188a0022ea5441e1e10490adc4cc8ad8a
-本轮修复提交前远程基线：029fa6fc6203f5b4f785d800e649d4eac7c7521f
-工作区：包含跨身份 Mutex ACL 修复及回归测试未提交修改
-远程：029fa6f 已推送，但该提交对应的正式部署失败在生产切换前
+本轮最终提交：285da66c2fcc04b2477a68a7617a7e24cce4406b
+工作区：干净，本地与 origin/Keycloak 一致
+远程：285da66 已推送并完成正式生产部署
 ```
 
 本轮改动主要覆盖：
@@ -80,18 +81,18 @@
 `git diff --check`以及版本化Skill与用户安装副本6个文件逐项SHA-256一致性检查。上述证据只能证明当前本地工作区行为，
 不等价于已提交、已推送、GitHub Actions成功或生产环境已采用新机制。
 
-### 3.3 当前生产基线
+### 3.3 当前生产状态
 
-本轮最后冲刺尚未修改生产。根据最近一次已记录证据，生产仍运行通知修复版本：
+本轮最后冲刺已完成生产切换。部署后服务器只读核验确认：
 
 ```text
-Commit：4cb8e31188a0022ea5441e1e10490adc4cc8ad8a
-Image Digest：sha256:6b131b70ef209073adf9e6de7e048f230e2c9ce00b8b3eea0d78187455ff3285
+Commit：285da66c2fcc04b2477a68a7617a7e24cce4406b
+Image Digest：sha256:ff24fa37f26f461005fa52838c9f49078a0b605171470dccb5064a8da3403be3
 Web：DKT_iwork
 Worker：DKT_iwork_alert_worker
 ```
 
-开始任何生产动作前必须重新只读核验，不能直接把以上历史记录视为当前事实。
+两个容器均为`running/healthy`、RestartCount=0；Redis、MySQL同样健康，未发现部署锁、维护标记或候选运行容器。
 
 ### 3.4 2026-08-28 正式部署阻断与修复范围
 
@@ -673,7 +674,7 @@ D:\DM\cicd-state\iwork\release-config\<config-digest-hex>\env\production.env
 
 当前修复已改为：审计Mutex仅授权`SYSTEM`、本机Administrators和当前执行SID，不解析或硬编码`DONGMING\\shuju`；iwork部署脚本继续通过`-ExpectedIdentity`严格校验生产执行身份，错误身份失败关闭。真实协调锁/审计写入与错误身份回归已在本地阶段4测试通过（39项）；当前改动尚未提交，必须重新通过完整CI后，旧Run不得作为成功证据。
 
-## 21. 2026-08-28 实时数据不可用永久修复（进行中）
+## 21. 2026-08-28 实时数据不可用永久修复（已完成生产切换，观察中）
 
 ### 21.1 根因证据
 
@@ -693,4 +694,16 @@ D:\DM\cicd-state\iwork\release-config\<config-digest-hex>\env\production.env
 
 ### 21.4 生产交付边界
 
-当前仅完成代码与隔离测试，尚未清理生产Redis、重启容器或切换生产。必须将修复提交并推送后，重新执行真实CI、Release、生产准入、`apply=false`预检和新的正式部署确认；不得复用旧Commit、旧镜像、旧配置包、旧预检或旧确认词。部署后需验证实时HTTP/SSE、快照版本与更新时间、两容器健康、锁和临时资源清理；若出现新的生产错误立即停止并汇报。
+本边界已满足：未执行数据库迁移，未清理生产Redis，未重建Keycloak、共享卷、网络或Nginx；使用新Commit、新镜像、新配置包和新预检证据完成正式部署。部署后必须继续观察24小时，真实账号浏览器验收按用户决定记录为风险豁免。
+
+### 21.5 真实生产交付证据（2026-08-28）
+
+- CI：[`33156467031`](https://github.com/GuChenkano/iwork/actions/runs/33156467031)，`completed/success`，`request_id=3fec1a71-ffca-40d4-81b8-f51349b542a9`。
+- Release：[`33156869242`](https://github.com/GuChenkano/iwork/actions/runs/33156869242)，`completed/success`，`request_id=c11b9b6a-7b8f-4c1d-8b6a-4f4b3120497e`。
+- Release证据：Image=`sha256:ff24fa37f26f461005fa52838c9f49078a0b605171470dccb5064a8da3403be3`；Config=`sha256:979bbbf1dfecd37a37f8eb654911ed9075c94df3f981b24198699301364fb53b`；Artifact=`sha256:a304118c8bad767a4b678a3f8d5d40737c1db3a25a917eb00f3c75b7538532a1`。
+- Preflight：[`33157349938`](https://github.com/GuChenkano/iwork/actions/runs/33157349938)，`completed/success`，`request_id=c8b494ee-b4be-4c1f-9c94-9a4b09bc3156`，`PreflightRunId=33157349938-1`，生产切换前未变。
+- Deploy：[`33157867624`](https://github.com/GuChenkano/iwork/actions/runs/33157867624)，`completed/success`，`request_id=bb2051bf-b3bb-4a58-9c1c-ca0a5f142628`，耗时76秒；用户确认词为`DEPLOY IWORK 285da66c2fcc04b2477a68a7617a7e24cce4406b`。
+- 服务器收据：`33157867624-1.json`=`deployed`，`active-release.json`的Commit、Image、Config和Artifact Digest与上述证据一致；两容器均使用新镜像且健康，RestartCount=0。
+- 业务探针：HTTPS健康端点`204`；容器内应用根路径`200`；实时API`200 application/json`；SSE`200 text/event-stream`。外部未带用户会话的实时API/SSE返回`401`，符合认证预期。部署后最近10分钟iwork与worker日志未发现错误或连接失败。
+- 清理：`production-deploy.lock`、iwork维护标记、Docker周重启维护标记和候选/回滚运行容器均不存在；历史`.candidate.yml/.rollback.yml`仅作为审计留存。
+- 待完成：24小时稳定观察；真实账号浏览器验收已按风险豁免，不宣称实际通过。
