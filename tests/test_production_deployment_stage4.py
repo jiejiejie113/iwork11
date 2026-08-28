@@ -171,6 +171,11 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "RollbackSucceeded" in content
     assert "'${{ inputs.change_description }}'" not in content
 
+    workflow = yaml.safe_load(content)
+    deploy_env = workflow["jobs"]["deploy"].get("env", {})
+    assert deploy_env["CONFIG_BUNDLE_PATH"] == "${{ github.workspace }}\\iwork-production-config"
+    assert "${{ runner.temp }}" not in deploy_env.values()
+
     script_hash = hashlib.sha256(DEPLOY_SCRIPT_PATH.read_bytes()).hexdigest()
     assert f"DEPLOY_SCRIPT_SHA256: {script_hash}" in content
     module_hash = hashlib.sha256(COORDINATION_MODULE_PATH.read_bytes()).hexdigest()

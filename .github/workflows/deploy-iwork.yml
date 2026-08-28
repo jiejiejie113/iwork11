@@ -93,7 +93,7 @@ jobs:
       IMAGE_DIGEST: ${{ inputs.image_digest }}
       CONFIG_DIGEST: ${{ inputs.config_digest }}
       CONFIG_ARTIFACT_DIGEST: ${{ inputs.config_artifact_digest }}
-      CONFIG_BUNDLE_PATH: ${{ runner.temp }}\iwork-production-config
+      CONFIG_BUNDLE_PATH: ${{ github.workspace }}\iwork-production-config
       REQUEST_ID: ${{ inputs.request_id }}
       EXPECTED_REVISION: ${{ inputs.expected_revision }}
       PREFLIGHT_RUN_ID: ${{ inputs.preflight_run_id }}
