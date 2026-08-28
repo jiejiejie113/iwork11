@@ -238,6 +238,30 @@ def _merge_batch_monthly_hourly(batch_monthly_hourly: dict) -> list:
             for (d, h, s), q in sorted(merged.items())]
 
 
+def _refresh_cached_monthly_today(
+    cached_rows: dict,
+    today_rows: dict,
+    today_str: str,
+) -> dict:
+    """刷新月度缓存中的当天数据，同时清理已消失工序的旧行。
+
+    Args:
+        cached_rows: 按工序组织的月度缓存数据。
+        today_rows: 本轮查询得到的当天数据。
+        today_str: 曼谷业务日的 ISO 日期字符串。
+
+    Returns:
+        dict: 保留历史日期、仅使用本轮当天数据的月度结果。
+    """
+    refreshed = {
+        stepno: [dict(row) for row in (rows or []) if row.get('date') != today_str]
+        for stepno, rows in (cached_rows or {}).items()
+    }
+    for stepno, rows in (today_rows or {}).items():
+        refreshed.setdefault(stepno, []).extend(dict(row) for row in (rows or []))
+    return refreshed
+
+
 def _build_heatmap_matrix(process_flow_stats: list) -> dict:
     """将 process_flow 数据转为热力图矩阵：ALLOWED_FLOWS(行) × 工序(列)"""
     from django.conf import settings
@@ -335,30 +359,27 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
         if 'total' in cached_monthly:
             # 有历史缓存 → 只查今日（<1s），替换缓存中的今日旧数据
             today_total = q.get_batch_monthly_total_trend(today, today)
-            batch_monthly_total = dict(cached_monthly['total'])
-            for stepno, items in today_total.items():
-                old = batch_monthly_total.setdefault(stepno, [])
-                old[:] = [r for r in old if r['date'] != today_str] + items
+            batch_monthly_total = _refresh_cached_monthly_today(
+                cached_monthly['total'], today_total, today_str
+            )
         else:
             batch_monthly_total = q.get_batch_monthly_total_trend(month_start, today)
 
         # 月工序堆积
         if 'proc' in cached_monthly:
             today_proc = q.get_batch_monthly_process_stats(today, today)
-            batch_monthly_proc = dict(cached_monthly['proc'])
-            for stepno, items in today_proc.items():
-                old = batch_monthly_proc.setdefault(stepno, [])
-                old[:] = [r for r in old if r['date'] != today_str] + items
+            batch_monthly_proc = _refresh_cached_monthly_today(
+                cached_monthly['proc'], today_proc, today_str
+            )
         else:
             batch_monthly_proc = q.get_batch_monthly_process_stats(month_start, today)
 
         # 月小时趋势（单次SQL，性能优先）
         if 'hourly' in cached_monthly:
             today_hourly = q.get_batch_monthly_hourly_stats(today, today)
-            batch_monthly_hourly = dict(cached_monthly['hourly'])
-            for stepno, items in today_hourly.items():
-                old = batch_monthly_hourly.setdefault(stepno, [])
-                old[:] = [r for r in old if r['date'] != today_str] + items
+            batch_monthly_hourly = _refresh_cached_monthly_today(
+                cached_monthly['hourly'], today_hourly, today_str
+            )
         else:
             batch_monthly_hourly = q.get_batch_monthly_hourly_stats(month_start, today)
 

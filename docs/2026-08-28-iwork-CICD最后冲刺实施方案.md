@@ -672,3 +672,25 @@ D:\DM\cicd-state\iwork\release-config\<config-digest-hex>\env\production.env
 [`33148404438`](https://github.com/GuChenkano/iwork/actions/runs/33148404438) 在隔离测试阶段失败。失败只发生在 GitHub Hosted Runner：其当前账号不是生产域账号，`ProductionCoordination.psm1` 无条件解析 `DONGMING\\shuju`，导致审计 Mutex 无法创建；生产服务器未被触碰。
 
 当前修复已改为：审计Mutex仅授权`SYSTEM`、本机Administrators和当前执行SID，不解析或硬编码`DONGMING\\shuju`；iwork部署脚本继续通过`-ExpectedIdentity`严格校验生产执行身份，错误身份失败关闭。真实协调锁/审计写入与错误身份回归已在本地阶段4测试通过（39项）；当前改动尚未提交，必须重新通过完整CI后，旧Run不得作为成功证据。
+
+## 21. 2026-08-28 实时数据不可用永久修复（进行中）
+
+### 21.1 根因证据
+
+生产页面提示“实时数据暂不可用，等待恢复”时，容器、Redis和MySQL均处于健康状态；`/api/dashboard/realtime/`返回`503 realtime_snapshot_unavailable`。读模型一致性校验拒绝了当日月趋势总量与实时基础事实不一致的快照：当日事实只包含当前仍存在的工序，但月度缓存更新逻辑只替换本轮查询返回的工序，没有删除缓存中当天已消失工序的旧行，导致旧产量继续叠加。
+
+### 21.2 修复内容
+
+新增统一的月度缓存刷新函数，针对总量趋势、工序堆积和小时趋势三类缓存，在写入本轮当天数据前先删除所有工序的当天行，再合并本轮结果；历史日期行保持不变。这样无论工序当天消失、产量归零或小时明细消失，下一次快照都不会复用旧的当天数据，实时总量与月趋势保持一致。
+
+### 21.3 TDD与本地证据
+
+- 红灯：缓存残留`StepNo=10, qty=4`时，旧实现得到当日`104`，回归期望为当前事实总量`100`。
+- 绿灯：同一回归同时覆盖总量、工序和小时三类缓存，并断言历史日期仍保留。
+- `python -m pytest tests/test_statistics.py tests/test_read_model_fact_source.py tests/test_read_model_store.py tests/test_read_model_queries.py -q -p no:cacheprovider`：`78 passed`。
+- `python -m pytest tests/ -q -p no:cacheprovider`：`602 passed`，仅有既有`requests`依赖版本警告。
+- `python -m ruff check iwork/statistics.py tests/test_statistics.py`和`git diff --check`通过。
+
+### 21.4 生产交付边界
+
+当前仅完成代码与隔离测试，尚未清理生产Redis、重启容器或切换生产。必须将修复提交并推送后，重新执行真实CI、Release、生产准入、`apply=false`预检和新的正式部署确认；不得复用旧Commit、旧镜像、旧配置包、旧预检或旧确认词。部署后需验证实时HTTP/SSE、快照版本与更新时间、两容器健康、锁和临时资源清理；若出现新的生产错误立即停止并汇报。

@@ -286,6 +286,99 @@ class TestAssembleStepnoStats:
         assert result['all_stepnos'] == []
 
 
+@patch('iwork.statistics.cache')
+def test_batch_stats_drops_cached_stepno_missing_from_today(
+    mock_cache,
+):
+    """当天工序消失后，月趋势不应继续保留该工序的当日缓存。"""
+    from iwork.statistics import get_batch_stats
+
+    today = date(2026, 8, 28)
+    query = Mock()
+    query.get_batch_basic_stats.return_value = {
+        70: {'total_qty': 100, 'workorder_count': 1},
+    }
+    query.get_batch_hourly_stats.return_value = {70: []}
+    query.get_batch_process_by_flow.return_value = {70: []}
+    query.get_batch_station_ranking.return_value = {70: []}
+    query.get_batch_workorders_list.return_value = {70: []}
+    query.get_batch_monthly_total_trend.return_value = {
+        70: [{'date': str(today), 'qty': 100}],
+    }
+    query.get_batch_monthly_process_stats.return_value = {
+        70: [{'date': str(today), 'step': 70, 'qty': 100}],
+    }
+    query.get_batch_monthly_hourly_stats.return_value = {
+        70: [{'date': str(today), 'hour': 8, 'qty': 100}],
+    }
+    mock_cache.get.return_value = {
+        'total': {
+            10: [{'date': str(today), 'qty': 4}],
+            70: [{'date': '2026-08-27', 'qty': 90}],
+        },
+        'proc': {
+            10: [
+                {'date': '2026-08-27', 'step': 10, 'qty': 2},
+                {'date': str(today), 'step': 10, 'qty': 4},
+            ],
+            70: [{'date': '2026-08-27', 'step': 70, 'qty': 90}],
+        },
+        'hourly': {
+            10: [
+                {'date': '2026-08-27', 'hour': 7, 'qty': 2},
+                {'date': str(today), 'hour': 7, 'qty': 4},
+            ],
+            70: [{'date': '2026-08-27', 'hour': 8, 'qty': 90}],
+        },
+    }
+
+    result = get_batch_stats(q=query, target_date=today)
+
+    today_trend = [
+        item for item in result['all']['monthly_total_trend']
+        if item['date'] == str(today)
+    ]
+    assert today_trend == [{'date': str(today), 'qty': 100}]
+    assert sum(item['qty'] for item in today_trend) == result['all']['total_qty']
+    assert {'date': '2026-08-27', 'qty': 90} in result['all']['monthly_total_trend']
+
+    today_process = [
+        item for item in result['all']['monthly_process_stats']
+        if item['date'] == str(today)
+    ]
+    assert today_process == [{'date': str(today), 'step': 70, 'qty': 100}]
+    assert {'date': '2026-08-27', 'step': 10, 'qty': 2} in result['all']['monthly_process_stats']
+
+    today_hourly = [
+        item for item in result['all']['monthly_hourly_stats']
+        if item['date'] == str(today)
+    ]
+    assert today_hourly == [
+        {'date': str(today), 'hour': 8, 'step': 70, 'qty': 100},
+    ]
+    assert {
+        'date': '2026-08-27', 'hour': 7, 'step': 10, 'qty': 2,
+    } in result['all']['monthly_hourly_stats']
+
+    monthly_payload = next(
+        call.args[1]
+        for call in mock_cache.set.call_args_list
+        if call.args[0] == f'batch_monthly:{today.year}{today.month}:{today.isoformat()}'
+    )
+    assert all(
+        row.get('date') != str(today)
+        for row in monthly_payload['total'].get(10, [])
+    )
+    assert all(
+        row.get('date') != str(today)
+        for row in monthly_payload['proc'].get(10, [])
+    )
+    assert all(
+        row.get('date') != str(today)
+        for row in monthly_payload['hourly'].get(10, [])
+    )
+
+
 class TestGetCachedMonthly:
     """_get_cached_monthly"""
 
