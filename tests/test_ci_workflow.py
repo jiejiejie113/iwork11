@@ -126,6 +126,9 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "IWORK_IMAGE_DIGEST=" in content
     assert "IWORK_CONFIG_DIGEST=" in content
     assert "IWORK_CONFIG_ARTIFACT_DIGEST=" in content
+    assert "RAW_ARTIFACT_DIGEST" in content
+    assert 'sha256:$rawArtifactDigest' in content
+    assert 'Artifact digest格式无效' in content
     assert "IWORK_REQUEST_ID=" in content
     assert (
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"

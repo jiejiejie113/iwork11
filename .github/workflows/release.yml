@@ -267,17 +267,29 @@ jobs:
 
       - name: 记录发布身份
         shell: pwsh
+        env:
+          RAW_ARTIFACT_DIGEST: ${{ steps.config_artifact.outputs.artifact-digest }}
         run: |
+          $rawArtifactDigest = ([string]$env:RAW_ARTIFACT_DIGEST).Trim()
+          if ($rawArtifactDigest -match '^sha256:[0-9a-f]{64}$') {
+              $artifactDigest = $rawArtifactDigest
+          }
+          elseif ($rawArtifactDigest -match '^[0-9a-f]{64}$') {
+              $artifactDigest = "sha256:$rawArtifactDigest"
+          }
+          else {
+              throw "Artifact digest格式无效"
+          }
           @(
               '### iwork immutable production configuration'
               ''
               '- Config digest: `${{ steps.config.outputs.config_digest }}`'
-              '- Artifact digest: `${{ steps.config_artifact.outputs.artifact-digest }}`'
+              "- Artifact digest: ``$artifactDigest``"
               '- Artifact name: `iwork-production-config-${{ github.sha }}`'
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           "IWORK_IMAGE_DIGEST=${{ steps.image.outputs.digest }}"
           "IWORK_CONFIG_DIGEST=${{ steps.config.outputs.config_digest }}"
-          "IWORK_CONFIG_ARTIFACT_DIGEST=${{ steps.config_artifact.outputs.artifact-digest }}"
+          "IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest"
           "IWORK_REQUEST_ID=${{ inputs.request_id }}"
 
       - name: 注销GHCR
