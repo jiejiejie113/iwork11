@@ -269,6 +269,7 @@ if ($RemainingArguments.Count -ge 3 -and
             }
             elseif ($sourcePlaceholderConfigArtifactDigest) {
                 Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest'
+                Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest"^[[0m'
                 Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
             }
             elseif ($prefixedConfigArtifactDigest) {

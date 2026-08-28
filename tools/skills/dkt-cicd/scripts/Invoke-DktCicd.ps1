@@ -688,7 +688,9 @@ function Get-RunEvidence {
             '(?im)(?:^|[^A-Za-z0-9])IWORK_CONFIG_ARTIFACT_DIGEST\s*=\s*(?<value>[^\s\r\n]+)'
         )
         $configArtifactValues = @($configArtifactMatches | ForEach-Object {
-            $_.Groups['value'].Value.Trim()
+            $value = $_.Groups['value'].Value.Trim()
+            $value = $value -replace '(?:\^\[\[[0-9;]*m|\x1b\[[0-9;]*m)$', ''
+            $value.Trim('"', "'", '`')
         } | Where-Object {
             $_ -cnotmatch $CONFIG_ARTIFACT_PLACEHOLDER_PATTERN
         } | Select-Object -Unique)
