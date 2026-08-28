@@ -35,6 +35,7 @@ $missingConfigArtifactDigest = $env:DKT_CICD_FAKE_MISSING_CONFIG_ARTIFACT_DIGEST
 $invalidConfigArtifactDigests = $env:DKT_CICD_FAKE_INVALID_CONFIG_ARTIFACT_DIGESTS -ceq '1'
 $prefixedConfigArtifactDigest = $env:DKT_CICD_FAKE_PREFIXED_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $sourcePlaceholderConfigArtifactDigest = $env:DKT_CICD_FAKE_SOURCE_PLACEHOLDER_CONFIG_ARTIFACT_DIGEST -ceq '1'
+$preflightSourcePlaceholderConfigArtifactDigest = $env:DKT_CICD_FAKE_PREFLIGHT_SOURCE_PLACEHOLDER_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $malformedConfigArtifactDigest = $env:DKT_CICD_FAKE_MALFORMED_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $mismatchedReleaseDigest = $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST -ceq '1'
 $releaseEventPush = $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH -ceq '1'
@@ -270,6 +271,10 @@ if ($RemainingArguments.Count -ge 3 -and
             elseif ($sourcePlaceholderConfigArtifactDigest) {
                 Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest'
                 Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest"^[[0m'
+                Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
+            }
+            elseif ($preflightSourcePlaceholderConfigArtifactDigest) {
+                Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$env:CONFIG_ARTIFACT_DIGEST"^[[0m'
                 Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
             }
             elseif ($prefixedConfigArtifactDigest) {

@@ -1220,6 +1220,15 @@ Ruff、Compose、20个PowerShell脚本/模块解析、6个YAML、JavaScript和`g
 基于该提交的真实CI/Release、生产固定机制安装、`apply=false`预检、用户新确认后的正式切换、真实账号浏览器验收及24小时观察。
 因此阶段8继续保持“进行中”，本地证据不等价于生产认证。
 
+#### 12.2.6 预检日志源码占位符兼容修复（2026-08-28）
+
+针对提交`5e77097db7e5c58310dc8ede1445a13f99b5a629`的正式部署预览，发现GitHub Actions的PowerShell日志会同时保留脚本源码行和实际输出行。源码行可能出现
+`IWORK_CONFIG_ARTIFACT_DIGEST=$env:CONFIG_ARTIFACT_DIGEST"^[[0m`，不能被当作第二个Artifact Digest；此前因此在正式切换前失败关闭，未触发`apply=true`，生产未改变。
+
+修复规则固定为：先去除PowerShell/ANSI尾码和引号，再过滤已知源码占位符（`$artifactDigest`、`$env:CONFIG_ARTIFACT_DIGEST`），最后要求实际值为唯一完整的`sha256:<64位小写hex>`；未知文本、非法Digest、缺失值或多个不同Digest仍失败关闭。回归测试新增真实预检日志形态，覆盖Release与Preflight两条路径；修复后的离线验收为`114`个断言通过，PowerShell Parser与`git diff --check`通过。
+
+本修复尚未形成新的远程提交；必须以修复后的新Commit重新执行CI、Release和`apply=false`预检，不能复用旧Commit的Release/预检证据。正式部署仍需重新生成预览并等待用户逐字确认，避免把解析修复误当成生产切换成功。
+
 ### 12.3 2026-08-27 Portal部署阻断与机制认证迁移
 
 Portal生产部署运行
