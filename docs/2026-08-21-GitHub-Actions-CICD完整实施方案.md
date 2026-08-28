@@ -1359,6 +1359,8 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 
 生产只读核验确认未发生切换：`DKT_iwork` 与 `DKT_iwork_alert_worker` 仍为旧版本且健康，未留下部署锁、维护标记或候选容器。根因是 Docker 健康看门狗以 `SYSTEM` 身份创建共享恢复 Mutex，而生产 Runner 以 `DONGMING\\shuju` 运行；首个创建者的默认 DACL 未授权另一身份打开。
 
-修复要求覆盖全部共享创建方，而不是仅在 iwork 端增加重试：iwork/Portal 部署脚本、两仓库生产协调审计 Mutex 和 DTD_nginx Docker 看门狗统一使用显式 ACL（`SYSTEM`、本机 Administrators、Runner 身份），对短暂 `UnauthorizedAccessException` 仅做有界重试，权限错误始终失败关闭并输出身份、Mutex 名称和原始错误。Windows named Mutex 的安全描述符只在新建对象时生效，因此生产安装前还必须确认没有看门狗/部署任务持有旧对象；不能把重试当作旧 ACL 修复。
+修复要求覆盖全部共享创建方，而不是仅在 iwork 端增加重试：iwork/Portal 部署脚本和 DTD_nginx Docker 看门狗的生产共享Mutex继续使用显式ACL（`SYSTEM`、本机 Administrators和严格解析的`ExpectedIdentity`）；两仓库生产协调审计Mutex与环境无关，只授权`SYSTEM`、本机Administrators和当前执行SID，不解析或硬编码生产域账号。对短暂 `UnauthorizedAccessException` 仅做有界重试，权限错误始终失败关闭并输出身份、Mutex 名称和原始错误。Windows named Mutex 的安全描述符只在新建对象时生效，因此生产安装前还必须确认没有看门狗/部署任务持有旧对象；不能把重试当作旧 ACL 修复。
 
-本轮当前已完成 iwork 脚本/协调模块和阶段4隔离回归测试，待完成 DTD_nginx 同步修复、所有哈希/机制清单更新、提交推送、生产固定机制安装、重新 CI/Release、`apply=false`预检和一次正式部署。`029fa6f` 的旧 Release、配置包、预检与失败 Deploy 证据不可复用；正式部署必须使用修复后新 Commit 的完整三类 Digest 和新的 `request_id`。阶段8继续保持“进行中”。
+本轮当前已完成两仓库本地修复与回归：iwork 协调模块新SHA-256为`0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7`，Workflow已同步固定该哈希，阶段4测试`39 passed`、全量测试`601 passed`；DTD_nginx 协调模块新SHA-256为`5a19f0a43735f2e4ac73dde516c755a7a4fb42391fe5b705c631e5ca6fee077c`，机制清单已同步，目标测试`90 passed`且协调、并发和看门狗PowerShell测试通过。待完成两仓库提交推送、真实Hosted CI、生产固定机制安装与Portal机制重新认证、iwork Release、`apply=false`预检和一次正式部署。`029fa6f` 的旧 Release、配置包、预检与失败 Deploy 证据不可复用；正式部署必须使用修复后新 Commit 的完整三类 Digest和新的`request_id`。阶段8继续保持“进行中”。
+
+首次修复提交 `7ac31b9...` 的 CI Run `33148404438` 暴露托管Runner身份兼容问题：Hosted Runner 没有 `DONGMING\\shuju` 域账号，协调审计 Mutex 的无条件SID解析使隔离测试失败，生产未受影响。当前修复为协调审计ACL仅授权`SYSTEM`、本机Administrators和当前执行SID，完全移除生产域账号解析；生产入口仍严格校验真实 `ExpectedIdentity`，错误身份继续失败关闭。新增真实协调锁/审计写入和错误身份门禁回归，阶段4目标测试本地`39 passed`；当前改动尚未提交，必须重新通过真实CI后才能进入Release和生产准入。

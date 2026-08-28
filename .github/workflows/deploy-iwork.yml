@@ -107,7 +107,7 @@ jobs:
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
       DEPLOY_SCRIPT_SHA256: 0b32a80cc80d270b7cd87f925c8fb7f06506f93582233f231a8f2403899b767e
       DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
-      DEPLOY_COORDINATION_MODULE_SHA256: ea657f27b787d801ce2c370ee00b66d8ebf3daf898b59bea8a9ee30c80d3a55e
+      DEPLOY_COORDINATION_MODULE_SHA256: 0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7
     steps:
       - name: 解析同一提交的配置包发布Run
         id: release

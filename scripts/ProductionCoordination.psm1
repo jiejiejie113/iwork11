@@ -1,24 +1,19 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PRODUCTION_COORDINATION_AUDIT_MUTEX = 'Global\DKT-Production-Coordination-Audit'
-$PRODUCTION_COORDINATION_RUNNER_IDENTITY = 'DONGMING\shuju'
 
 function New-ProductionCoordinationAuditMutexSecurity {
     <#
     .SYNOPSIS
-    为生产协调审计Mutex创建SYSTEM、Runner和管理员共享ACL。
+    为生产协调审计Mutex创建SYSTEM、本机管理员和当前执行身份共享ACL。
     #>
     $security = [Security.AccessControl.MutexSecurity]::new()
     $rights = [Security.AccessControl.MutexRights]::Modify -bor `
         [Security.AccessControl.MutexRights]::Synchronize
-    $runnerSid = [Security.Principal.NTAccount]::new(
-        $PRODUCTION_COORDINATION_RUNNER_IDENTITY
-    ).Translate([Security.Principal.SecurityIdentifier])
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $identities = @(
         [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
         [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'),
-        $runnerSid,
         $currentSid
     )
     $seen = @{}

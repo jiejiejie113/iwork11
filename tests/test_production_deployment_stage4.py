@@ -38,7 +38,7 @@ POWERSHELL_EXE = (
     SYSTEM_ROOT / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 )
 EXPECTED_COORDINATION_MODULE_SHA256 = (
-    "ea657f27b787d801ce2c370ee00b66d8ebf3daf898b59bea8a9ee30c80d3a55e"
+    "0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7"
 )
 
 
@@ -217,6 +217,7 @@ def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
     module_content = COORDINATION_MODULE_PATH.read_text(encoding="utf-8-sig")
     assert "New-ProductionCoordinationAuditMutex" in module_content
     assert "PRODUCTION_COORDINATION_AUDIT_MUTEX" in module_content
+    assert "IdentityNotMappedException" not in module_content
     assert "[Threading.Mutex]::new($false, $PRODUCTION_COORDINATION_AUDIT_MUTEX)" not in module_content
 
     content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
@@ -229,6 +230,68 @@ def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
     assert "iwork = $ImageDigest" in content
     assert "iwork_config = $ConfigDigest" in content
     assert "if (Test-Path -LiteralPath $DEPLOYMENT_LOCK_FILE -PathType Leaf)" not in content
+
+
+def test_coordination_lock_and_audit_work_without_production_domain_identity(
+    tmp_path: Path,
+) -> None:
+    """托管Runner没有生产域账号时，真实协调锁和审计写入仍应成功。"""
+    lock_root = tmp_path / "locks"
+    script_path = tmp_path / "run-coordination.ps1"
+    script_path.write_text(
+        """param([string]$ModulePath, [string]$LockRoot)
+$ErrorActionPreference = 'Stop'
+Import-Module -Name $ModulePath -Force
+$lock = Enter-ProductionCoordinationLock `
+    -LockRoot $LockRoot `
+    -Repository 'GuChenkano/iwork' `
+    -Service 'iwork' `
+    -RunId '123456-1' `
+    -Actor 'GuChenkano' `
+    -ExpectedRevision ('2' * 40) `
+    -ArtifactDigests ([ordered]@{ iwork = 'sha256:' + ('1' * 64) }) `
+    -RequestId '12345678-1234-1234-1234-123456789abc' `
+    -RunStateResolver { [pscustomobject]@{ Status = 'completed'; Conclusion = 'success' } }
+Update-ProductionCoordinationLock -Lock $lock -Phase 'validated'
+$eventPath = $lock.EventPath
+Exit-ProductionCoordinationLock -Lock $lock
+$events = @(Get-Content -LiteralPath $eventPath | ForEach-Object { $_ | ConvertFrom-Json })
+if ($events.Count -lt 3) { throw '协调审计事件数量不足。' }
+if ($events.event -notcontains 'acquire_attempt') { throw '缺少acquire_attempt审计事件。' }
+if ($events.event -notcontains 'phase_updated') { throw '缺少phase_updated审计事件。' }
+if ($events.event -notcontains 'released') { throw '缺少released审计事件。' }
+if (Test-Path -LiteralPath (Join-Path $LockRoot 'production-deploy.lock')) {
+    throw '协调锁文件未清理。'
+}
+[pscustomobject]@{ EventCount = $events.Count; Result = 'ok' } | ConvertTo-Json -Compress
+""",
+        encoding="utf-8-sig",
+    )
+
+    result = subprocess.run(  # noqa: S603 - 仅执行固定的隔离PowerShell测试脚本
+        [
+            str(POWERSHELL_EXE),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-ModulePath",
+            str(COORDINATION_MODULE_PATH),
+            "-LockRoot",
+            str(lock_root),
+        ],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["Result"] == "ok"
+    module_content = COORDINATION_MODULE_PATH.read_text(encoding="utf-8-sig")
+    assert r"DONGMING\shuju" not in module_content
+    assert "PRODUCTION_COORDINATION_RUNNER_IDENTITY" not in module_content
+    assert "IdentityNotMappedException" not in module_content
 
 
 def test_policy_installer_installs_and_pins_script_and_coordination_module() -> None:
@@ -378,6 +441,7 @@ def _run_deployment_script(
     existing_active_config: bool = False,
     tamper_active_release_field: str | None = None,
     recovery_mutex_name: str | None = None,
+    expected_identity: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -402,6 +466,7 @@ def _run_deployment_script(
         existing_active_config (bool): 是否预置一套与候选不同的活动配置。
         tamper_active_release_field (str | None): 可选的活动指针字段篡改项。
         recovery_mutex_name (str | None): 可选的恢复Mutex名称，用于隔离竞争测试。
+        expected_identity (str | None): 可选的生产身份预期值，用于身份门禁回归测试。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, object]]:
@@ -755,7 +820,7 @@ exit /b %fakeDockerExitCode%
             "-ChangeDescription",
             "阶段4预检测试",
             "-ExpectedIdentity",
-            identity,
+            expected_identity or identity,
             "-IworkRoot",
             str(iwork_root),
             "-StateRoot",
@@ -858,6 +923,22 @@ $mutex.Dispose()
         if owner.poll() is None:
             owner.terminate()
         owner.wait(timeout=10)
+
+
+def test_production_entry_rejects_wrong_expected_identity_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """生产入口收到错误ExpectedIdentity时，必须失败且不得创建部署状态。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        expected_identity="DONGMING\\identity-that-does-not-exist",
+    )
+
+    assert result.returncode != 0
+    assert "部署身份不正确" in result.stderr
+    assert list(paths["state_root"].iterdir()) == []
+    assert list(paths["lock_root"].iterdir()) == []
 
 
 def test_preflight_validates_candidate_without_mutating_containers(tmp_path: Path) -> None:

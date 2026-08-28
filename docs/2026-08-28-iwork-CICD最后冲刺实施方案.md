@@ -5,13 +5,13 @@
 > 本地分支：`Keycloak`
 > 变更前生产基线：`4cb8e31188a0022ea5441e1e10490adc4cc8ad8a`
 > 原始实现提交：`774283a5ac293c9209a09f07e721b8880a9b3098`
-> 当前远程 HEAD：`029fa6fc6203f5b4f785d800e649d4eac7c7521f`
-> 方案状态：S1 修复中；上次正式部署在切换前失败，修复提交尚未形成
+> 本轮修复提交前远程基线：`029fa6fc6203f5b4f785d800e649d4eac7c7521f`
+> 方案状态：S1 修复中；本地Mutex修复与回归已形成，尚未提交或通过真实 CI，生产尚未切换
 > 总进度基线：[2026-08-21-GitHub-Actions-CICD完整实施方案.md](./2026-08-21-GitHub-Actions-CICD完整实施方案.md)
 
 ## 1. 文档定位
 
-本文是 iwork CI/CD 最后冲刺阶段的执行清单，用于把当前已经完成并已提交但尚未推送的本地实现，推进为经过真实 GitHub Actions 和生产环境验证的完整交付。
+本文是 iwork CI/CD 最后冲刺阶段的执行清单，用于把当前已完成的本地实现及未提交修复改动，推进为经过真实 GitHub Actions 和生产环境验证的完整交付。
 
 本文不替代总方案。每个阶段完成后，必须把实际 Commit、Actions Run、Digest、测试结果、生产收据、异常和风险豁免同步回写到总方案；若本文与总方案或仓库实际状态不一致，以仓库现场证据和总方案最新记录为准。
 
@@ -46,7 +46,7 @@
 仓库：C:\Users\lipengfei\ZCodeProject\iwork
 分支：Keycloak
 基线：4cb8e31188a0022ea5441e1e10490adc4cc8ad8a
-当前远程 HEAD：029fa6fc6203f5b4f785d800e649d4eac7c7521f
+本轮修复提交前远程基线：029fa6fc6203f5b4f785d800e649d4eac7c7521f
 工作区：包含跨身份 Mutex ACL 修复及回归测试未提交修改
 远程：029fa6f 已推送，但该提交对应的正式部署失败在生产切换前
 ```
@@ -660,7 +660,15 @@ D:\DM\cicd-state\iwork\release-config\<config-digest-hex>\env\production.env
 ## 19. 2026-08-28 修复执行记录（进行中）
 
 - 已完成：iwork `Enter-DeploymentMutex` 使用显式 Mutex ACL，并对构造/`WaitOne` 权限拒绝做诊断和有界重试。
-- 已完成：`ProductionCoordination.psm1` 的审计 Mutex 真正使用显式 ACL，避免 helper 仅定义不生效。
-- 已完成：阶段4隔离回归测试通过（当前 37 项）；此前生产阻断已可在隔离环境重现其跨身份模式。
-- 待完成：DTD_nginx 看门狗、Portal 与协调模块同步修复及对应机制哈希/测试收口；iwork 修复提交、推送、真实 CI/Release、生产准入安装、预检和正式部署。
+- 已完成：`ProductionCoordination.psm1` 的审计 Mutex 使用与环境无关的显式ACL，仅授权`SYSTEM`、本机Administrators和当前执行SID，不解析生产域账号。
+- 已完成：阶段4隔离回归测试通过（当前 39 项），新增真实协调锁/审计写入和错误`ExpectedIdentity`失败关闭回归；模块SHA-256为`0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7`，Workflow已同步固定。
+- 已完成：DTD_nginx 协调审计同样移除生产域账号解析，生产部署脚本与看门狗的严格身份解析保持不变；机制运行契约SHA-256更新为`5a19f0a43735f2e4ac73dde516c755a7a4fb42391fe5b705c631e5ca6fee077c`，目标测试`90 passed`且协调、并发和看门狗PowerShell测试通过。
+- 待完成：两仓库提交推送和真实Hosted CI；随后执行生产准入安装、Portal机制重新认证、iwork Release、预检和正式部署。
 - 生产边界：在上述新证据链完成前，不重试 `029fa6f`；不复用其旧 Digest 或预检，不操作数据库、卷、Keycloak、网络和 Nginx。
+
+## 20. 2026-08-28 CI 兼容修复（进行中）
+
+首次修复提交 `7ac31b9f50b062b663d3fa6f4f99e689a0d80b77` 的 CI Run
+[`33148404438`](https://github.com/GuChenkano/iwork/actions/runs/33148404438) 在隔离测试阶段失败。失败只发生在 GitHub Hosted Runner：其当前账号不是生产域账号，`ProductionCoordination.psm1` 无条件解析 `DONGMING\\shuju`，导致审计 Mutex 无法创建；生产服务器未被触碰。
+
+当前修复已改为：审计Mutex仅授权`SYSTEM`、本机Administrators和当前执行SID，不解析或硬编码`DONGMING\\shuju`；iwork部署脚本继续通过`-ExpectedIdentity`严格校验生产执行身份，错误身份失败关闭。真实协调锁/审计写入与错误身份回归已在本地阶段4测试通过（39项）；当前改动尚未提交，必须重新通过完整CI后，旧Run不得作为成功证据。
