@@ -60,6 +60,7 @@ function Invoke-SkillProcess {
         [switch]$MissingConfigArtifactDigest,
         [switch]$InvalidConfigArtifactDigests,
         [switch]$PrefixedConfigArtifactDigest,
+        [switch]$SourcePlaceholderConfigArtifactDigest,
         [switch]$MalformedConfigArtifactDigest,
         [switch]$ReleaseEventPush,
         [switch]$MismatchedReleaseDigest,
@@ -87,6 +88,7 @@ function Invoke-SkillProcess {
     $env:DKT_CICD_FAKE_MISSING_CONFIG_ARTIFACT_DIGEST = if ($MissingConfigArtifactDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_INVALID_CONFIG_ARTIFACT_DIGESTS = if ($InvalidConfigArtifactDigests) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_PREFIXED_CONFIG_ARTIFACT_DIGEST = if ($PrefixedConfigArtifactDigest) { '1' } else { '0' }
+    $env:DKT_CICD_FAKE_SOURCE_PLACEHOLDER_CONFIG_ARTIFACT_DIGEST = if ($SourcePlaceholderConfigArtifactDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_MALFORMED_CONFIG_ARTIFACT_DIGEST = if ($MalformedConfigArtifactDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH = if ($ReleaseEventPush) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST = if ($MismatchedReleaseDigest) { '1' } else { '0' }
@@ -246,6 +248,14 @@ Assert-True -Condition (
     $prefixedConfigArtifactDigestRead.ExitCode -eq 0 -and
     ($prefixedConfigArtifactDigestRead.Output | ConvertFrom-Json).ConfigArtifactDigest -eq $configArtifactDigest
 ) -Message '带 Job/Step 前缀的 Release 日志仍应稳定解析 ConfigArtifactDigest'
+
+$sourcePlaceholderConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+) -Mode success -SourcePlaceholderConfigArtifactDigest
+Assert-True -Condition (
+    $sourcePlaceholderConfigArtifactDigestRead.ExitCode -eq 0 -and
+    ($sourcePlaceholderConfigArtifactDigestRead.Output | ConvertFrom-Json).ConfigArtifactDigest -eq $configArtifactDigest
+) -Message 'Release 日志中的命令源码占位符不应与唯一实际 ConfigArtifactDigest 冲突'
 
 $malformedConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
     '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'

@@ -69,6 +69,7 @@ $SERVICE_CONFIG = @{
 }
 $REVISION_PATTERN = '^[0-9a-f]{40}$'
 $DIGEST_PATTERN = '^sha256:[0-9a-f]{64}$'
+$CONFIG_ARTIFACT_PLACEHOLDER_PATTERN = '^\$artifactDigest$'
 $RUN_DISCOVERY_TIMEOUT_SECONDS = if (
     $env:DKT_CICD_TEST_MODE -ceq '1' -and
     $env:DKT_CICD_TEST_DISCOVERY_TIMEOUT_SECONDS -match '^\d+$'
@@ -688,6 +689,8 @@ function Get-RunEvidence {
         )
         $configArtifactValues = @($configArtifactMatches | ForEach-Object {
             $_.Groups['value'].Value.Trim()
+        } | Where-Object {
+            $_ -cnotmatch $CONFIG_ARTIFACT_PLACEHOLDER_PATTERN
         } | Select-Object -Unique)
         $configArtifactDigests = @($configArtifactValues | Where-Object {
             $_ -cmatch $DIGEST_PATTERN

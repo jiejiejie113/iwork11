@@ -34,6 +34,7 @@ $missingConfigDigest = $env:DKT_CICD_FAKE_MISSING_CONFIG_DIGEST -ceq '1'
 $missingConfigArtifactDigest = $env:DKT_CICD_FAKE_MISSING_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $invalidConfigArtifactDigests = $env:DKT_CICD_FAKE_INVALID_CONFIG_ARTIFACT_DIGESTS -ceq '1'
 $prefixedConfigArtifactDigest = $env:DKT_CICD_FAKE_PREFIXED_CONFIG_ARTIFACT_DIGEST -ceq '1'
+$sourcePlaceholderConfigArtifactDigest = $env:DKT_CICD_FAKE_SOURCE_PLACEHOLDER_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $malformedConfigArtifactDigest = $env:DKT_CICD_FAKE_MALFORMED_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $mismatchedReleaseDigest = $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST -ceq '1'
 $releaseEventPush = $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH -ceq '1'
@@ -265,6 +266,10 @@ if ($RemainingArguments.Count -ge 3 -and
         if (-not $missingConfigArtifactDigest -and $runId -in @(102, 202, 203)) {
             if ($malformedConfigArtifactDigest) {
                 Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=not-a-sha256-digest'
+            }
+            elseif ($sourcePlaceholderConfigArtifactDigest) {
+                Write-Output 'IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest'
+                Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
             }
             elseif ($prefixedConfigArtifactDigest) {
                 Write-Output "publish`t记录发布身份`tIWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
