@@ -1,6 +1,78 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PRODUCTION_COORDINATION_AUDIT_MUTEX = 'Global\DKT-Production-Coordination-Audit'
+$PRODUCTION_COORDINATION_RUNNER_IDENTITY = 'DONGMING\shuju'
+
+function New-ProductionCoordinationAuditMutexSecurity {
+    <#
+    .SYNOPSIS
+    为生产协调审计Mutex创建SYSTEM、Runner和管理员共享ACL。
+    #>
+    $security = [Security.AccessControl.MutexSecurity]::new()
+    $rights = [Security.AccessControl.MutexRights]::Modify -bor `
+        [Security.AccessControl.MutexRights]::Synchronize
+    $runnerSid = [Security.Principal.NTAccount]::new(
+        $PRODUCTION_COORDINATION_RUNNER_IDENTITY
+    ).Translate([Security.Principal.SecurityIdentifier])
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $identities = @(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'),
+        $runnerSid,
+        $currentSid
+    )
+    $seen = @{}
+    foreach ($identity in $identities) {
+        if ($seen.ContainsKey($identity.Value)) { continue }
+        $seen[$identity.Value] = $true
+        $rule = [Security.AccessControl.MutexAccessRule]::new(
+            $identity,
+            $rights,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.AddAccessRule($rule)
+    }
+    return $security
+}
+
+function New-ProductionCoordinationAuditMutex {
+    <#
+    .SYNOPSIS
+    创建或打开使用显式共享ACL的生产协调审计Mutex。
+
+    .DESCRIPTION
+    审计事件可能由不同受控身份写入同一日志。对旧对象短暂拒绝访问时仅做
+    有界重试；超时仍失败关闭，不能把权限错误当作锁空闲。
+    #>
+    param(
+        [ValidateRange(0, 60)]
+        [int]$AccessDeniedRetrySeconds = 10
+    )
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($AccessDeniedRetrySeconds)
+    while ($true) {
+        try {
+            $createdNew = $false
+            $security = New-ProductionCoordinationAuditMutexSecurity
+            return [Threading.Mutex]::new(
+                $false,
+                $PRODUCTION_COORDINATION_AUDIT_MUTEX,
+                [ref]$createdNew,
+                $security
+            )
+        }
+        catch [UnauthorizedAccessException] {
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                throw (
+                    "无法访问生产协调审计互斥锁：$PRODUCTION_COORDINATION_AUDIT_MUTEX；" +
+                    "当前身份：$identity；原始错误：$($_.Exception.Message)"
+                )
+            }
+            Start-Sleep -Seconds 1
+        }
+    }
+}
 
 function ConvertTo-LockText {
     <#
@@ -333,7 +405,7 @@ function Write-ProductionCoordinationEvent {
         $record[[string]$fieldName] = [string]$Fields[$fieldName]
     }
     $json = ($record | ConvertTo-Json -Compress) + "`n"
-    $mutex = [Threading.Mutex]::new($false, $PRODUCTION_COORDINATION_AUDIT_MUTEX)
+    $mutex = New-ProductionCoordinationAuditMutex
     $acquired = $false
     try {
         try {

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
@@ -37,7 +38,7 @@ POWERSHELL_EXE = (
     SYSTEM_ROOT / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 )
 EXPECTED_COORDINATION_MODULE_SHA256 = (
-    "beb88d9bf07143102c0398edf75f6665dcd1ee48fc1604b22ecae3bafc1cf882"
+    "ea657f27b787d801ce2c370ee00b66d8ebf3daf898b59bea8a9ee30c80d3a55e"
 )
 
 
@@ -213,6 +214,11 @@ def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
     assert module_bytes.startswith(b"\xef\xbb\xbf")
     assert hashlib.sha256(module_bytes).hexdigest() == EXPECTED_COORDINATION_MODULE_SHA256
 
+    module_content = COORDINATION_MODULE_PATH.read_text(encoding="utf-8-sig")
+    assert "New-ProductionCoordinationAuditMutex" in module_content
+    assert "PRODUCTION_COORDINATION_AUDIT_MUTEX" in module_content
+    assert "[Threading.Mutex]::new($false, $PRODUCTION_COORDINATION_AUDIT_MUTEX)" not in module_content
+
     content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
     assert "Import-Module -Name $COORDINATION_MODULE" in content
     assert "Enter-ProductionCoordinationLock" in content
@@ -371,6 +377,7 @@ def _run_deployment_script(
     add_unknown_config_file: bool = False,
     existing_active_config: bool = False,
     tamper_active_release_field: str | None = None,
+    recovery_mutex_name: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -394,6 +401,7 @@ def _run_deployment_script(
         add_unknown_config_file (bool): 是否在配置包中加入未知文件。
         existing_active_config (bool): 是否预置一套与候选不同的活动配置。
         tamper_active_release_field (str | None): 可选的活动指针字段篡改项。
+        recovery_mutex_name (str | None): 可选的恢复Mutex名称，用于隔离竞争测试。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, object]]:
@@ -767,7 +775,7 @@ exit /b %fakeDockerExitCode%
             "-ProductionMutexName",
             f"Local\\iwork-stage4-production-{tmp_path.name}",
             "-RecoveryMutexName",
-            f"Local\\iwork-stage4-recovery-{tmp_path.name}",
+            recovery_mutex_name or f"Local\\iwork-stage4-recovery-{tmp_path.name}",
         ],
         capture_output=True,
         encoding="utf-8",
@@ -785,6 +793,71 @@ exit /b %fakeDockerExitCode%
         "previous_config_path": previous_config_path,
         "previous_config_digest": previous_config_digest,
     }
+
+
+def test_deploy_waits_for_cross_identity_recovery_mutex_to_be_released(
+    tmp_path: Path,
+) -> None:
+    """跨身份恢复锁短暂不可访问时，应等待释放而不是误判为永久失败。"""
+    mutex_name = f"Local\\iwork-stage4-restricted-{tmp_path.name}"
+    owner_script = tmp_path / "restricted-mutex-owner.ps1"
+    ready_file = tmp_path / "restricted-mutex.ready"
+    owner_script.write_text(
+        """param([string]$Name, [string]$ReadyPath)
+$security = New-Object System.Security.AccessControl.MutexSecurity
+$rights = [System.Security.AccessControl.MutexRights]::Modify -bor [System.Security.AccessControl.MutexRights]::Synchronize
+$sid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+$rule = [System.Security.AccessControl.MutexAccessRule]::new($sid, $rights, [System.Security.AccessControl.AccessControlType]::Allow
+)
+$security.AddAccessRule($rule)
+$created = $false
+$mutex = [System.Threading.Mutex]::new($false, $Name, [ref]$created, $security)
+$mutex.WaitOne(0) | Out-Null
+Set-Content -LiteralPath $ReadyPath -Value 'ready' -NoNewline
+Start-Sleep -Seconds 2
+$mutex.ReleaseMutex()
+$mutex.Dispose()
+""",
+        encoding="utf-8",
+    )
+    owner = subprocess.Popen(  # noqa: S603 - 仅执行固定的隔离PowerShell测试脚本
+        [
+            str(POWERSHELL_EXE),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(owner_script),
+            "-Name",
+            mutex_name,
+            "-ReadyPath",
+            str(ready_file),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+    )
+    try:
+        for _ in range(40):
+            if ready_file.is_file():
+                break
+            if owner.poll() is not None:
+                break
+            time.sleep(0.1)
+        assert ready_file.is_file(), owner.stderr.read() if owner.stderr else ""
+        result, paths = _run_deployment_script(
+            tmp_path / "deployment",
+            mode="Deploy",
+            recovery_mutex_name=mutex_name,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["Result"] == "deployed"
+        assert not (paths["lock_root"] / "production-deploy.lock").exists()
+    finally:
+        if owner.poll() is None:
+            owner.terminate()
+        owner.wait(timeout=10)
 
 
 def test_preflight_validates_candidate_without_mutating_containers(tmp_path: Path) -> None:
@@ -1298,6 +1371,21 @@ def test_preflight_rejects_watchdog_without_shared_recovery_mutex(
     assert "Global\\DKT-Docker-Recovery" in result.stderr
     assert list(paths["state_root"].iterdir()) == []
     assert list(paths["lock_root"].iterdir()) == []
+
+
+def test_shared_mutex_acl_contract_covers_system_runner_and_diagnostics() -> None:
+    """跨身份共享Mutex必须显式授予权限并诊断访问拒绝。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "MutexSecurity" in content
+    assert "MutexAccessRule" in content
+    assert "MutexRights" in content
+    assert "S-1-5-18" in content
+    assert "S-1-5-32-544" in content
+    assert "UnauthorizedAccessException" in content
+    assert "Security.SecurityException" in content
+    assert "WindowsIdentity]::GetCurrent().Name" in content
+    assert "无法取得共享部署互斥锁" in content
 
 
 def test_deployment_only_removes_locks_and_markers_it_created() -> None:

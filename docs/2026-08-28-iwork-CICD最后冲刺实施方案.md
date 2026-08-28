@@ -4,8 +4,9 @@
 > 适用仓库：`GuChenkano/iwork`
 > 本地分支：`Keycloak`
 > 变更前生产基线：`4cb8e31188a0022ea5441e1e10490adc4cc8ad8a`
-> 本地实现提交：`774283a5ac293c9209a09f07e721b8880a9b3098`
-> 方案状态：S1 本地实现与验证完成；S2 提交完成，推送待执行
+> 原始实现提交：`774283a5ac293c9209a09f07e721b8880a9b3098`
+> 当前远程 HEAD：`029fa6fc6203f5b4f785d800e649d4eac7c7521f`
+> 方案状态：S1 修复中；上次正式部署在切换前失败，修复提交尚未形成
 > 总进度基线：[2026-08-21-GitHub-Actions-CICD完整实施方案.md](./2026-08-21-GitHub-Actions-CICD完整实施方案.md)
 
 ## 1. 文档定位
@@ -45,8 +46,9 @@
 仓库：C:\Users\lipengfei\ZCodeProject\iwork
 分支：Keycloak
 基线：4cb8e31188a0022ea5441e1e10490adc4cc8ad8a
-工作区：存在本轮大量未提交修改
-远程：尚未推送本轮CI/CD机制
+当前远程 HEAD：029fa6fc6203f5b4f785d800e649d4eac7c7521f
+工作区：包含跨身份 Mutex ACL 修复及回归测试未提交修改
+远程：029fa6f 已推送，但该提交对应的正式部署失败在生产切换前
 ```
 
 本轮改动主要覆盖：
@@ -90,6 +92,20 @@ Worker：DKT_iwork_alert_worker
 ```
 
 开始任何生产动作前必须重新只读核验，不能直接把以上历史记录视为当前事实。
+
+### 3.4 2026-08-28 正式部署阻断与修复范围
+
+对提交 `029fa6fc6203f5b4f785d800e649d4eac7c7521f` 执行的正式部署 Run
+[`33146302986`](https://github.com/GuChenkano/iwork/actions/runs/33146302986)
+在生产切换前失败，错误为：
+
+```text
+Access to the path 'Global\\DKT-Docker-Recovery' is denied.
+```
+
+只读核验确认生产未切换，两个 iwork 容器保持旧版本、`healthy`且无重启；没有遗留部署锁、维护标记或候选容器。根因是 Docker 健康看门狗以 `SYSTEM` 身份先创建共享恢复 Mutex，而生产 Runner 以 `DONGMING\\shuju` 运行，默认 DACL 未授权 Runner 打开该对象。
+
+本轮修复覆盖所有共享创建方：iwork 部署脚本、生产协调审计 Mutex、Portal 部署脚本和 Docker 看门狗统一显式授权 `SYSTEM`、本机 Administrators 与 Runner 身份，并对短暂 `UnauthorizedAccessException` 做有界重试；权限异常继续失败关闭并输出身份、Mutex 名称和原始错误。测试增加了受限 Mutex 跨身份释放/重建回归。旧 `029fa6f` 的 Release、配置包、预检和失败 Deploy 证据均不可复用，修复形成新 Commit 后必须重新执行完整 CI、Release、准入安装、预检和一次正式部署。
 
 ## 4. 已实现的目标能力
 
@@ -169,8 +185,8 @@ Compose通过`IWORK_RELEASE_PROFILE_FILE`指向已验证配置包中的绝对`pr
 
 | 阶段 | 内容 | 生产影响 | 完成标志 |
 |---|---|---|---|
-| S1 | 本地代码和文档收口 | 无 | 全部本地门禁通过，差异审查无阻断项 |
-| S2 | Git提交和远程推送 | 无 | 本地、远程`Keycloak`指向同一新Commit |
+| S1 | 本地代码和文档收口 | 无 | Mutex 修复、测试和文档完成，全部本地门禁通过 |
+| S2 | Git提交和远程推送 | 无 | 本地、远程`Keycloak`指向修复新Commit |
 | S3 | 真实CI和Release | 无生产切换 | 成功生成镜像、配置和Artifact三类Digest |
 | S4 | 生产只读基线与固定机制安装 | 安装受控执行机制，不切换应用 | 固定脚本/模块/Hook哈希与批准Commit一致 |
 | S5 | `apply=false`生产预检 | 只拉取和校验候选，不替换容器 | 预检成功且生产容器身份未变 |
@@ -292,13 +308,13 @@ git diff --cached --check
 
 ### 7.2 建议提交
 
-本轮代码、测试、Skill和同步文档构成一个不可拆分的生产机制契约，已采用以下原子提交：
+上一轮代码、测试、Skill和同步文档构成的原子提交为：
 
 ```text
 [2026-08-28][FEAT] 为iwork生产发布绑定不可变配置包
 ```
 
-实际提交：`774283a5ac293c9209a09f07e721b8880a9b3098`。
+实际提交：`774283a5ac293c9209a09f07e721b8880a9b3098`。该提交随后经过多次 Digest/Run 修复到 `029fa6f`，但正式部署在切换前因跨身份 Mutex 权限失败；本轮修复需生成新的原子提交。
 
 提交后已再次确认目标测试、`git diff --check`和工作区状态；当前仅待推送。
 
@@ -634,9 +650,17 @@ D:\DM\cicd-state\iwork\release-config\<config-digest-hex>\env\production.env
 
 ## 18. 下一步执行入口
 
-恢复执行时从S2推送核验开始，不直接进入生产：
+恢复执行时从修复后的 S2 推送核验开始，不直接进入生产：
 
 1. 核对当前工作区，确认暂停期间没有新增不明修改。
-2. 验证`774283a5ac293c9209a09f07e721b8880a9b3098`仍为当前HEAD。
+2. 验证修复提交已通过本地门禁，并记录新的完整 Commit SHA。
 3. 推送并核对本地、远程和`ls-remote`三方SHA一致。
 4. 进入真实CI、Release和生产门禁流程。
+
+## 19. 2026-08-28 修复执行记录（进行中）
+
+- 已完成：iwork `Enter-DeploymentMutex` 使用显式 Mutex ACL，并对构造/`WaitOne` 权限拒绝做诊断和有界重试。
+- 已完成：`ProductionCoordination.psm1` 的审计 Mutex 真正使用显式 ACL，避免 helper 仅定义不生效。
+- 已完成：阶段4隔离回归测试通过（当前 37 项）；此前生产阻断已可在隔离环境重现其跨身份模式。
+- 待完成：DTD_nginx 看门狗、Portal 与协调模块同步修复及对应机制哈希/测试收口；iwork 修复提交、推送、真实 CI/Release、生产准入安装、预检和正式部署。
+- 生产边界：在上述新证据链完成前，不重试 `029fa6f`；不复用其旧 Digest 或预检，不操作数据库、卷、Keycloak、网络和 Nginx。

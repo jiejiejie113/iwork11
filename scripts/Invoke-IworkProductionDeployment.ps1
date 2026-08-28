@@ -1031,27 +1031,116 @@ function Assert-IworkApplication {
     }
 }
 
+function New-SharedMutexSecurity {
+    <#
+    .SYNOPSIS
+    为部署与Docker看门狗共享的Global Mutex创建明确ACL。
+
+    .DESCRIPTION
+    Docker看门狗以SYSTEM运行，Runner以预期部署身份运行。
+    不能依赖首个创建者的默认DACL，否则两个身份交替创建时会出现“Access is denied”。
+    #>
+    $security = [Security.AccessControl.MutexSecurity]::new()
+    $rights = [Security.AccessControl.MutexRights]::Modify -bor `
+        [Security.AccessControl.MutexRights]::Synchronize
+    $runnerSid = [Security.Principal.NTAccount]::new($ExpectedIdentity).Translate(
+        [Security.Principal.SecurityIdentifier]
+    )
+    $identities = @(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'),
+        $runnerSid
+    )
+    $seen = @{}
+    foreach ($identity in $identities) {
+        if ($seen.ContainsKey($identity.Value)) { continue }
+        $seen[$identity.Value] = $true
+        $rule = [Security.AccessControl.MutexAccessRule]::new(
+            $identity,
+            $rights,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.AddAccessRule($rule)
+    }
+    return $security
+}
+
 function Enter-DeploymentMutex {
     <#
     .SYNOPSIS
-    尝试立即取得指定的Windows互斥锁。
+    使用显式ACL尝试取得Windows互斥锁。
+
+    .DESCRIPTION
+    看门狗可能在另一个身份下短暂持有旧ACL的同名Global Mutex。
+    对访问被拒绝仅做有界重试，到期仍失败关闭；绝不把权限错误当作“锁空闲”。
     #>
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Name
+        [string]$Name,
+        [ValidateRange(0, 600)]
+        [int]$AccessDeniedRetrySeconds = 30
     )
 
-    $mutex = [Threading.Mutex]::new($false, $Name)
-    try {
-        if (-not $mutex.WaitOne(0)) {
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($AccessDeniedRetrySeconds)
+    while ($true) {
+        $mutex = $null
+        try {
+            $createdNew = $false
+            $security = New-SharedMutexSecurity
+            $mutex = [Threading.Mutex]::new(
+                $false,
+                $Name,
+                [ref]$createdNew,
+                $security
+            )
+        }
+        catch [UnauthorizedAccessException] {
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                throw (
+                    "无法访问共享部署互斥锁：$Name；当前身份：$identity；" +
+                    '要求SYSTEM、管理员和Runner部署身份使用显式共享ACL。' +
+                    "原始错误：$($_.Exception.Message)"
+                )
+            }
+            Start-Sleep -Seconds 1
+            continue
+        }
+
+        try {
+            try {
+                $acquired = $mutex.WaitOne(0)
+            }
+            catch [UnauthorizedAccessException] {
+                $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                throw (
+                    "无法取得共享部署互斥锁：$Name；当前身份：$identity；" +
+                    '要求SYSTEM、管理员和Runner部署身份使用显式共享ACL。' +
+                    "原始错误：$($_.Exception.Message)"
+                )
+            }
+            catch [Security.SecurityException] {
+                $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                throw (
+                    "无法取得共享部署互斥锁：$Name；当前身份：$identity；" +
+                    'Mutex安全描述符拒绝访问。' +
+                    "原始错误：$($_.Exception.Message)"
+                )
+            }
+            catch [Threading.AbandonedMutexException] {
+                # 上一次持有者异常退出时，本次已取得互斥锁，继续由统一文件锁严格核验残留内容。
+                $acquired = $true
+            }
+            if (-not $acquired) {
+                throw "部署互斥锁已被占用：$Name"
+            }
+            return $mutex
+        }
+        catch {
             $mutex.Dispose()
-            throw "部署互斥锁已被占用：$Name"
+            throw
         }
     }
-    catch [Threading.AbandonedMutexException] {
-        # 上一次持有者异常退出时，本次已取得互斥锁，继续由统一文件锁严格核验残留内容。
-    }
-    return $mutex
 }
 
 function Exit-DeploymentMutex {
@@ -1268,7 +1357,9 @@ function Invoke-Deploy {
             -CoordinationLock $null `
             -DeferMaintenanceMarker
         $productionMutex = Enter-DeploymentMutex -Name $ProductionMutexName
-        $recoveryMutex = Enter-DeploymentMutex -Name $RecoveryMutexName
+        $recoveryMutex = Enter-DeploymentMutex `
+            -Name $RecoveryMutexName `
+            -AccessDeniedRetrySeconds 30
         $coordinationLock = Enter-ProductionCoordinationLock `
             -LockRoot $LockRoot `
             -Repository 'GuChenkano/iwork' `

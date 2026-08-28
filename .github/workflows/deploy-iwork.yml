@@ -105,9 +105,9 @@ jobs:
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: 60d90367a9a3011264f76d3043caa15f14f92e261ae7056e9c5e1b6f48fa322d
+      DEPLOY_SCRIPT_SHA256: 0b32a80cc80d270b7cd87f925c8fb7f06506f93582233f231a8f2403899b767e
       DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
-      DEPLOY_COORDINATION_MODULE_SHA256: beb88d9bf07143102c0398edf75f6665dcd1ee48fc1604b22ecae3bafc1cf882
+      DEPLOY_COORDINATION_MODULE_SHA256: ea657f27b787d801ce2c370ee00b66d8ebf3daf898b59bea8a9ee30c80d3a55e
     steps:
       - name: 解析同一提交的配置包发布Run
         id: release

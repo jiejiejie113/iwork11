@@ -61,7 +61,7 @@
 
 ## 3. 当前总体进度
 
-截至2026-08-28，阶段0—7已经完成：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力已经形成生产证据；阶段6的跨仓库部署锁与运维任务协调完成隔离验收，并形成生产安装与只读预检证据。阶段5的历史遗留迁移、版本化v3恢复演练和最终Portal生产切换均已完成：v1/v2失败证据保持不可变，v3回滚收据为`rolled_back / RollbackSucceeded=true`，最终部署收据为`deployed`，Portal、Authorizer和oauth2-proxy已切换到同一批准提交的固定Digest，Keycloak、Nginx、数据库和物理卷未重建。新旧域名、OIDC issuer、六应用未登录路由、iwork页面与SSE自动验收通过。真实账号登录/退出、身份头、权限拒绝页和六应用登录后业务页因当前自定义证书未被内置浏览器信任而未执行；用户于2026-08-26明确要求跳过该项并接受风险豁免，不将其表述为实际验收通过。阶段6的统一协调模块、生产准入安装、两个Runner smoke和两个`apply=false`生产预检均已完成；阶段7已安装并验收`dkt-cicd` Skill。阶段8的本地最后冲刺实现和隔离验证已完成：不可变配置包、镜像/配置/Commit三元绑定、`request_id`唯一Run关联、失败Run Digest兼容、成对回滚和安装副本同步均已通过本地门禁；本轮实现已提交为`774283a5ac293c9209a09f07e721b8880a9b3098`但尚未推送，真实CI/Release、生产固定机制安装、`apply=false`预检、正式切换和24小时观察仍未完成。阶段0—7共8个阶段已完成，阶段8进行中。
+截至2026-08-28，阶段0—7的既有交付仍保留：两仓库纯CI、GHCR不可变镜像、生产Self-hosted Runner、iwork与Portal受控部署和回滚能力均已有隔离或历史生产证据；阶段6的跨仓库部署锁与运维任务协调也已完成隔离验收。阶段8曾以`774283a5`为基础完成本地配置包和Digest链路实现，随后修复到远程 HEAD `029fa6f`并执行真实 CI/Release/预检；正式部署 Run `33146302986` 在生产切换前因跨身份 Mutex ACL 拒绝失败，生产未变。当前正在统一修复 iwork、Portal、生产协调模块和Docker看门狗的共享 Mutex ACL，并重新收口本地门禁；旧Release、配置包和预检证据不可复用。真实账号浏览器登录验收仍按用户明确决定记录为风险豁免，不将其表述为实际验收通过。阶段8继续进行中。
 
 | 阶段 | 名称 | 当前状态 | 关键结果 |
 |---:|---|---|---|
@@ -73,7 +73,7 @@
 | 5 | Portal受控部署与回滚 | 已完成 | v3回滚演练与最终生产切换成功；真实账号浏览器验收由用户明确风险豁免 |
 | 6 | 跨仓库部署锁与运维任务协调 | 已完成 | 统一协调模块、运维互斥、生产准入安装、Runner smoke及只读预检均通过 |
 | 7 | `dkt-cicd` Skill | 已完成 | 固定路由、状态监控、日志脱敏、Digest提取和生产两段确认已通过离线及真实只读验收 |
-| 8 | 端到端验收与观察 | 进行中 | iwork最后冲刺本地实现与隔离验证完成；提交`774283a5`，待推送、真实CI/Release、生产安装、预检、正式切换和24小时观察 |
+| 8 | 端到端验收与观察 | 进行中 | `029fa6f`正式部署在切换前被跨身份Mutex ACL阻断；修复中，待新Commit推送、真实CI/Release、生产机制安装、预检、正式切换和24小时观察 |
 
 ## 4. 已完成：阶段0——基线与纯CI
 
@@ -1346,3 +1346,19 @@ Runner已停止的维护阶段临时给予生产执行身份必要写权限，�
      用新Commit跑真实CI/Release、安装生产固定机制、完成`apply=false`预检、正式切换、真实账号业务验收和24小时观察，详见12.2节和本轮最后冲刺文档。
 
 阶段5继续沿用以下边界：Package保持私有，生产只接受完整Digest；Runner不checkout、不build、不运行PR代码、不保存个人PAT，不读取或提交`D:\DM\dkt-secrets.env`；不清理或重置服务器Git工作区；任何证据缺失、身份不符、健康失败或回滚失败均fail-closed。
+
+## 14.1 2026-08-28 iwork 正式部署阻断与跨身份 Mutex 修复（追加记录）
+
+提交 `029fa6fc6203f5b4f785d800e649d4eac7c7521f` 的正式部署 Run
+[`33146302986`](https://github.com/GuChenkano/iwork/actions/runs/33146302986)
+在生产切换前失败，原始错误为：
+
+```text
+Access to the path 'Global\\DKT-Docker-Recovery' is denied.
+```
+
+生产只读核验确认未发生切换：`DKT_iwork` 与 `DKT_iwork_alert_worker` 仍为旧版本且健康，未留下部署锁、维护标记或候选容器。根因是 Docker 健康看门狗以 `SYSTEM` 身份创建共享恢复 Mutex，而生产 Runner 以 `DONGMING\\shuju` 运行；首个创建者的默认 DACL 未授权另一身份打开。
+
+修复要求覆盖全部共享创建方，而不是仅在 iwork 端增加重试：iwork/Portal 部署脚本、两仓库生产协调审计 Mutex 和 DTD_nginx Docker 看门狗统一使用显式 ACL（`SYSTEM`、本机 Administrators、Runner 身份），对短暂 `UnauthorizedAccessException` 仅做有界重试，权限错误始终失败关闭并输出身份、Mutex 名称和原始错误。Windows named Mutex 的安全描述符只在新建对象时生效，因此生产安装前还必须确认没有看门狗/部署任务持有旧对象；不能把重试当作旧 ACL 修复。
+
+本轮当前已完成 iwork 脚本/协调模块和阶段4隔离回归测试，待完成 DTD_nginx 同步修复、所有哈希/机制清单更新、提交推送、生产固定机制安装、重新 CI/Release、`apply=false`预检和一次正式部署。`029fa6f` 的旧 Release、配置包、预检与失败 Deploy 证据不可复用；正式部署必须使用修复后新 Commit 的完整三类 Digest 和新的 `request_id`。阶段8继续保持“进行中”。
