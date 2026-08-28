@@ -121,6 +121,8 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "docker pull" in content
     assert "docker logout ghcr.io" in content
     assert "New-IworkProductionConfigBundle.ps1" in content
+    assert 'if (-not $?) { throw "生产配置包生成失败" }' in content
+    assert 'if ($LASTEXITCODE -ne 0) { throw "生产配置包生成失败" }' not in content
     assert "IWORK_IMAGE_DIGEST=" in content
     assert "IWORK_CONFIG_DIGEST=" in content
     assert "IWORK_CONFIG_ARTIFACT_DIGEST=" in content

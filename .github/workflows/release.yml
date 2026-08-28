@@ -236,7 +236,7 @@ jobs:
               -OutputDirectory $bundlePath `
               -SourceCommit $env:GITHUB_SHA `
               -ImageDigest $env:IMAGE_DIGEST
-          if ($LASTEXITCODE -ne 0) { throw "生产配置包生成失败" }
+          if (-not $?) { throw "生产配置包生成失败" }
           $manifest = Get-Content `
               -LiteralPath (Join-Path $bundlePath 'config-manifest.json') `
               -Raw | ConvertFrom-Json
