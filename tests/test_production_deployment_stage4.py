@@ -83,6 +83,107 @@ def _write_config_bundle(
     return config_digest
 
 
+def _configure_isolated_acl(
+    tmp_path: Path,
+    paths: list[Path],
+    *,
+    directory_paths: set[Path],
+) -> str:
+    """为测试对象设置关闭继承的当前SID+SYSTEM显式DACL。
+
+    Args:
+        tmp_path (Path): 测试临时目录。
+        paths (list[Path]): 需要设置ACL的对象路径。
+        directory_paths (set[Path]): 其中的目录路径集合。
+
+    Returns:
+        str: 测试对象当前Owner的SID。
+
+    Raises:
+        RuntimeError: 本机无法应用或读取Windows ACL时，给出明确原因。
+    """
+    setup_path = tmp_path / "configure-test-acl.ps1"
+    setup_path.write_text(
+        r"""param(
+    [string]$Paths,
+    [string]$DirectoryPaths
+)
+$ErrorActionPreference = 'Stop'
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+$pathList = @($Paths -split '\|')
+$directorySet = @($DirectoryPaths -split '\|' | ForEach-Object { [IO.Path]::GetFullPath($_) })
+    foreach ($path in $pathList) {
+        $fullPath = [IO.Path]::GetFullPath($path)
+        $item = Get-Item -LiteralPath $fullPath -Force
+        $acl = if ($item.PSIsContainer) {
+            [Security.AccessControl.DirectorySecurity]::new()
+        }
+        else {
+            [Security.AccessControl.FileSecurity]::new()
+        }
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.SetOwner($currentSid)
+    $readRights = if ($fullPath -in $directorySet) {
+        [Security.AccessControl.FileSystemRights]::ListDirectory
+    }
+    else {
+        [Security.AccessControl.FileSystemRights]::ReadAndExecute
+    }
+    $currentRights = if ($fullPath -in $directorySet) {
+        [Security.AccessControl.FileSystemRights]::Modify
+    }
+    else {
+        $readRights
+    }
+    $none = [Security.AccessControl.InheritanceFlags]::None
+    $noPropagation = [Security.AccessControl.PropagationFlags]::None
+    $allow = [Security.AccessControl.AccessControlType]::Allow
+    $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $currentSid, $currentRights, $none, $noPropagation, $allow
+    ))
+    $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $systemSid, [Security.AccessControl.FileSystemRights]::FullControl,
+        $none, $noPropagation, $allow
+    ))
+    if ($item.PSIsContainer) {
+        [IO.Directory]::SetAccessControl($fullPath, $acl)
+    }
+    else {
+        [IO.File]::SetAccessControl($fullPath, $acl)
+    }
+}
+$owner = (Get-Item -LiteralPath ([IO.Path]::GetFullPath($pathList[0])) -Force).
+    GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+[Console]::Out.Write($owner)
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(  # noqa: S603 - 仅执行固定的隔离Windows ACL配置脚本
+        [
+            str(POWERSHELL_EXE),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(setup_path),
+            "-Paths",
+            "|".join(str(path) for path in paths),
+            "-DirectoryPaths",
+            "|".join(str(path) for path in directory_paths),
+        ],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(
+            "无法在隔离测试对象上应用严格Windows ACL；"
+            f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+    return result.stdout.strip()
+
+
 def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
     """部署工作流只能由固定分支手工触发，并使用收窄后的输入。"""
     content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -554,6 +655,15 @@ def test_compose_env_file_is_overridable_by_verified_release_profile() -> None:
     assert "Invoke-DockerCommandWithProfile" in script
 
 
+def test_deployment_requires_explicit_owner_acl_trust_manifest() -> None:
+    """生产脚本必须声明并校验显式Owner/ACL信任清单。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "$TrustManifestPath" in content
+    assert "$TrustManifestSha256" in content
+    assert "iwork-owner-acl/v1" in content
+
+
 def _run_deployment_script(
     tmp_path: Path,
     *,
@@ -638,9 +748,13 @@ def _run_deployment_script(
     fake_docker_wrapper = tmp_path / "fake-docker.cmd"
     watchdog_script = tmp_path / "docker-health-watchdog.ps1"
     watchdog_manifest = tmp_path / "docker-health-watchdog-manifest.json"
-    external_probe_receipt_path = tmp_path / "external-probe-receipt.json"
+    external_probe_receipt_path = (
+        tmp_path / "probe-receipts" / "external-probe-receipt.json"
+    )
+    external_probe_receipt_parent = external_probe_receipt_path.parent
     external_probe_producer_path = tmp_path / "external-probe-producer.ps1"
     external_probe_secret_path = tmp_path / "external-probe-signing.key"
+    trust_manifest_path = tmp_path / "owner-acl-trust-manifest.json"
     config_bundle = tmp_path / "config-bundle"
 
     profile.parent.mkdir(parents=True)
@@ -865,10 +979,133 @@ $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
 $hmac = [Security.Cryptography.HMACSHA256]::new([IO.File]::ReadAllBytes($SigningSecretFile))
 try { $signature = $hmac.ComputeHash($bytes) } finally { $hmac.Dispose() }
 [IO.File]::WriteAllText($SignaturePath, ([Convert]::ToBase64String($signature) + "`n"), [Text.UTF8Encoding]::new($false))
+foreach ($outputPath in @($ReceiptPath, $SignaturePath)) {
+    $outputAcl = [IO.File]::GetAccessControl($outputPath)
+    $null = $outputAcl.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($outputAcl.Access)) {
+        $null = $outputAcl.RemoveAccessRule($existingRule)
+    }
+    $none = [Security.AccessControl.InheritanceFlags]::None
+    $noPropagation = [Security.AccessControl.PropagationFlags]::None
+    $allow = [Security.AccessControl.AccessControlType]::Allow
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $null = $outputAcl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $currentSid, [Security.AccessControl.FileSystemRights]::Modify,
+        $none, $noPropagation, $allow
+    ))
+    $null = $outputAcl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        $none, $noPropagation, $allow
+    ))
+    [IO.File]::SetAccessControl($outputPath, $outputAcl)
+}
 if ($Mutation -eq 'signature') { [IO.File]::WriteAllText($SignaturePath, ('AAAA' + "`n"), [Text.UTF8Encoding]::new($false)) }
 """,
         encoding="utf-8",
     )
+    external_probe_receipt_parent.mkdir(parents=True, exist_ok=True)
+    owner_sid = _configure_isolated_acl(
+        tmp_path,
+        [
+            external_probe_producer_path,
+            external_probe_secret_path,
+            external_probe_receipt_parent,
+        ],
+        directory_paths={external_probe_receipt_parent},
+    )
+    identity_sid_result = subprocess.run(  # noqa: S603 - 固定调用Windows系统身份查询
+        [
+            str(POWERSHELL_EXE),
+            "-NoProfile",
+            "-Command",
+            "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+        ],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    identity_sid = identity_sid_result.stdout.strip()
+    trust_objects = [
+        {
+            "id": "probe-producer",
+            "kind": "file",
+            "path": str(external_probe_producer_path),
+            "content_sha256": hashlib.sha256(
+                external_probe_producer_path.read_bytes()
+            ).hexdigest(),
+            "owner_sids": [owner_sid],
+            "allowed_read_sids": [identity_sid, "S-1-5-18"],
+            "allowed_write_sids": ["S-1-5-18"],
+            "inheritance_protected": True,
+            "reparse_allowed": False,
+        },
+        {
+            "id": "probe-signing-secret",
+            "kind": "file",
+            "path": str(external_probe_secret_path),
+            "content_sha256": hashlib.sha256(
+                external_probe_secret_path.read_bytes()
+            ).hexdigest(),
+            "owner_sids": [owner_sid],
+            "allowed_read_sids": [identity_sid, "S-1-5-18"],
+            "allowed_write_sids": ["S-1-5-18"],
+            "inheritance_protected": True,
+            "reparse_allowed": False,
+        },
+        {
+            "id": "probe-receipt-directory",
+            "kind": "directory",
+            "path": str(external_probe_receipt_parent),
+            "content_sha256": "",
+            "owner_sids": [owner_sid],
+            "allowed_read_sids": [identity_sid, "S-1-5-18"],
+            "allowed_write_sids": [identity_sid, "S-1-5-18"],
+            "inheritance_protected": True,
+            "reparse_allowed": False,
+        },
+        {
+            "id": "probe-receipt",
+            "kind": "file",
+            "path": str(external_probe_receipt_path),
+            "content_sha256": "",
+            "owner_sids": [owner_sid],
+            "allowed_read_sids": [identity_sid, "S-1-5-18"],
+            "allowed_write_sids": [identity_sid, "S-1-5-18"],
+            "inheritance_protected": True,
+            "reparse_allowed": False,
+        },
+        {
+            "id": "probe-signature",
+            "kind": "file",
+            "path": str(external_probe_receipt_path) + ".sig",
+            "content_sha256": "",
+            "owner_sids": [owner_sid],
+            "allowed_read_sids": [identity_sid, "S-1-5-18"],
+            "allowed_write_sids": [identity_sid, "S-1-5-18"],
+            "inheritance_protected": True,
+            "reparse_allowed": False,
+        },
+    ]
+    trust_manifest = {
+        "schema": "iwork-owner-acl/v1",
+        "policy_id": "iwork-production-trust-v1",
+        "environment": "production",
+        "deployment_identity_sid": identity_sid,
+        "probe_producer_identity_sid": identity_sid,
+        "objects": trust_objects,
+        "receipt_schema": "iwork-external-probe-receipt/v3",
+        "probe_contract_id": "iwork-external-probes-v2",
+    }
+    trust_manifest_path.write_text(
+        json.dumps(trust_manifest, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+        newline="\n",
+    )
+    trust_manifest_sha256 = hashlib.sha256(
+        trust_manifest_path.read_bytes()
+    ).hexdigest()
     probe_template_path = tmp_path / "external-probe-template.json"
     probe_template_path.write_text(json.dumps(probe_template), encoding="utf-8")
     producer_sha256 = hashlib.sha256(external_probe_producer_path.read_bytes()).hexdigest()
@@ -1185,7 +1422,7 @@ exit /b %fakeDockerExitCode%
             "-RecoveryMutexName",
             recovery_mutex_name or f"Local\\iwork-stage4-recovery-{tmp_path.name}",
         ]
-    if external_probe_receipt and mode == "Deploy":
+    if external_probe_receipt:
         deployment_args.extend(
             [
                 "-ExternalProbeReceiptPath",
@@ -1200,6 +1437,10 @@ exit /b %fakeDockerExitCode%
                 secret_sha256,
                 "-ExternalProbeProducerExpectedIdentity",
                 identity,
+                "-TrustManifestPath",
+                str(trust_manifest_path),
+                "-TrustManifestSha256",
+                trust_manifest_sha256,
             ]
         )
     result = subprocess.run(  # noqa: S603 - 仅执行仓库固定脚本与隔离测试参数
@@ -1219,6 +1460,7 @@ exit /b %fakeDockerExitCode%
         "watchdog_manifest": watchdog_manifest,
         "external_probe_receipt": external_probe_receipt_path,
         "external_probe_producer": external_probe_producer_path,
+        "trust_manifest": trust_manifest_path,
         "config_bundle": config_bundle,
         "previous_config_path": previous_config_path,
         "previous_config_digest": previous_config_digest,

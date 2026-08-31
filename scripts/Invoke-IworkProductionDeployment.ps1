@@ -53,6 +53,8 @@ param(
     [string]$ExternalProbeSigningSecretFile = '',
     [string]$ExternalProbeSigningSecretSha256 = '',
     [string]$ExternalProbeProducerExpectedIdentity = '',
+    [string]$TrustManifestPath = '',
+    [string]$TrustManifestSha256 = '',
     [ValidateRange(1, 3600)]
     [int]$ExternalProbeMaxAgeSeconds = 300,
     [ValidateRange(1, 600)]
@@ -84,6 +86,35 @@ $WATCHDOG_RECOVERY_MUTEX = 'Global\DKT-Docker-Recovery'
 $WATCHDOG_MECHANISM_SCHEMA = 'dkt-docker-health-watchdog/v1'
 $WATCHDOG_EXECUTION_IDENTITY = 'NT AUTHORITY\SYSTEM'
 $EXTERNAL_PROBE_CONTRACT_ID = 'iwork-external-probes-v2'
+$OWNER_ACL_TRUST_SCHEMA = 'iwork-owner-acl/v1'
+$OWNER_ACL_POLICY_ID = 'iwork-production-trust-v1'
+$OWNER_ACL_BLOCKED_SIDS = @(
+    'S-1-1-0',       # Everyone
+    'S-1-5-11',      # Authenticated Users
+    'S-1-5-32-544',  # Administrators
+    'S-1-5-32-545'   # Users
+)
+# 只把会改变对象内容、权限或所有权的位纳入写权限判断，避免把Write/Modify复合值误判。
+$OWNER_ACL_WRITE_RIGHTS = [long](
+    [Security.AccessControl.FileSystemRights]::WriteData -bor
+    [Security.AccessControl.FileSystemRights]::AppendData -bor
+    [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+    [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+    [Security.AccessControl.FileSystemRights]::Delete -bor
+    [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+    [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+    [Security.AccessControl.FileSystemRights]::TakeOwnership
+)
+$OWNER_ACL_READ_RIGHTS = [long](
+    [Security.AccessControl.FileSystemRights]::ReadData -bor
+    [Security.AccessControl.FileSystemRights]::ListDirectory -bor
+    [Security.AccessControl.FileSystemRights]::ReadAttributes -bor
+    [Security.AccessControl.FileSystemRights]::ReadExtendedAttributes -bor
+    [Security.AccessControl.FileSystemRights]::ReadPermissions -bor
+    [Security.AccessControl.FileSystemRights]::ExecuteFile -bor
+    [Security.AccessControl.FileSystemRights]::Synchronize
+)
+$OWNER_ACL_ALLOWED_RIGHTS = $OWNER_ACL_WRITE_RIGHTS -bor $OWNER_ACL_READ_RIGHTS
 $EXTERNAL_PROBE_NAMES = @(
     'https_nginx',
     'oidc_discovery',
@@ -450,52 +481,277 @@ function Assert-ContainerHealthy {
     }
 }
 
+function ConvertTo-OwnerAclSid {
+    <#
+    .SYNOPSIS
+    将清单中的SID严格转换为SecurityIdentifier并返回规范值。
+    #>
+    param([Parameter(Mandatory = $true)][object]$Value)
+    $text = [string]$Value
+    if ($text -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') {
+        throw "Owner/ACL信任清单包含无效SID：$text"
+    }
+    try {
+        return ([Security.Principal.SecurityIdentifier]::new($text)).Value
+    }
+    catch {
+        throw "Owner/ACL信任清单SID无法解析：$text"
+    }
+}
+
+function Assert-NoOwnerAclReparsePath {
+    <#
+    .SYNOPSIS
+    验证目标路径及其已存在父目录不包含重解析点。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $current = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+    while ($null -ne $current) {
+        if (($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Owner/ACL信任对象不能位于重解析路径：$fullPath"
+        }
+        $parentPath = [IO.Path]::GetDirectoryName($current.FullName)
+        if ([String]::IsNullOrWhiteSpace($parentPath) -or
+            $parentPath -eq $current.FullName) {
+            break
+        }
+        if (-not (Test-Path -LiteralPath $parentPath)) { break }
+        $current = Get-Item -LiteralPath $parentPath -Force -ErrorAction Stop
+    }
+}
+
+function Get-OwnerAclManifestObject {
+    <#
+    .SYNOPSIS
+    从严格校验过的Owner/ACL信任清单取得对象声明。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Manifest,
+        [Parameter(Mandatory = $true)][string]$ObjectId
+    )
+    $matches = @($Manifest.objects | Where-Object { [string]$_.id -ceq $ObjectId })
+    if ($matches.Count -ne 1) {
+        throw "Owner/ACL信任清单缺少唯一对象声明：$ObjectId"
+    }
+    return $matches[0]
+}
+
+function Assert-OwnerAclObject {
+    <#
+    .SYNOPSIS
+    按SID、显式DACL和对象声明校验一个受保护文件或目录。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Manifest,
+        [Parameter(Mandatory = $true)][string]$ObjectId,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$ExpectedSha256 = '',
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+    $declaration = Get-OwnerAclManifestObject -Manifest $Manifest -ObjectId $ObjectId
+    $declaredPath = [IO.Path]::GetFullPath([string]$declaration.path)
+    $actualPath = [IO.Path]::GetFullPath($Path)
+    if ($declaredPath -ine $actualPath) {
+        throw "$Description路径与Owner/ACL信任清单不一致。"
+    }
+    if ([string]$declaration.kind -notin @('file', 'directory')) {
+        throw "$Description对象类型无效。"
+    }
+    if ([bool]$declaration.reparse_allowed) {
+        throw "$Description信任清单不得允许重解析点。"
+    }
+    if (-not [bool]$declaration.inheritance_protected) {
+        throw "$Description信任清单必须关闭ACL继承。"
+    }
+    if (-not (Test-Path -LiteralPath $actualPath)) {
+        throw "$Description不存在：$actualPath"
+    }
+    $item = Get-Item -LiteralPath $actualPath -Force
+    if (($declaration.kind -eq 'file' -and $item.PSIsContainer) -or
+        ($declaration.kind -eq 'directory' -and -not $item.PSIsContainer)) {
+        throw "$Description对象类型与实际路径不一致。"
+    }
+    Assert-NoOwnerAclReparsePath -Path $actualPath
+    if (-not [String]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        if ($ExpectedSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "$Description SHA-256必须是64位小写十六进制。"
+        }
+        if ([string]$declaration.content_sha256 -cne $ExpectedSha256 -or
+            (Get-Sha256 -Path $actualPath) -cne $ExpectedSha256) {
+            throw "$Description SHA-256不匹配。"
+        }
+    }
+    $ownerSections = [Security.AccessControl.AccessControlSections]::Owner -bor
+        [Security.AccessControl.AccessControlSections]::Access
+    $acl = if ($item.PSIsContainer) {
+        [IO.Directory]::GetAccessControl($actualPath, $ownerSections)
+    }
+    else {
+        [IO.File]::GetAccessControl($actualPath, $ownerSections)
+    }
+    if (-not $acl.AreAccessRulesProtected) {
+        throw "$Description ACL继承未关闭。"
+    }
+    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $ownerSids = @($declaration.owner_sids | ForEach-Object {
+        ConvertTo-OwnerAclSid -Value $_
+    })
+    if ($ownerSid -notin $ownerSids) {
+        throw "$Description所有者SID不在信任清单中：$ownerSid"
+    }
+    $readSids = @($declaration.allowed_read_sids | ForEach-Object {
+        ConvertTo-OwnerAclSid -Value $_
+    })
+    $writeSids = @($declaration.allowed_write_sids | ForEach-Object {
+        ConvertTo-OwnerAclSid -Value $_
+    })
+    $declaredSids = @($readSids + $writeSids | Sort-Object -Unique)
+    if ($readSids.Count -eq 0 -or $declaredSids.Count -eq 0) {
+        throw "$Description必须声明非空显式读权限集合。"
+    }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -eq 0) { throw "$Description缺少显式DACL。" }
+    foreach ($rule in $rules) {
+        $sid = ([Security.Principal.SecurityIdentifier]$rule.IdentityReference).Value
+        if ($rule.IsInherited -or
+            (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) -or
+            $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None) {
+            throw "$Description ACL包含继承或InheritOnly ACE：$sid"
+        }
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
+            throw "$Description ACL包含不受支持的拒绝ACE：$sid"
+        }
+        $rights = [long]$rule.FileSystemRights
+        if (($rights -band (-bnot $OWNER_ACL_ALLOWED_RIGHTS)) -ne 0) {
+            throw "$Description ACL包含超出允许掩码的权限：$sid"
+        }
+        $hasWrite = (($rights -band $OWNER_ACL_WRITE_RIGHTS) -ne 0)
+        $hasRead = (($rights -band $OWNER_ACL_READ_RIGHTS) -ne 0)
+        if ($sid -in $OWNER_ACL_BLOCKED_SIDS -and $hasWrite) {
+            throw "$Description ACL禁止宽泛主体写入：$sid"
+        }
+        if ($sid -notin $declaredSids) {
+            throw "$Description ACL包含未声明SID：$sid"
+        }
+        if ($hasWrite -and $sid -notin $writeSids) {
+            throw "$Description ACL写入SID未获对象授权：$sid"
+        }
+        if ($hasRead -and $sid -notin $readSids) {
+            throw "$Description ACL读取SID未获对象授权：$sid"
+        }
+    }
+    return $declaration
+}
+
+function Assert-OwnerAclTrustManifest {
+    <#
+    .SYNOPSIS
+    校验主机级Owner/ACL信任清单及部署执行SID。
+    #>
+    if ([String]::IsNullOrWhiteSpace($TrustManifestPath) -or
+        [String]::IsNullOrWhiteSpace($TrustManifestSha256)) {
+        throw '缺少显式Owner/ACL信任清单路径或SHA-256。'
+    }
+    if ($TrustManifestSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Owner/ACL信任清单SHA-256必须是64位小写十六进制。'
+    }
+    Assert-RequiredFile -Path $TrustManifestPath -Description 'Owner/ACL信任清单'
+    Assert-NoOwnerAclReparsePath -Path $TrustManifestPath
+    if ((Get-Sha256 -Path $TrustManifestPath) -cne $TrustManifestSha256) {
+        throw 'Owner/ACL信任清单SHA-256不匹配。'
+    }
+    try {
+        $manifest = Get-Content -LiteralPath $TrustManifestPath -Raw |
+            ConvertFrom-Json
+    }
+    catch {
+        throw 'Owner/ACL信任清单不是有效JSON对象。'
+    }
+    if ($manifest -isnot [pscustomobject]) {
+        throw 'Owner/ACL信任清单必须是JSON对象。'
+    }
+    $requiredFields = @(
+        'schema', 'policy_id', 'environment', 'deployment_identity_sid',
+        'probe_producer_identity_sid', 'objects', 'receipt_schema',
+        'probe_contract_id'
+    )
+    $fields = @($manifest.PSObject.Properties.Name)
+    if (@($requiredFields | Where-Object { $_ -notin $fields }).Count -gt 0 -or
+        @($fields | Where-Object { $_ -notin $requiredFields }).Count -gt 0) {
+        throw 'Owner/ACL信任清单字段集合不符合固定Schema。'
+    }
+    if ([string]$manifest.schema -cne $OWNER_ACL_TRUST_SCHEMA -or
+        [string]$manifest.policy_id -cne $OWNER_ACL_POLICY_ID -or
+        [string]$manifest.environment -cne 'production' -or
+        [string]$manifest.receipt_schema -cne 'iwork-external-probe-receipt/v3' -or
+        [string]$manifest.probe_contract_id -cne $EXTERNAL_PROBE_CONTRACT_ID) {
+        throw 'Owner/ACL信任清单Schema或策略标识不受支持。'
+    }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $deploymentSid = ConvertTo-OwnerAclSid -Value $manifest.deployment_identity_sid
+    if ($deploymentSid -cne $currentSid) {
+        throw "部署执行SID与Owner/ACL信任清单不一致：$currentSid"
+    }
+    $producerSid = ConvertTo-OwnerAclSid -Value $manifest.probe_producer_identity_sid
+    if ($producerSid -cne $currentSid) {
+        throw '外部探针生产者必须由清单声明的当前受控SID执行。'
+    }
+    $objects = @($manifest.objects)
+    if ($objects.Count -lt 5) { throw 'Owner/ACL信任清单对象声明不完整。' }
+    $objectIds = @($objects | ForEach-Object { [string]$_.id })
+    if (@($objectIds | Sort-Object -Unique).Count -ne $objects.Count) {
+        throw 'Owner/ACL信任清单对象ID重复。'
+    }
+    foreach ($object in $objects) {
+        $objectFields = @($object.PSObject.Properties.Name)
+        $expectedObjectFields = @(
+            'id', 'kind', 'path', 'content_sha256', 'owner_sids',
+            'allowed_read_sids', 'allowed_write_sids', 'inheritance_protected',
+            'reparse_allowed'
+        )
+        if (@($expectedObjectFields | Where-Object { $_ -notin $objectFields }).Count -gt 0 -or
+            @($objectFields | Where-Object { $_ -notin $expectedObjectFields }).Count -gt 0) {
+            throw "Owner/ACL对象字段集合无效：$($object.id)"
+        }
+        if (-not [IO.Path]::IsPathRooted([string]$object.path) -or
+            [string]$object.path -match '[*?]') {
+            throw "Owner/ACL对象路径必须是固定绝对路径：$($object.id)"
+        }
+        if ([string]$object.content_sha256 -ne '' -and
+            [string]$object.content_sha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "Owner/ACL对象内容SHA-256无效：$($object.id)"
+        }
+        foreach ($sid in @($object.owner_sids + $object.allowed_read_sids + $object.allowed_write_sids)) {
+            $normalizedSid = ConvertTo-OwnerAclSid -Value $sid
+            if ($normalizedSid -in $OWNER_ACL_BLOCKED_SIDS) {
+                throw "Owner/ACL对象禁止使用宽泛或管理员SID：$($object.id) / $normalizedSid"
+            }
+        }
+        if ([bool]$object.reparse_allowed -or -not [bool]$object.inheritance_protected) {
+            throw "Owner/ACL对象必须禁止重解析并关闭继承：$($object.id)"
+        }
+    }
+    foreach ($requiredId in @('probe-producer', 'probe-signing-secret', 'probe-receipt-directory', 'probe-receipt', 'probe-signature')) {
+        Get-OwnerAclManifestObject -Manifest $manifest -ObjectId $requiredId | Out-Null
+    }
+    return $manifest
+}
+
 function Assert-TrustedProbeFile {
     <#
     .SYNOPSIS
-    验证外部探针信任文件的固定哈希、所有者和写权限边界。
+    兼容旧调用签名，使用Owner/ACL信任清单验证外部探针文件。
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$ExpectedSha256,
-        [Parameter(Mandatory = $true)][string]$Description
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][object]$TrustManifest,
+        [Parameter(Mandatory = $true)][string]$ObjectId
     )
-    if ($ExpectedSha256 -notmatch '^[0-9a-f]{64}$') {
-        throw "$Description SHA-256必须是64位小写十六进制。"
-    }
-    Assert-RequiredFile -Path $Path -Description $Description
-    $item = Get-Item -LiteralPath $Path -Force
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "$Description不能是重解析文件。"
-    }
-    if ((Get-Sha256 -Path $Path) -cne $ExpectedSha256) {
-        throw "$Description SHA-256不匹配。"
-    }
-    if ([String]::IsNullOrWhiteSpace($ExternalProbeProducerExpectedIdentity)) {
-        throw '缺少外部探针生产者预期身份。'
-    }
-    $acl = [IO.File]::GetAccessControl(
-        [IO.Path]::GetFullPath($Path),
-        [Security.AccessControl.AccessControlSections]::Owner -bor
-            [Security.AccessControl.AccessControlSections]::Access
-    )
-    if ([string]$acl.Owner -ine $ExternalProbeProducerExpectedIdentity) {
-        throw "$Description所有者不是受信探针身份：$($acl.Owner)"
-    }
-    $broadIdentities = @(
-        'Everyone', 'BUILTIN\Users', 'NT AUTHORITY\Authenticated Users',
-        'S-1-1-0', 'S-1-5-11'
-    )
-    $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor
-        [Security.AccessControl.FileSystemRights]::Modify -bor
-        [Security.AccessControl.FileSystemRights]::FullControl
-    foreach ($rule in @($acl.GetAccessRules($true, $true, [Security.Principal.NTAccount]))) {
-        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            [string]$rule.IdentityReference -in $broadIdentities -and
-            (($rule.FileSystemRights -band $writeRights) -ne 0)) {
-            throw "$Description ACL允许非受信主体写入：$($rule.IdentityReference)"
-        }
-    }
+    Assert-OwnerAclObject -Manifest $TrustManifest -ObjectId $ObjectId `
+        -Path $Path -ExpectedSha256 $ExpectedSha256 -Description $Description | Out-Null
 }
 
 function Assert-ExternalProbeProducer {
@@ -503,17 +759,34 @@ function Assert-ExternalProbeProducer {
     .SYNOPSIS
     在候选切换前验证探针生产者和签名密钥文件的信任边界。
     #>
+    param([switch]$ValidateOnly)
     if ([String]::IsNullOrWhiteSpace($ExternalProbeProducerPath)) {
         throw '缺少受信外部探针生产者。'
+    }
+    Assert-RequiredFile -Path $ExternalProbeProducerPath -Description '外部探针生产者'
+    Assert-RequiredFile -Path $ExternalProbeSigningSecretFile -Description '外部探针签名密钥'
+    if ([String]::IsNullOrWhiteSpace($ExternalProbeReceiptPath)) {
+        throw '缺少外部探针六项收据路径。'
+    }
+    $trustManifest = Assert-OwnerAclTrustManifest
+    if (-not [String]::IsNullOrWhiteSpace($ExternalProbeProducerExpectedIdentity)) {
+        $legacyProducerSid = ([Security.Principal.NTAccount]::new(
+            $ExternalProbeProducerExpectedIdentity
+        ).Translate([Security.Principal.SecurityIdentifier])).Value
+        if ($legacyProducerSid -cne ([string]$trustManifest.probe_producer_identity_sid)) {
+            throw '旧版外部探针生产者身份参数与Owner/ACL信任清单不一致。'
+        }
     }
     Assert-TrustedProbeFile `
         -Path $ExternalProbeProducerPath `
         -ExpectedSha256 $ExternalProbeProducerSha256 `
-        -Description '外部探针生产者'
+        -Description '外部探针生产者' `
+        -TrustManifest $trustManifest -ObjectId 'probe-producer'
     Assert-TrustedProbeFile `
         -Path $ExternalProbeSigningSecretFile `
         -ExpectedSha256 $ExternalProbeSigningSecretSha256 `
-        -Description '外部探针签名密钥'
+        -Description '外部探针签名密钥' `
+        -TrustManifest $trustManifest -ObjectId 'probe-signing-secret'
     $receiptParent = [IO.Path]::GetDirectoryName(
         [IO.Path]::GetFullPath($ExternalProbeReceiptPath)
     )
@@ -524,30 +797,9 @@ function Assert-ExternalProbeProducer {
     if (($receiptParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw '外部探针收据目录不能是重解析点。'
     }
-    $receiptParentAcl = [IO.Directory]::GetAccessControl(
-        $receiptParent,
-        [Security.AccessControl.AccessControlSections]::Owner -bor
-            [Security.AccessControl.AccessControlSections]::Access
-    )
-    if ([string]$receiptParentAcl.Owner -ine $ExternalProbeProducerExpectedIdentity) {
-        throw '外部探针收据目录所有者不是受信探针身份。'
-    }
-    $broadIdentities = @(
-        'Everyone', 'BUILTIN\Users', 'NT AUTHORITY\Authenticated Users',
-        'S-1-1-0', 'S-1-5-11'
-    )
-    $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor
-        [Security.AccessControl.FileSystemRights]::Modify -bor
-        [Security.AccessControl.FileSystemRights]::FullControl
-    foreach ($rule in @($receiptParentAcl.GetAccessRules(
-        $true, $true, [Security.Principal.NTAccount]
-    ))) {
-        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            [string]$rule.IdentityReference -in $broadIdentities -and
-            (($rule.FileSystemRights -band $writeRights) -ne 0)) {
-            throw "外部探针收据目录ACL允许非受信主体写入：$($rule.IdentityReference)"
-        }
-    }
+    Assert-OwnerAclObject -Manifest $trustManifest -ObjectId 'probe-receipt-directory' `
+        -Path $receiptParent -Description '外部探针收据目录' | Out-Null
+    if ($ValidateOnly) { return }
     if (Test-Path -LiteralPath $ExternalProbeReceiptPath) {
         throw '外部探针收据在候选切换前已存在，拒绝复用或覆盖。'
     }
@@ -585,6 +837,7 @@ function Invoke-AndAssertExternalProbe {
         [Parameter(Mandatory = $true)][DateTimeOffset]$SwitchedAt,
         [Parameter(Mandatory = $true)][object[]]$CandidateContainers
     )
+    $trustManifest = Assert-OwnerAclTrustManifest
     if (-not [String]::IsNullOrWhiteSpace($ExternalProbeUri) -or
         -not [String]::IsNullOrWhiteSpace($ExternalProbeAuthorizationEnvVar)) {
         throw '外部探针URI模式已禁用，只接受受控主机生成的六项收据。'
@@ -615,6 +868,8 @@ function Invoke-AndAssertExternalProbe {
     }
     Write-JsonAtomic -Path $challengePath -Value $challenge
     try {
+        # 在创建者进程启动前再次复验固定文件、清单和收据目录，缩短TOCTOU窗口。
+        Assert-ExternalProbeProducer -ValidateOnly
         $powershellPath = Join-Path $env:SystemRoot `
             'System32\WindowsPowerShell\v1.0\powershell.exe'
         Assert-RequiredFile -Path $powershellPath -Description 'Windows PowerShell'
@@ -639,6 +894,10 @@ function Invoke-AndAssertExternalProbe {
         -not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) {
         throw '受信外部探针生产者没有生成完整收据和签名。'
     }
+    Assert-OwnerAclObject -Manifest $trustManifest -ObjectId 'probe-receipt' `
+        -Path $ExternalProbeReceiptPath -Description '外部探针六项收据' | Out-Null
+    Assert-OwnerAclObject -Manifest $trustManifest -ObjectId 'probe-signature' `
+        -Path $signaturePath -Description '外部探针六项签名' | Out-Null
     $receiptItem = Get-Item -LiteralPath $ExternalProbeReceiptPath -Force
     if (($receiptItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw '外部探针六项收据不能位于重解析文件。'
@@ -710,7 +969,18 @@ function Invoke-AndAssertExternalProbe {
     if ([string]$receipt.nonce -cne $nonce) {
         throw '外部探针六项收据一次性nonce不匹配。'
     }
-    if ([string]$receipt.producer_identity -ine $ExternalProbeProducerExpectedIdentity -or
+    $receiptProducerSid = $null
+    try {
+        $receiptProducerSid = ([Security.Principal.NTAccount]::new(
+            [string]$receipt.producer_identity
+        ).Translate([Security.Principal.SecurityIdentifier])).Value
+    }
+    catch {
+        throw '外部探针六项收据生产者身份无法解析为SID。'
+    }
+    if ($receiptProducerSid -cne ([string]$trustManifest.probe_producer_identity_sid) -or
+        (-not [String]::IsNullOrWhiteSpace($ExternalProbeProducerExpectedIdentity) -and
+         [string]$receipt.producer_identity -ine $ExternalProbeProducerExpectedIdentity) -or
         [string]$receipt.producer_sha256 -cne $ExternalProbeProducerSha256) {
         throw '外部探针六项收据生产者身份或哈希不匹配。'
     }
@@ -1174,6 +1444,9 @@ function Assert-PreflightInputs {
     Assert-WatchdogMechanism
     if ($Mode -eq 'Deploy') {
         Assert-ExternalProbeProducer
+    }
+    else {
+        Assert-ExternalProbeProducer -ValidateOnly
     }
 
     if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
