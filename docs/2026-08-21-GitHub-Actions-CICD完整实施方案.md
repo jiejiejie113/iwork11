@@ -1470,6 +1470,29 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
 夹具脚本使用UTF-8 BOM以兼容Windows PowerShell 5.1的系统代码页。生产校验器仍拒绝`S-1-5-32-544`，没有增加CI、Runner名称或管理员组放宽分支。
 本地阶段4测试已恢复为`60 passed`，尚未重新触发真实CI；真实CI通过前不得进入Release、生产准入或部署。
 
+## 14.5 2026-08-31 Hosted Runner动态探针输出Owner修复（待CI复验）
+
+快速验证触发的CI运行
+[`33377897618`](https://github.com/GuChenkano/iwork/actions/runs/33377897618)
+在“运行隔离测试”步骤失败（628通过、8失败）。8个失败用例均在候选切换前
+命中`S-1-5-32-544` Owner，未执行Release、准入更新或生产部署。根因不是生产校验器
+放宽不足，而是隔离测试的fake探针生产者在创建receipt和`.sig`后只重设DACL，未显式
+设置并回读Owner；Hosted Runner新文件默认Owner可能为Administrators。
+
+本轮修复限定在测试夹具：
+
+- fake探针生产者创建两个输出后执行`SetOwner`，异常或回读不匹配时使用数值SID调用
+  `icacls /setowner`，再按SID回读，仍不一致即失败关闭；脚本使用UTF-8 BOM兼容
+  Windows PowerShell 5.1。
+- 夹具生成的Owner/ACL信任清单也使用同一严格ACL设置；空目录集合不会再被解析为
+  非法路径。
+- 生产`Invoke-IworkProductionDeployment.ps1`继续拒绝Administrators Owner/写ACE，
+  没有增加Hosted/CI绕过或把管理员组加入信任清单。真实生产探针生产者仍必须遵循
+  Owner/ACL专项规范，在生成收据和签名后显式设置并验证Owner。
+
+本地阶段4完整测试、Ruff、PowerShell Parser和`git diff --check`均通过；该修复提交
+推送并重新通过真实CI后，才可恢复Release→生产准入→预检→部署链路。
+
 下一入口：先重新通过包含Owner/ACL切片的真实CI；
 再在独立的DTD_nginx机制提交中提交并安装与上述看门狗清单字节一致的受信文件，提供六项探针收据生产者和签名/来源证明；
 全部证据完成后才可按“提交→CI→Release→生产准入更新→apply=false预检→新确认→apply=true”顺序推进。

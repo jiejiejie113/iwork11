@@ -113,7 +113,9 @@ $ErrorActionPreference = 'Stop'
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $pathList = @($Paths -split '\|')
-$directorySet = @($DirectoryPaths -split '\|' | ForEach-Object { [IO.Path]::GetFullPath($_) })
+$directorySet = @($DirectoryPaths -split '\|' |
+    Where-Object { -not [String]::IsNullOrWhiteSpace($_) } |
+    ForEach-Object { [IO.Path]::GetFullPath($_) })
     foreach ($path in $pathList) {
         $fullPath = [IO.Path]::GetFullPath($path)
         $item = Get-Item -LiteralPath $fullPath -Force
@@ -1007,6 +1009,7 @@ $ErrorActionPreference = 'Stop'
 $Mutation = [string]$env:FAKE_PROBE_MUTATION
 $challenge = Get-Content -LiteralPath $ChallengePath -Raw | ConvertFrom-Json
 $template = Get-Content -LiteralPath $env:FAKE_PROBE_TEMPLATE -Raw | ConvertFrom-Json
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $template.nonce = $challenge.nonce
 $template.switched_at = $challenge.switched_at
@@ -1030,16 +1033,19 @@ $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
 $hmac = [Security.Cryptography.HMACSHA256]::new([IO.File]::ReadAllBytes($SigningSecretFile))
 try { $signature = $hmac.ComputeHash($bytes) } finally { $hmac.Dispose() }
 [IO.File]::WriteAllText($SignaturePath, ([Convert]::ToBase64String($signature) + "`n"), [Text.UTF8Encoding]::new($false))
-foreach ($outputPath in @($ReceiptPath, $SignaturePath)) {
-    $outputAcl = [IO.File]::GetAccessControl($outputPath)
+function Set-TestProbeOutputAcl {
+    param([string]$OutputPath)
+    $outputAcl = [IO.File]::GetAccessControl($OutputPath)
     $null = $outputAcl.SetAccessRuleProtection($true, $false)
+    $setOwnerError = $null
+    try { $outputAcl.SetOwner($currentSid) }
+    catch { $setOwnerError = $_ }
     foreach ($existingRule in @($outputAcl.Access)) {
         $null = $outputAcl.RemoveAccessRule($existingRule)
     }
     $none = [Security.AccessControl.InheritanceFlags]::None
     $noPropagation = [Security.AccessControl.PropagationFlags]::None
     $allow = [Security.AccessControl.AccessControlType]::Allow
-    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $null = $outputAcl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
         $currentSid, [Security.AccessControl.FileSystemRights]::Modify,
         $none, $noPropagation, $allow
@@ -1049,11 +1055,34 @@ foreach ($outputPath in @($ReceiptPath, $SignaturePath)) {
         [Security.AccessControl.FileSystemRights]::FullControl,
         $none, $noPropagation, $allow
     ))
-    [IO.File]::SetAccessControl($outputPath, $outputAcl)
+    [IO.File]::SetAccessControl($OutputPath, $outputAcl)
+    $owner = (Get-Item -LiteralPath $OutputPath -Force).
+        GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($null -ne $setOwnerError -or $owner -cne $currentSid.Value) {
+        $null = & "$env:SystemRoot\\System32\\icacls.exe" $OutputPath /setowner `
+            ("*" + $currentSid.Value) /C 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $detail = if ($null -ne $setOwnerError) {
+                $setOwnerError.Exception.Message
+            }
+            else { 'Owner回读不匹配' }
+            throw "icacls设置探针输出Owner失败：$OutputPath；$detail"
+        }
+        $owner = (Get-Item -LiteralPath $OutputPath -Force).
+            GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+    }
+    if ($owner -cne $currentSid.Value) {
+        throw "探针输出Owner校验失败：$owner"
+    }
+}
+foreach ($outputPath in @($ReceiptPath, $SignaturePath)) {
+    Set-TestProbeOutputAcl -OutputPath $outputPath
 }
 if ($Mutation -eq 'signature') { [IO.File]::WriteAllText($SignaturePath, ('AAAA' + "`n"), [Text.UTF8Encoding]::new($false)) }
 """,
-        encoding="utf-8",
+        # 生产者由Windows PowerShell 5.1执行，BOM确保新增中文错误信息不会被系统代码页
+        # 误解码并吞掉相邻的引号，避免把真正的Owner失败误报成脚本解析错误。
+        encoding="utf-8-sig",
     )
     external_probe_receipt_parent.mkdir(parents=True, exist_ok=True)
     owner_sid = _configure_isolated_acl(
@@ -1154,6 +1183,16 @@ if ($Mutation -eq 'signature') { [IO.File]::WriteAllText($SignaturePath, ('AAAA'
         encoding="utf-8",
         newline="\n",
     )
+    # 清单是在前面的探针对象之后才创建的，必须同样应用隔离的严格Owner/DACL。
+    # Hosted Runner 的临时父目录可能把新文件Owner设为Administrators；如果不在这里
+    # 显式修正，部署脚本会在第一个Owner/ACL对象校验处提前失败，掩盖真正的测试断言。
+    manifest_owner_sid = _configure_isolated_acl(
+        tmp_path,
+        [trust_manifest_path],
+        directory_paths=set(),
+    )
+    if manifest_owner_sid != identity_sid:
+        raise RuntimeError("Owner/ACL测试清单Owner与当前测试SID不一致。")
     trust_manifest_sha256 = hashlib.sha256(
         trust_manifest_path.read_bytes()
     ).hexdigest()
