@@ -6,6 +6,7 @@ param(
         'failed-log',
         'ci',
         'release',
+        'publish',
         'preflight',
         'deploy',
         'production-status',
@@ -23,6 +24,13 @@ param(
     [string]$ImageDigest,
     [string]$ConfigDigest,
     [string]$ConfigArtifactDigest,
+    [string]$ConfigArtifactId,
+    [string]$ConfigArtifactName,
+    [string]$ManifestArtifactId,
+    [string]$ManifestArtifactName,
+    [string]$ManifestArtifactDigest,
+    [string]$ReleaseRunId,
+    [string]$ReleaseRunAttempt,
     [string]$PreflightRunId,
     [ValidatePattern('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')]
     [string]$CiRequestId,
@@ -465,6 +473,13 @@ function ConvertTo-RunResult {
         [AllowNull()][object]$ImageDigest = $null,
         [AllowNull()][object]$ConfigDigest = $null,
         [AllowNull()][object]$ConfigArtifactDigest = $null,
+        [AllowNull()][object]$ConfigArtifactId = $null,
+        [AllowNull()][object]$ConfigArtifactName = $null,
+        [AllowNull()][object]$ManifestArtifactId = $null,
+        [AllowNull()][object]$ManifestArtifactName = $null,
+        [AllowNull()][object]$ManifestArtifactDigest = $null,
+        [AllowNull()][object]$ReleaseRunId = $null,
+        [AllowNull()][object]$ReleaseRunAttempt = $null,
         [AllowNull()][object]$RequestId = $null
     )
 
@@ -511,6 +526,13 @@ function ConvertTo-RunResult {
         ImageDigest = $ImageDigest
         ConfigDigest = $ConfigDigest
         ConfigArtifactDigest = $ConfigArtifactDigest
+        ConfigArtifactId = $ConfigArtifactId
+        ConfigArtifactName = $ConfigArtifactName
+        ManifestArtifactId = $ManifestArtifactId
+        ManifestArtifactName = $ManifestArtifactName
+        ManifestArtifactDigest = $ManifestArtifactDigest
+        ReleaseRunId = $ReleaseRunId
+        ReleaseRunAttempt = $ReleaseRunAttempt
         RequestId = $resolvedRequestId
         RunName = [string]$Run.displayTitle
         DurationSeconds = Get-RunDurationSeconds -Run $Run
@@ -529,13 +551,29 @@ function Assert-SuccessfulWorkflowForRevision {
         [AllowNull()][string]$ExpectedRequestId
     )
 
+    $normalizedExpectedRequestId = if ([String]::IsNullOrWhiteSpace($ExpectedRequestId)) {
+        $null
+    }
+    else {
+        Resolve-IworkRequestId -Candidate $ExpectedRequestId
+    }
     $successful = @(Get-WorkflowRuns -ServiceName $ServiceName -Workflow $Workflow -Count 50 | Where-Object {
+        $runRequestId = $null
+        if ($ServiceName -eq 'iwork') {
+            $requestMatch = [Regex]::Match(
+                [string]$_.displayTitle,
+                '(?i)(?<request>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+            )
+            if ($requestMatch.Success) {
+                $runRequestId = $requestMatch.Groups['request'].Value.ToLowerInvariant()
+            }
+        }
         $_.headSha -ceq $ExpectedRevision -and
         $_.status -eq 'completed' -and
         $_.conclusion -eq 'success' -and
         (-not $RequireWorkflowDispatch -or $_.event -eq 'workflow_dispatch') -and
-        ([String]::IsNullOrWhiteSpace($ExpectedRequestId) -or
-            ([string]$_.displayTitle).Contains($ExpectedRequestId))
+        ($null -eq $normalizedExpectedRequestId -or
+            $runRequestId -ceq $normalizedExpectedRequestId)
     })
     if ($successful.Count -eq 0) {
         $eventRequirement = if ($RequireWorkflowDispatch) {
@@ -546,12 +584,14 @@ function Assert-SuccessfulWorkflowForRevision {
         }
         throw "没有找到同一 Commit 的成功$eventRequirement $Description，已停止触发。"
     }
-    if (
-        $ServiceName -eq 'iwork' -and
-        [String]::IsNullOrWhiteSpace($ExpectedRequestId) -and
-        $successful.Count -gt 1
-    ) {
-        throw "同一 Commit 存在多个成功$Description，缺少唯一request_id，已停止关联。"
+    if ($ServiceName -eq 'iwork' -and $successful.Count -ne 1) {
+        $reason = if ([String]::IsNullOrWhiteSpace($ExpectedRequestId)) {
+            '缺少唯一request_id'
+        }
+        else {
+            "request_id=$normalizedExpectedRequestId 匹配不唯一"
+        }
+        throw "同一 Commit 存在多个成功${Description}或$reason，已停止关联。"
     }
     return $successful[0]
 }
@@ -587,14 +627,23 @@ function Wait-ForNewWorkflowRun {
     )
 
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($RUN_DISCOVERY_TIMEOUT_SECONDS)
+    $requestIdPattern = if ([String]::IsNullOrWhiteSpace($RequestId)) {
+        $null
+    }
+    else {
+        [Regex]::Escape($RequestId)
+    }
     while ($true) {
         $candidates = @(Get-WorkflowRuns -ServiceName $ServiceName -Workflow $Workflow -Count 20 | Where-Object {
             $_.headSha -ceq $ExpectedRevision -and
             $_.event -eq 'workflow_dispatch' -and
             [long]$_.databaseId -notin $PreviousRunIds -and
             [DateTimeOffset]::Parse([string]$_.createdAt) -ge $DispatchStartedAt.AddSeconds(-2) -and
-            ([String]::IsNullOrWhiteSpace($RequestId) -or
-                ([string]$_.displayTitle).Contains($RequestId))
+            ($null -eq $requestIdPattern -or
+                [Regex]::IsMatch(
+                    [string]$_.displayTitle,
+                    "(?i)(?<![0-9a-f])$requestIdPattern(?![0-9a-f])"
+                ))
         } | Sort-Object -Property createdAt -Descending)
         if ($candidates.Count -gt 1) {
             throw '发现多个同一 Commit 的并发 workflow_dispatch Run，无法安全关联本次触发。请人工核对现有 Run，禁止重复触发。'
@@ -607,8 +656,11 @@ function Wait-ForNewWorkflowRun {
                     $_.event -eq 'workflow_dispatch' -and
                     [long]$_.databaseId -notin $PreviousRunIds -and
                     [DateTimeOffset]::Parse([string]$_.createdAt) -ge $DispatchStartedAt.AddSeconds(-2) -and
-                    ([String]::IsNullOrWhiteSpace($RequestId) -or
-                        ([string]$_.displayTitle).Contains($RequestId))
+                    ($null -eq $requestIdPattern -or
+                        [Regex]::IsMatch(
+                            [string]$_.displayTitle,
+                            "(?i)(?<![0-9a-f])$requestIdPattern(?![0-9a-f])"
+                        ))
                 })
                 if ($settledCandidates.Count -ne 1) {
                     throw 'Run 发现稳定窗口内出现并发歧义，无法安全关联本次触发。请人工核对现有 Run，禁止重复触发。'
@@ -634,8 +686,11 @@ function Wait-ForNewWorkflowRun {
         $_.event -eq 'workflow_dispatch' -and
         [long]$_.databaseId -notin $PreviousRunIds -and
         [DateTimeOffset]::Parse([string]$_.createdAt) -ge $DispatchStartedAt.AddSeconds(-2) -and
-        ([String]::IsNullOrWhiteSpace($RequestId) -or
-            ([string]$_.displayTitle).Contains($RequestId))
+        ($null -eq $requestIdPattern -or
+            [Regex]::IsMatch(
+                [string]$_.displayTitle,
+                "(?i)(?<![0-9a-f])$requestIdPattern(?![0-9a-f])"
+            ))
     } | Sort-Object -Property createdAt -Descending)
     if ($finalCandidates.Count -gt 1) {
         throw '发现多个同一 Commit 的并发 workflow_dispatch Run，无法安全关联本次触发。请人工核对现有 Run，禁止重复触发。'
@@ -652,7 +707,8 @@ function Get-RunEvidence {
         [Parameter(Mandatory = $true)][string]$ServiceName,
         [Parameter(Mandatory = $true)][long]$Id,
         [switch]$RequireConfigDigest,
-        [switch]$RequireConfigArtifactDigest
+        [switch]$RequireConfigArtifactDigest,
+        [switch]$RequireReleaseManifest
     )
 
     $config = $SERVICE_CONFIG[$ServiceName]
@@ -704,6 +760,41 @@ function Get-RunEvidence {
         ) {
             throw "iwork Run 日志中的 ConfigArtifactDigest 必须唯一且完整，实际：$($configArtifactDigests.Count)"
         }
+        $configArtifactIdMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_CONFIG_ARTIFACT_ID\s*=\s*(?<value>[0-9]+)'
+        )
+        $configArtifactIds = @($configArtifactIdMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $configArtifactNameMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_CONFIG_ARTIFACT_NAME\s*=\s*(?<value>iwork-production-config-[0-9a-f]{40})'
+        )
+        $configArtifactNames = @($configArtifactNameMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $manifestArtifactIdMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_RELEASE_MANIFEST_ARTIFACT_ID\s*=\s*(?<value>[0-9]+)'
+        )
+        $manifestArtifactIds = @($manifestArtifactIdMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $manifestArtifactDigestMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_RELEASE_MANIFEST_ARTIFACT_DIGEST\s*=\s*(?<value>sha256:[0-9a-f]{64})'
+        )
+        $manifestArtifactDigests = @($manifestArtifactDigestMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $manifestArtifactNameMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_RELEASE_MANIFEST_ARTIFACT_NAME\s*=\s*(?<value>iwork-release-manifest-[0-9a-f]{40})'
+        )
+        $manifestArtifactNames = @($manifestArtifactNameMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        if (
+            $RequireReleaseManifest -and
+            ($configArtifactIds.Count -ne 1 -or
+             $configArtifactNames.Count -ne 1 -or
+             $manifestArtifactIds.Count -ne 1 -or
+             $manifestArtifactDigests.Count -ne 1 -or
+             $manifestArtifactNames.Count -ne 1)
+        ) {
+            throw 'iwork Release日志必须提供唯一完整的配置Artifact和Release Manifest元数据。'
+        }
         return [ordered]@{
             Digests = @($digests)
             ImageDigest = $digests[0]
@@ -714,6 +805,11 @@ function Get-RunEvidence {
             else {
                 $null
             }
+            ConfigArtifactId = if ($configArtifactIds.Count -eq 1) { [long]$configArtifactIds[0] } else { $null }
+            ConfigArtifactName = if ($configArtifactNames.Count -eq 1) { $configArtifactNames[0] } else { $null }
+            ManifestArtifactId = if ($manifestArtifactIds.Count -eq 1) { [long]$manifestArtifactIds[0] } else { $null }
+            ManifestArtifactName = if ($manifestArtifactNames.Count -eq 1) { $manifestArtifactNames[0] } else { $null }
+            ManifestArtifactDigest = if ($manifestArtifactDigests.Count -eq 1) { $manifestArtifactDigests[0] } else { $null }
         }
     }
 
@@ -738,6 +834,11 @@ function Get-RunEvidence {
         ImageDigest = $null
         ConfigDigest = $null
         ConfigArtifactDigest = $null
+        ConfigArtifactId = $null
+        ConfigArtifactName = $null
+        ManifestArtifactId = $null
+        ManifestArtifactName = $null
+        ManifestArtifactDigest = $null
     }
 }
 
@@ -806,7 +907,8 @@ function Invoke-WorkflowDispatch {
         [Parameter(Mandatory = $true)][string]$Workflow,
         [Parameter(Mandatory = $true)][string]$ExpectedRevision,
         [hashtable]$Inputs = @{},
-        [AllowNull()][string]$RequestIdOverride
+        [AllowNull()][string]$RequestIdOverride,
+        [switch]$WaitForCompletion
     )
 
     $config = $SERVICE_CONFIG[$ServiceName]
@@ -868,7 +970,7 @@ function Invoke-WorkflowDispatch {
     }
 
     $watchExitCode = 0
-    if ($Wait) {
+    if ($Wait -or $WaitForCompletion) {
         $watchResult = Invoke-GhCommand -Arguments @(
             'run', 'watch', [string]$run.databaseId,
             '--repo', $config.Repository,
@@ -950,7 +1052,8 @@ try {
                         -ServiceName $serviceName `
                         -Id ([long]$run.databaseId) `
                         -RequireConfigDigest:($serviceName -eq 'iwork') `
-                        -RequireConfigArtifactDigest:($serviceName -eq 'iwork')
+                        -RequireConfigArtifactDigest:($serviceName -eq 'iwork') `
+                        -RequireReleaseManifest:($serviceName -eq 'iwork')
                 }
                 else {
                     [ordered]@{
@@ -958,6 +1061,11 @@ try {
                         ImageDigest = $null
                         ConfigDigest = $null
                         ConfigArtifactDigest = $null
+                        ConfigArtifactId = $null
+                        ConfigArtifactName = $null
+                        ManifestArtifactId = $null
+                        ManifestArtifactName = $null
+                        ManifestArtifactDigest = $null
                     }
                 }
                 $result += ConvertTo-RunResult `
@@ -966,7 +1074,12 @@ try {
                     -Digests $evidence.Digests `
                     -ImageDigest $evidence.ImageDigest `
                     -ConfigDigest $evidence.ConfigDigest `
-                    -ConfigArtifactDigest $evidence.ConfigArtifactDigest
+                    -ConfigArtifactDigest $evidence.ConfigArtifactDigest `
+                    -ConfigArtifactId $evidence.ConfigArtifactId `
+                    -ConfigArtifactName $evidence.ConfigArtifactName `
+                    -ManifestArtifactId $evidence.ManifestArtifactId `
+                    -ManifestArtifactName $evidence.ManifestArtifactName `
+                    -ManifestArtifactDigest $evidence.ManifestArtifactDigest
             }
         }
         Complete-Result -Value $result
@@ -1013,6 +1126,11 @@ try {
                         ImageDigest = $null
                         ConfigDigest = $null
                         ConfigArtifactDigest = $null
+                        ConfigArtifactId = $null
+                        ConfigArtifactName = $null
+                        ManifestArtifactId = $null
+                        ManifestArtifactName = $null
+                        ManifestArtifactDigest = $null
                 }
             }
             $runs += ConvertTo-RunResult `
@@ -1044,7 +1162,99 @@ try {
                 -RequestId $dispatchResult.RequestId)
     }
 
+    if ($Action -eq 'publish') {
+        if ($Service -ne 'iwork') {
+            throw 'publish 只支持 iwork；Portal 必须分别执行 ci/release。'
+        }
+
+        # publish 是一次新的 CI 到 Release 编排，CI request_id 不复用历史值。
+        $ciRequestId = Resolve-IworkRequestId -Candidate $null
+        $ciDispatch = Invoke-WorkflowDispatch `
+            -ServiceName $Service `
+            -Workflow $config.CiWorkflow `
+            -ExpectedRevision $resolvedRevision `
+            -RequestIdOverride $ciRequestId `
+            -WaitForCompletion
+        if (
+            $ciDispatch.WatchExitCode -ne 0 -or
+            $ciDispatch.Run.status -ne 'completed' -or
+            $ciDispatch.Run.conclusion -ne 'success'
+        ) {
+            throw "本次 CI 未成功（Run $($ciDispatch.Run.databaseId)-$($ciDispatch.Run.attempt)，状态：$($ciDispatch.Run.status)，结论：$($ciDispatch.Run.conclusion)），已停止触发 Release。"
+        }
+        $ciRun = Assert-SuccessfulWorkflowForRevision `
+            -ServiceName $Service `
+            -Workflow $config.CiWorkflow `
+            -ExpectedRevision $resolvedRevision `
+            -Description '纯 CI' `
+            -RequireWorkflowDispatch `
+            -ExpectedRequestId $ciRequestId
+        $ciRun = Get-RunDetails -ServiceName $Service -Id ([long]$ciRun.databaseId)
+        $ciRequestId = Get-IworkRequestIdFromRun -Run $ciRun
+        $releaseInputs = @{ ci_request_id = $ciRequestId }
+        # publish 只强制等待本次 CI；Release 是否等待由用户的 -Wait 控制。
+        $releaseDispatch = Invoke-WorkflowDispatch `
+            -ServiceName $Service `
+            -Workflow $config.ReleaseWorkflow `
+            -ExpectedRevision $resolvedRevision `
+            -Inputs $releaseInputs
+        $releaseEvidence = if (
+            $releaseDispatch.Run.status -eq 'completed' -and
+            $releaseDispatch.Run.conclusion -eq 'success'
+        ) {
+            Get-RunEvidence `
+                -ServiceName $Service `
+                -Id ([long]$releaseDispatch.Run.databaseId) `
+                -RequireConfigDigest `
+                -RequireConfigArtifactDigest `
+                -RequireReleaseManifest
+        }
+        else {
+            [ordered]@{
+                Digests = @()
+                ImageDigest = $null
+                ConfigDigest = $null
+                ConfigArtifactDigest = $null
+                ConfigArtifactId = $null
+                ConfigArtifactName = $null
+                ManifestArtifactId = $null
+                ManifestArtifactName = $null
+                ManifestArtifactDigest = $null
+            }
+        }
+        $releaseRequestId = $releaseDispatch.RequestId
+        Complete-Result `
+            -ExitCode (Get-DispatchExitCode -DispatchResult $releaseDispatch) `
+            -Value ([ordered]@{
+                Action = 'publish'
+                CiRequestId = $ciRequestId
+                ReleaseRequestId = $releaseRequestId
+                Ci = ConvertTo-RunResult `
+                    -ServiceName $Service `
+                    -Run $ciRun `
+                    -RequestId $ciRequestId
+                Release = ConvertTo-RunResult `
+                    -ServiceName $Service `
+                    -Run $releaseDispatch.Run `
+                    -Digests $releaseEvidence.Digests `
+                    -ImageDigest $releaseEvidence.ImageDigest `
+                    -ConfigDigest $releaseEvidence.ConfigDigest `
+                    -ConfigArtifactDigest $releaseEvidence.ConfigArtifactDigest `
+                    -ConfigArtifactId $releaseEvidence.ConfigArtifactId `
+                    -ConfigArtifactName $releaseEvidence.ConfigArtifactName `
+                    -ManifestArtifactId $releaseEvidence.ManifestArtifactId `
+                    -ManifestArtifactName $releaseEvidence.ManifestArtifactName `
+                    -ManifestArtifactDigest $releaseEvidence.ManifestArtifactDigest `
+                    -ReleaseRunId $releaseDispatch.Run.databaseId `
+                    -ReleaseRunAttempt $releaseDispatch.Run.attempt `
+                    -RequestId $releaseRequestId
+            })
+    }
+
     if ($Action -eq 'release') {
+        if ($Service -eq 'iwork' -and [String]::IsNullOrWhiteSpace($CiRequestId)) {
+            throw 'iwork release 必须提供明确的成功 CI request_id（-CiRequestId），禁止猜测最新 CI。'
+        }
         $ciRun = Assert-SuccessfulWorkflowForRevision `
             -ServiceName $Service `
             -Workflow $config.CiWorkflow `
@@ -1066,7 +1276,8 @@ try {
                 -ServiceName $Service `
                 -Id ([long]$dispatchResult.Run.databaseId) `
                 -RequireConfigDigest:($Service -eq 'iwork') `
-                -RequireConfigArtifactDigest:($Service -eq 'iwork')
+                -RequireConfigArtifactDigest:($Service -eq 'iwork') `
+                -RequireReleaseManifest:($Service -eq 'iwork')
         }
         else {
             [ordered]@{
@@ -1074,6 +1285,11 @@ try {
                 ImageDigest = $null
                 ConfigDigest = $null
                 ConfigArtifactDigest = $null
+                ConfigArtifactId = $null
+                ConfigArtifactName = $null
+                ManifestArtifactId = $null
+                ManifestArtifactName = $null
+                ManifestArtifactDigest = $null
             }
         }
         Complete-Result `
@@ -1082,14 +1298,24 @@ try {
                 -ServiceName $Service `
                 -Run $dispatchResult.Run `
                 -Digests $evidence.Digests `
-            -ImageDigest $evidence.ImageDigest `
-            -ConfigDigest $evidence.ConfigDigest `
-            -ConfigArtifactDigest $evidence.ConfigArtifactDigest `
-            -RequestId $dispatchResult.RequestId)
+                -ImageDigest $evidence.ImageDigest `
+                -ConfigDigest $evidence.ConfigDigest `
+                -ConfigArtifactDigest $evidence.ConfigArtifactDigest `
+                -ConfigArtifactId $evidence.ConfigArtifactId `
+                -ConfigArtifactName $evidence.ConfigArtifactName `
+                -ManifestArtifactId $evidence.ManifestArtifactId `
+                -ManifestArtifactName $evidence.ManifestArtifactName `
+                -ManifestArtifactDigest $evidence.ManifestArtifactDigest `
+                -ReleaseRunId $dispatchResult.Run.databaseId `
+                -ReleaseRunAttempt $dispatchResult.Run.attempt `
+                -RequestId $dispatchResult.RequestId)
     }
 
     if ($Action -notin @('preflight', 'deploy')) {
         throw "不支持的动作：$Action"
+    }
+    if ($Service -eq 'iwork' -and [String]::IsNullOrWhiteSpace($ReleaseRequestId)) {
+        throw 'iwork preflight/deploy 必须提供明确的成功 Release request_id（-ReleaseRequestId），禁止猜测最新 Release。'
     }
     if ([String]::IsNullOrWhiteSpace($ChangeDescription)) {
         throw 'preflight/deploy 必须提供非空 -ChangeDescription。'
@@ -1162,11 +1388,33 @@ try {
         if ($ConfigArtifactDigest -cnotmatch $DIGEST_PATTERN) {
             throw 'iwork 必须提供有效的 -ConfigArtifactDigest。'
         }
+        if ($ReleaseRunId -notmatch '^[0-9]+$') {
+            throw 'iwork 必须提供明确的 Release Run ID。'
+        }
+        if ($ReleaseRunAttempt -notmatch '^[1-9][0-9]*$') {
+            throw 'iwork 必须提供明确的 Release Run attempt。'
+        }
+        if ($ConfigArtifactId -notmatch '^[0-9]+$') {
+            throw 'iwork 必须提供明确的 Config Artifact ID。'
+        }
+        if ($ConfigArtifactName -cne "iwork-production-config-$resolvedRevision") {
+            throw 'iwork Config Artifact 名称必须绑定当前 Commit。'
+        }
+        if ($ManifestArtifactId -notmatch '^[0-9]+$') {
+            throw 'iwork 必须提供明确的 Manifest Artifact ID。'
+        }
+        if ($ManifestArtifactName -cne "iwork-release-manifest-$resolvedRevision") {
+            throw 'iwork Manifest Artifact 名称必须绑定当前 Commit。'
+        }
+        if ($ManifestArtifactDigest -cnotmatch $DIGEST_PATTERN) {
+            throw 'iwork 必须提供有效的 Manifest Artifact Digest。'
+        }
         $publishedEvidence = Get-RunEvidence `
             -ServiceName $Service `
             -Id ([long]$releaseRun.databaseId) `
             -RequireConfigDigest `
-            -RequireConfigArtifactDigest
+            -RequireConfigArtifactDigest `
+            -RequireReleaseManifest
         $publishedDigests = @($publishedEvidence.Digests)
         if ($publishedDigests.Count -ne 1 -or $publishedDigests[0] -cne $ImageDigest) {
             throw 'iwork 输入 Digest 与同一 Commit 的成功 GHCR 发布产物不一致，已停止触发。'
@@ -1177,9 +1425,26 @@ try {
         if ($publishedEvidence.ConfigArtifactDigest -cne $ConfigArtifactDigest) {
             throw 'iwork 输入 ConfigArtifactDigest 与同一 Commit 的成功配置发布产物不一致，已停止触发。'
         }
+        if (
+            [long]$releaseRun.databaseId -ne [long]$ReleaseRunId -or
+            [int]$releaseRun.attempt -ne [int]$ReleaseRunAttempt -or
+            [long]$publishedEvidence.ConfigArtifactId -ne [long]$ConfigArtifactId -or
+            [string]$publishedEvidence.ConfigArtifactName -cne $ConfigArtifactName -or
+            [long]$publishedEvidence.ManifestArtifactId -ne [long]$ManifestArtifactId -or
+            [string]$publishedEvidence.ManifestArtifactName -cne $ManifestArtifactName -or
+            [string]$publishedEvidence.ManifestArtifactDigest -cne $ManifestArtifactDigest
+        ) {
+            throw 'iwork Release Run 或两类 Artifact 元数据与当前输入不一致，已停止触发。'
+        }
         $preview['ImageDigest'] = $ImageDigest
         $preview['ConfigDigest'] = $ConfigDigest
         $preview['ConfigArtifactDigest'] = $ConfigArtifactDigest
+        $preview['ReleaseRunId'] = "$ReleaseRunId-$ReleaseRunAttempt"
+        $preview['ConfigArtifactId'] = [long]$ConfigArtifactId
+        $preview['ConfigArtifactName'] = $ConfigArtifactName
+        $preview['ManifestArtifactId'] = [long]$ManifestArtifactId
+        $preview['ManifestArtifactName'] = $ManifestArtifactName
+        $preview['ManifestArtifactDigest'] = $ManifestArtifactDigest
         $preflightBinding = $null
         if ($Action -eq 'deploy') {
             $preflightBinding = Assert-SuccessfulPreflight `
@@ -1196,6 +1461,13 @@ try {
             image_digest = $ImageDigest
             config_digest = $ConfigDigest
             config_artifact_digest = $ConfigArtifactDigest
+            release_run_id = $ReleaseRunId
+            release_run_attempt = $ReleaseRunAttempt
+            config_artifact_id = $ConfigArtifactId
+            config_artifact_name = $ConfigArtifactName
+            manifest_artifact_id = $ManifestArtifactId
+            manifest_artifact_name = $ManifestArtifactName
+            manifest_artifact_digest = $ManifestArtifactDigest
             release_request_id = $releaseRequestId
             expected_revision = $resolvedRevision
             apply = if ($Action -eq 'deploy') { 'true' } else { 'false' }
@@ -1304,6 +1576,13 @@ try {
             -Digests $digests `
             -ConfigDigest $(if ($Service -eq 'iwork') { $ConfigDigest } else { $null }) `
             -ConfigArtifactDigest $(if ($Service -eq 'iwork') { $ConfigArtifactDigest } else { $null }) `
+            -ConfigArtifactId $(if ($Service -eq 'iwork') { $ConfigArtifactId } else { $null }) `
+            -ConfigArtifactName $(if ($Service -eq 'iwork') { $ConfigArtifactName } else { $null }) `
+            -ManifestArtifactId $(if ($Service -eq 'iwork') { $ManifestArtifactId } else { $null }) `
+            -ManifestArtifactName $(if ($Service -eq 'iwork') { $ManifestArtifactName } else { $null }) `
+            -ManifestArtifactDigest $(if ($Service -eq 'iwork') { $ManifestArtifactDigest } else { $null }) `
+            -ReleaseRunId $(if ($Service -eq 'iwork') { $ReleaseRunId } else { $null }) `
+            -ReleaseRunAttempt $(if ($Service -eq 'iwork') { $ReleaseRunAttempt } else { $null }) `
             -RequestId $dispatchResult.RequestId
     })
 }

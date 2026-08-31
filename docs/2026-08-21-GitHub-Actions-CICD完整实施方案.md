@@ -1380,9 +1380,11 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 - 业务探针：HTTPS健康端点`204`；容器内应用根路径`200`；实时API`200 application/json`；SSE`200 text/event-stream`。外部未带用户会话的实时API/SSE返回`401`，符合认证预期。部署后最近10分钟iwork/worker日志未发现错误或连接失败。
 - 收尾：部署锁、维护标记、候选/回滚运行容器均不存在；历史`.candidate.yml/.rollback.yml`仅作为审计留存。未执行数据库迁移、Redis清理、Keycloak/共享卷/网络/Nginx重建。
 - 当前状态：阶段8仍为“进行中”，原因仅为24小时稳定观察尚未完成；真实账号浏览器验收按用户决定作为风险豁免，不宣称实际通过。
-## 14.3 2026-08-31 阶段8后续改造方案审查与修订（设计未实施）
-用户提出的《2026-08-31-iwork-CICD最终修改方案》已完成只读审查和修订；该文件是阶段8后的改造设计，不是新的进度基线。
-本轮未修改业务代码、Workflow或服务器，未触发新的Actions或生产部署；阶段8仍保持进行中。
+## 14.3 2026-08-31 阶段8后续改造实施（本地已验证，外部未执行）
+
+用户提出的《2026-08-31-iwork-CICD最终修改方案》作为设计入口，进度仍以本总方案为唯一基线。
+本轮在工作树实现了部分切片并完成隔离验证；尚未推送本轮Commit、未配置生产签名材料、未更新
+生产Runner准入，也未触发新的Actions或生产部署，因此阶段8继续保持“进行中”。
 
 设计稿已按审查结论明确：
 - 完整 CI 与无生产权限的轻量 PR/Push 检查分离；切换触发器必须在 Skill 编排验证完成后最后执行。
@@ -1393,6 +1395,21 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 - 外部 HTTPS/OIDC/SSE/业务探针先 observe-only 建基线，再按候选故障与共享依赖故障分级；证书校验不得绕过。
 - 迁移必须有 migration_policy_id 和机器可验证兼容性证据；无证据时不允许自动应用回滚；手工回滚仅限历史实际 deployed 且未撤销版本。
 - 目标准入模型为机制指纹，ApprovedHeadSha 仅为迁移期补偿；临时凭据和配置目录清理失败必须形成告警收据。
+- Manifest本体不包含自身Artifact ID/Digest，避免自引用；配置Artifact与Manifest Artifact分离，上传后
+  的外部ID/Digest由指定Release Run与Artifact API元数据绑定。Deploy会下载两个原始ZIP并重新计算SHA-256，
+  再校验解压内容、Manifest签名和配置文件哈希。
+- RSA `RSASSA-PKCS1-v1_5-SHA256` 签名已作为强制Release/Deploy门禁；签名私钥只来自GitHub Secret，
+  验证证书和Key ID来自受保护配置，缺失、轮换不一致或验证失败均失败关闭。
+- 正式`apply=true`只允许Workflow `run_attempt=1`；重跑不得复用确认或request_id，必须重新生成预览/确认。
+- 服务器固定脚本使用不可覆盖的`request-consumption`收据绑定预检和正式部署；阶段4夹具已同步该收据，
+  防止直接触发或换Run重放同一request_id。
 
-当前只读证据：设计稿仍是未跟踪文件；文档提交触发的 CI Run 33158352848 为 completed/success，约350秒。
-后续执行必须从设计稿第12节切片开始，并在每个切片同一提交中回写本总方案；任何切片失败停止分析，不得以旧证据重试绕过。
+当前本地证据：`tests/test_ci_workflow.py`、`tests/test_production_config_bundle.py`、
+`tests/test_production_deployment_stage4.py`组合测试`68 passed`，`dkt-cicd`离线验收为`133`个断言通过；
+20个PowerShell脚本/模块解析和`git diff --check`通过。完整CI已从Push/PR完整触发和临时Docker构建切换为仅
+`workflow_dispatch`，PR由无生产权限的`ci-pr.yml`提供轻量反馈。
+
+下一入口按设计稿第12节：完成最终全套本地门禁与Skill安装副本哈希复验；由管理员安全配置三项
+Manifest签名材料；在Runner空闲维护窗口安装并复验固定部署机制；之后才允许推送、真实CI/Release、
+`apply=false`预检和用户新确认后的正式Deploy。任一新失败立即停止并回写本总方案，不得复用旧Commit、
+旧Release或旧预检证据。

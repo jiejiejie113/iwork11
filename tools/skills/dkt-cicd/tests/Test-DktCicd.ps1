@@ -11,6 +11,23 @@ $revision = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 $imageDigest = 'sha256:' + ('1' * 64)
 $configDigest = 'sha256:' + ('5' * 64)
 $configArtifactDigest = 'sha256:' + ('7' * 64)
+$configArtifactId = '301'
+$configArtifactName = 'iwork-production-config-' + $revision
+$manifestArtifactId = '401'
+$manifestArtifactName = 'iwork-release-manifest-' + $revision
+$manifestArtifactDigest = 'sha256:' + ('8' * 64)
+$ciRequestId = '11111111-2222-3333-4444-555555555555'
+$releaseRequestId = '66666666-7777-8888-9999-aaaaaaaaaaaa'
+$releaseEvidenceArguments = @(
+    '-ReleaseRequestId', $releaseRequestId,
+    '-ReleaseRunId', '102',
+    '-ReleaseRunAttempt', '1',
+    '-ConfigArtifactId', $configArtifactId,
+    '-ConfigArtifactName', $configArtifactName,
+    '-ManifestArtifactId', $manifestArtifactId,
+    '-ManifestArtifactName', $manifestArtifactName,
+    '-ManifestArtifactDigest', $manifestArtifactDigest
+)
 $portalDigest = 'sha256:' + ('2' * 64)
 $proxyDigest = 'sha256:' + ('3' * 64)
 $script:passed = 0
@@ -48,7 +65,7 @@ function Remove-TestStateDirectory {
 
 function Invoke-SkillProcess {
     param(
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][object[]]$Arguments,
         [ValidateSet('queued', 'in_progress', 'success', 'failure')]
         [string]$Mode = 'success',
         [switch]$PreserveState,
@@ -64,6 +81,8 @@ function Invoke-SkillProcess {
         [switch]$PreflightSourcePlaceholderConfigArtifactDigest,
         [switch]$MalformedConfigArtifactDigest,
         [switch]$ReleaseEventPush,
+        [switch]$OldCiEventPush,
+        [switch]$DuplicateCiRequest,
         [switch]$MismatchedReleaseDigest,
         [int]$DiscoveryDelayQueries = 0,
         [switch]$FinalDiscoveryQuery,
@@ -93,14 +112,25 @@ function Invoke-SkillProcess {
     $env:DKT_CICD_FAKE_PREFLIGHT_SOURCE_PLACEHOLDER_CONFIG_ARTIFACT_DIGEST = if ($PreflightSourcePlaceholderConfigArtifactDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_MALFORMED_CONFIG_ARTIFACT_DIGEST = if ($MalformedConfigArtifactDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH = if ($ReleaseEventPush) { '1' } else { '0' }
+    $env:DKT_CICD_FAKE_OLD_CI_EVENT_PUSH = if ($OldCiEventPush) { '1' } else { '0' }
+    $env:DKT_CICD_FAKE_DUPLICATE_CI_REQUEST = if ($DuplicateCiRequest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST = if ($MismatchedReleaseDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES = [string]$DiscoveryDelayQueries
     $env:DKT_CICD_TEST_DISCOVERY_TIMEOUT_SECONDS = if ($FinalDiscoveryQuery) { '0' } else { $null }
     $env:DKT_CICD_CONFIRMATION_STATE_ROOT = Join-Path $stateDirectory 'confirmations'
 
+    $flattenedArguments = @()
+    foreach ($argument in $Arguments) {
+        if ($argument -is [Array]) {
+            $flattenedArguments += @($argument | ForEach-Object { [string]$_ })
+        }
+        else {
+            $flattenedArguments += [string]$argument
+        }
+    }
     $allArguments = @(
         '-NoLogo', '-NoProfile', '-File', $scriptPath
-    ) + $Arguments + @('-GhExecutable', $fakeGhPath, '-OutputJson')
+    ) + $flattenedArguments + @('-GhExecutable', $fakeGhPath, '-OutputJson')
     $output = @(& $engineExecutable @allArguments 2>&1)
     $exitCode = $LASTEXITCODE
     $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
@@ -172,7 +202,8 @@ Assert-True -Condition ($ciLog.Contains('GuChenkano/iwork') -and $ciLog.Contains
 Remove-TestStateDirectory -Path $ciResult.StateDirectory
 
 $releaseResult = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -PreserveState
 Assert-True -Condition ($releaseResult.ExitCode -eq 0) -Message '发布触发与等待应成功'
 $releaseJson = $releaseResult.Output | ConvertFrom-Json
@@ -183,8 +214,74 @@ Assert-True -Condition ($releaseJson.ConfigDigest -eq $configDigest) -Message '�
 Assert-True -Condition ($releaseJson.ConfigArtifactDigest -eq $configArtifactDigest) -Message '发布结果应返回唯一 ConfigArtifactDigest'
 $releaseLog = Get-Content -LiteralPath (Join-Path $releaseResult.StateDirectory 'arguments.log') -Raw
 Assert-True -Condition ($releaseLog -match 'request_id=[0-9a-f-]{36}') -Message 'Release 触发必须传入 GUID request_id'
-Assert-True -Condition ($releaseLog -match 'ci_request_id=11111111-2222-3333-4444-555555555555') -Message 'Release 必须精确绑定成功 CI 的 request_id'
+Assert-True -Condition ($releaseLog -match "ci_request_id=$ciRequestId") -Message 'Release 必须精确绑定成功 CI 的 request_id'
 Remove-TestStateDirectory -Path $releaseResult.StateDirectory
+
+$publishResult = Invoke-SkillProcess -Arguments @(
+    '-Action', 'publish', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+) -Mode success -PreserveState
+Assert-True -Condition ($publishResult.ExitCode -eq 0) -Message 'publish 应等待本次 CI 成功后触发 Release'
+$publishJson = $publishResult.Output | ConvertFrom-Json
+Assert-True -Condition ($publishJson.Action -eq 'publish') -Message 'publish 结果必须标识高层动作'
+Assert-True -Condition ($publishJson.Ci.Conclusion -eq 'success') -Message 'publish 必须返回本次成功 CI'
+Assert-True -Condition ($publishJson.Release.Conclusion -eq 'success') -Message 'publish 必须返回 Release 结果'
+Assert-True -Condition ($publishJson.CiRequestId -eq $publishJson.Ci.RequestId) -Message 'publish 必须返回一致的 CI request_id'
+Assert-True -Condition ($publishJson.ReleaseRequestId -eq $publishJson.Release.RequestId) -Message 'publish 必须返回一致的 Release request_id'
+Assert-True -Condition ($publishJson.Ci.RunId -eq 201) -Message 'publish 必须返回本次新 CI，而不是历史成功 CI'
+Assert-True -Condition ($publishJson.CiRequestId -ne $ciRequestId) -Message 'publish 不得复用历史 CI request_id'
+$publishLog = Get-Content -LiteralPath (Join-Path $publishResult.StateDirectory 'arguments.log') -Raw
+Assert-True -Condition ($publishLog -match "ci_request_id=$($publishJson.CiRequestId)") -Message 'publish 的 Release 必须绑定本次 CI request_id'
+Assert-True -Condition ($publishLog -match 'ci.yml' -and $publishLog -match 'release.yml') -Message 'publish 必须依次触发 CI 和 Release'
+Remove-TestStateDirectory -Path $publishResult.StateDirectory
+
+$missingCiRequest = Invoke-SkillProcess -Arguments @(
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+) -Mode success
+Assert-True -Condition (
+    $missingCiRequest.ExitCode -eq 1 -and
+    $missingCiRequest.Output.Contains('CiRequestId') -and
+    $missingCiRequest.Output.Contains('禁止猜测')
+) -Message 'iwork release 缺少 CiRequestId 时必须失败关闭'
+
+$wrongCiRequest = Invoke-SkillProcess -Arguments @(
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', '99999999-8888-7777-6666-555555555555', '-Wait'
+) -Mode success -PreserveState
+Assert-True -Condition (
+    $wrongCiRequest.ExitCode -eq 1 -and
+    $wrongCiRequest.Output.Contains('没有找到')
+) -Message 'iwork release 不得误匹配其他 request_id 的历史 CI'
+Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $wrongCiRequest.StateDirectory 'release.yml.dispatched'))) -Message 'CI 证据不匹配时不得触发 Release'
+Remove-TestStateDirectory -Path $wrongCiRequest.StateDirectory
+
+$duplicateCiRequestResult = Invoke-SkillProcess -Arguments @(
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
+) -Mode success -DuplicateCiRequest -PreserveState
+Assert-True -Condition (
+    $duplicateCiRequestResult.ExitCode -eq 1 -and
+    $duplicateCiRequestResult.Output.Contains('匹配不唯一')
+) -Message '同一 CI request_id 的多个成功 Run 必须失败关闭'
+Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $duplicateCiRequestResult.StateDirectory 'release.yml.dispatched'))) -Message 'CI request_id 歧义时不得触发 Release'
+Remove-TestStateDirectory -Path $duplicateCiRequestResult.StateDirectory
+
+$oldPushCiResult = Invoke-SkillProcess -Arguments @(
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
+) -Mode success -OldCiEventPush -PreserveState
+Assert-True -Condition (
+    $oldPushCiResult.ExitCode -eq 1 -and
+    $oldPushCiResult.Output.Contains('workflow_dispatch')
+) -Message '旧 push CI 即使 request_id 相同也不得作为 Release 上游'
+Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $oldPushCiResult.StateDirectory 'release.yml.dispatched'))) -Message '旧 push CI 不得触发 Release'
+Remove-TestStateDirectory -Path $oldPushCiResult.StateDirectory
+
+$failedPublish = Invoke-SkillProcess -Arguments @(
+    '-Action', 'publish', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+) -Mode failure -PreserveState
+Assert-True -Condition ($failedPublish.ExitCode -eq 1 -and $failedPublish.Output.Contains('停止触发 Release')) -Message 'publish CI 失败时必须失败关闭'
+Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $failedPublish.StateDirectory 'release.yml.dispatched'))) -Message 'publish CI 失败时不得触发 Release'
+Remove-TestStateDirectory -Path $failedPublish.StateDirectory
 
 $failedWait = Invoke-SkillProcess -Arguments @(
     '-Action', 'ci', '-Service', 'iwork', '-Revision', $revision, '-Wait'
@@ -192,7 +289,8 @@ $failedWait = Invoke-SkillProcess -Arguments @(
 Assert-True -Condition ($failedWait.ExitCode -eq 2) -Message '等待到失败结论必须返回非零退出码'
 
 $failedDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -LogFailure
 Assert-True -Condition (
     $failedDigestRead.ExitCode -eq 1 -and
@@ -209,7 +307,8 @@ Assert-True -Condition (
 ) -Message 'Portal 必须分别校验两个固定镜像各自唯一的 Digest'
 
 $invalidImageDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -InvalidImageDigests
 Assert-True -Condition (
     $invalidImageDigestRead.ExitCode -eq 1 -and
@@ -217,7 +316,8 @@ Assert-True -Condition (
 ) -Message '成功 iwork Release 必须严格校验唯一 ImageDigest'
 
 $missingConfigDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -MissingConfigDigest
 Assert-True -Condition (
     $missingConfigDigestRead.ExitCode -eq 1 -and
@@ -226,7 +326,8 @@ Assert-True -Condition (
 ) -Message '成功 iwork Release 缺少 ConfigDigest 时必须失败关闭'
 
 $missingConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -MissingConfigArtifactDigest
 Assert-True -Condition (
     $missingConfigArtifactDigestRead.ExitCode -eq 1 -and
@@ -235,7 +336,8 @@ Assert-True -Condition (
 ) -Message '成功 iwork Release 缺少 ConfigArtifactDigest 时必须失败关闭'
 
 $invalidConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -InvalidConfigArtifactDigests
 Assert-True -Condition (
     $invalidConfigArtifactDigestRead.ExitCode -eq 1 -and
@@ -244,7 +346,8 @@ Assert-True -Condition (
 ) -Message '成功 iwork Release 出现多个 ConfigArtifactDigest 时必须失败关闭'
 
 $prefixedConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -PrefixedConfigArtifactDigest
 Assert-True -Condition (
     $prefixedConfigArtifactDigestRead.ExitCode -eq 0 -and
@@ -252,7 +355,8 @@ Assert-True -Condition (
 ) -Message '带 Job/Step 前缀的 Release 日志仍应稳定解析 ConfigArtifactDigest'
 
 $sourcePlaceholderConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -SourcePlaceholderConfigArtifactDigest
 Assert-True -Condition (
     $sourcePlaceholderConfigArtifactDigestRead.ExitCode -eq 0 -and
@@ -263,6 +367,7 @@ $preflightSourcePlaceholderConfigArtifactDigestRead = Invoke-SkillProcess -Argum
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', '真实 preflight 日志格式验收', '-Wait'
 ) -Mode success -PreflightSourcePlaceholderConfigArtifactDigest
 Assert-True -Condition (
@@ -271,7 +376,8 @@ Assert-True -Condition (
 ) -Message 'preflight 应忽略带 ANSI/引号尾巴的 env ConfigArtifactDigest 源码占位符'
 
 $malformedConfigArtifactDigestRead = Invoke-SkillProcess -Arguments @(
-    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision, '-Wait'
+    '-Action', 'release', '-Service', 'iwork', '-Revision', $revision,
+    '-CiRequestId', $ciRequestId, '-Wait'
 ) -Mode success -MalformedConfigArtifactDigest
 Assert-True -Condition (
     $malformedConfigArtifactDigestRead.ExitCode -eq 1 -and
@@ -323,6 +429,7 @@ $mismatchedDigest = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', 'Digest 绑定验收'
 ) -Mode success -MismatchedReleaseDigest
 Assert-True -Condition (
@@ -334,6 +441,7 @@ $untrackedRelease = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', 'Release事件门禁验收'
 ) -Mode success -ReleaseEventPush
 Assert-True -Condition (
@@ -345,6 +453,7 @@ $mismatchedConfigDigest = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', ('sha256:' + ('6' * 64)),
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', '配置 Digest 绑定验收'
 ) -Mode success
 Assert-True -Condition (
@@ -357,6 +466,7 @@ $mismatchedConfigArtifactDigest = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', ('sha256:' + ('6' * 64)),
+    $releaseEvidenceArguments,
     '-ChangeDescription', '配置 Artifact Digest 绑定验收'
 ) -Mode success
 Assert-True -Condition (
@@ -379,6 +489,7 @@ $directDeploy = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', '离线验收',
     '-ApprovalText', "DEPLOY IWORK $revision"
 ) -Mode queued -PreserveState
@@ -395,6 +506,7 @@ $preflightResult = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', '部署前预检绑定', '-Wait'
 ) -Mode success
 $preflightJson = $preflightResult.Output | ConvertFrom-Json
@@ -409,6 +521,7 @@ $changedPreview = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-PreflightRunId', $preflightRunId,
     '-ChangeDescription', '原始预览'
 ) -Mode success -PreserveState
@@ -416,6 +529,7 @@ $changedConfirmation = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-PreflightRunId', $preflightRunId,
     '-ChangeDescription', '已被修改',
     '-ApprovalText', "DEPLOY IWORK $revision"
@@ -434,6 +548,7 @@ $previewResult = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-PreflightRunId', $preflightRunId,
     '-ChangeDescription', '离线验收'
 ) -Mode success -PreserveState
@@ -449,6 +564,7 @@ $deployResult = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-PreflightRunId', $preflightRunId,
     '-ChangeDescription', '离线验收',
     '-ApprovalText', "DEPLOY IWORK $revision"
@@ -495,6 +611,7 @@ $invalidPreflight = Invoke-SkillProcess -Arguments @(
     '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
     '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
     '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
     '-ChangeDescription', '禁止迁移的预检',
     '-RunMigrations'
 ) -Mode success

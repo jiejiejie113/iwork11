@@ -102,8 +102,9 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
     assert "type: boolean" in content
     assert "default: false" in content
     assert "DEPLOY IWORK WITH MIGRATIONS" in content
-    assert "github.actor == 'GuChenkano'" in content
-    assert "github.ref == 'refs/heads/Keycloak'" in content
+    assert "if ($env:GITHUB_ACTOR -cne 'GuChenkano')" in content
+    assert "if ($env:GITHUB_REF -cne 'refs/heads/Keycloak')" in content
+    assert "Production deploy repository is not approved." in content
     assert "environment: production-iwork" in content
     assert "contents: none" in content
     assert "packages: read" in content
@@ -156,12 +157,15 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "RUNNER_TEMP" in content
     assert "docker pull $candidateImage" in content
     assert "org.opencontainers.image.revision" in content
+    assert "org.opencontainers.image.source" in content
+    assert "Candidate OCI source label mismatch." in content
     assert "$env:EXPECTED_REVISION -cne $env:GITHUB_SHA" in content
-    assert "actions/workflows/$WorkflowFile/runs" in content
+    assert "actions/runs/$RunId" in content
+    assert "function Assert-SpecifiedWorkflowRun" in content
     assert "-WorkflowFile 'ci.yml'" in content
     assert "-WorkflowFile 'release.yml'" in content
-    assert "$_.conclusion -eq 'success'" in content
-    assert "Remove-Item -LiteralPath $env:DOCKER_CONFIG -Recurse -Force" in content
+    assert "$run.conclusion -ne 'success'" in content
+    assert "Remove-Item -LiteralPath $cleanupPath -Recurse -Force" in content
     assert "-Mode $mode" in content
     assert '$deploymentRunId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"' in content
     assert "-RunId $deploymentRunId" in content
@@ -184,18 +188,37 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert module_hash == EXPECTED_COORDINATION_MODULE_SHA256
     assert "DEPLOY_COORDINATION_MODULE_PATH:" in content
     assert "DEPLOY_COORDINATION_MODULE_PATH" in content
-    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in content
-    assert "iwork-production-config-${{ inputs.expected_revision }}" in content
-    assert "run-id: ${{ steps.release.outputs.run_id }}" in content
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" not in content
+    assert "HttpClientHandler" in content
+    assert "AllowAutoRedirect = $false" in content
+    assert "Expand-VerifiedArtifactArchive" in content
+    assert "[IO.File]::Move($temporaryPath, $ArchivePath)" in content
+    assert "releaseManifestRoot" in content
     assert "CONFIG_DIGEST: ${{ inputs.config_digest }}" in content
     assert "CONFIG_ARTIFACT_DIGEST: ${{ inputs.config_artifact_digest }}" in content
     assert "RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}" in content
-    assert "$_.event -eq 'workflow_dispatch'" in content
-    assert "$_.head_branch -eq 'Keycloak'" in content
-    assert "actions/runs/$($candidate.id)/artifacts" in content
+    assert "$run.event -ne 'workflow_dispatch'" in content
+    assert "$run.head_branch -ne 'Keycloak'" in content
+    assert "actions/runs/$env:RELEASE_RUN_ID/artifacts" in content
+    assert "actions/artifacts/$ArtifactId/zip" in content
+    assert "Assert-ArtifactArchiveDigest" in content
+    assert "$Description archive digest mismatch" in content
+    assert "IWORK_CONFIG_ARTIFACT_ARCHIVE_VERIFIED=true" in content
+    assert "IWORK_RELEASE_MANIFEST_ARCHIVE_VERIFIED=true" in content
     assert "$_.digest -ceq $env:CONFIG_ARTIFACT_DIGEST" in content
-    assert "matchingReleaseRuns.Count -ne 1" in content
-    assert "([string]$_.display_title).Contains($env:RELEASE_REQUEST_ID)" in content
+    assert "matchingConfigArtifacts.Count -ne 1" in content
+    assert "matchingManifestArtifacts.Count -ne 1" in content
+    assert "function Get-ExactRequestId" in content
+    assert "(Get-ExactRequestId -Title ([string]$releaseRun.display_title)) -cne $env:RELEASE_REQUEST_ID.ToLowerInvariant()" in content
+    assert "display_title).Contains($env:RELEASE_REQUEST_ID)" not in content
+    assert "[string]$preflightDetails.display_title -notmatch '(?i)\\bpreflight\\b'" in content
+    assert "releaseManifest.ci_run_id" in content
+    assert "releaseManifest.ci_request_id" in content
+    assert "workflow = '.github/workflows/release.yml'" in content
+    assert "ref = 'refs/heads/Keycloak'" in content
+    assert "mechanism_id = 'iwork-release-mechanism-v1'" in content
+    assert "risk_envelope = 'application-only'" in content
+    assert "migration_policy_id = 'expand-contract-v1'" in content
     assert "iwork-production-config/v1" in content
     assert "Production config commit mismatch." in content
     assert "Production config image digest mismatch." in content
@@ -206,6 +229,20 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "-ConfigBundlePath $env:CONFIG_BUNDLE_PATH" in content
     assert "-RequestId $env:REQUEST_ID" in content
     assert '"IWORK_REQUEST_ID=$env:REQUEST_ID"' in content
+
+
+def test_deploy_workflow_verifies_signed_release_manifest_before_use() -> None:
+    """生产端必须先验证Manifest签名，不能只信日志或可变JSON。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "IWORK_RELEASE_MANIFEST_VERIFY_CERT_B64" in content
+    assert "IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID" in content
+    assert "release-manifest.sig" in content
+    assert "VerifyData" in content
+    assert "VerifyData($manifestBytes, 'SHA256', $signatureBytes)" in content
+    assert "signature_algorithm" in content
+    assert "signature_key_id" in content
+    assert "Manifest signature verification failed" in content
 
 
 def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
@@ -442,6 +479,7 @@ def _run_deployment_script(
     tamper_active_release_field: str | None = None,
     recovery_mutex_name: str | None = None,
     expected_identity: str | None = None,
+    preconsumed_request: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -467,6 +505,7 @@ def _run_deployment_script(
         tamper_active_release_field (str | None): 可选的活动指针字段篡改项。
         recovery_mutex_name (str | None): 可选的恢复Mutex名称，用于隔离竞争测试。
         expected_identity (str | None): 可选的生产身份预期值，用于身份门禁回归测试。
+        preconsumed_request (bool): 是否预置同一request_id的服务器消费收据。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, object]]:
@@ -493,6 +532,19 @@ def _run_deployment_script(
     profile.parent.mkdir(parents=True)
     state_root.mkdir()
     lock_root.mkdir()
+    if preconsumed_request:
+        consumed_root = state_root / "request-consumption"
+        consumed_root.mkdir()
+        (consumed_root / f"{REQUEST_ID}.json").write_text(
+            json.dumps(
+                {
+                    "schema": "iwork-request-consumption/v1",
+                    "status": "consumed",
+                    "request_id": REQUEST_ID,
+                }
+            ),
+            encoding="utf-8",
+        )
     if existing_rollback_drill_marker:
         (state_root / "rollback-drill-v1.json").write_text(
             '{"Status":"failed","RunId":"previous-attempt"}\n',
@@ -731,6 +783,28 @@ exit /b %fakeDockerExitCode%
     env["FAKE_HEALTH_CHECK_COUNTER"] = str(health_check_counter)
 
     if mode == "Deploy":
+        preflight_request_claim_path = (
+            state_root
+            / "request-consumption"
+            / f"{PREFLIGHT_REQUEST_ID}.json"
+        )
+        preflight_request_claim_path.parent.mkdir(parents=True, exist_ok=True)
+        preflight_request_claim_path.write_text(
+            json.dumps(
+                {
+                    "schema": "iwork-request-consumption/v1",
+                    "status": "consumed",
+                    "request_id": PREFLIGHT_REQUEST_ID,
+                    "mode": "Preflight",
+                    "run_id": PREFLIGHT_RUN_ID,
+                    "expected_revision": CANDIDATE_REVISION,
+                    "image_digest": CANDIDATE_DIGEST,
+                    "config_digest": config_digest,
+                    "config_artifact_digest": CONFIG_ARTIFACT_DIGEST,
+                }
+            ),
+            encoding="utf-8",
+        )
         (state_root / f"preflight-{PREFLIGHT_RUN_ID}.json").write_text(
             json.dumps(
                 {
@@ -738,6 +812,7 @@ exit /b %fakeDockerExitCode%
                     "mode": "Preflight",
                     "run_id": PREFLIGHT_RUN_ID,
                     "request_id": PREFLIGHT_REQUEST_ID,
+                    "request_claim_path": str(preflight_request_claim_path),
                     "actor": "GuChenkano",
                     "expected_revision": CANDIDATE_REVISION,
                     "image_digest": CANDIDATE_DIGEST,
@@ -1532,3 +1607,42 @@ def test_stage6_cleanup_failures_are_isolated_visible_and_fatal() -> None:
     assert "CleanupErrors" in cleanup
     assert "cleanup_failed" in cleanup
     assert "部署清理失败" in cleanup
+
+
+def test_apply_rerun_is_rejected_before_server_consumes_confirmation() -> None:
+    """apply=true 的 Workflow re-run 必须因 run_attempt 非首次而失败关闭。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "if ($env:APPLY -eq 'true' -and $env:GITHUB_RUN_ATTEMPT -ne '1')"
+        in content
+    )
+    assert "re-run" in content.lower() or "rerun" in content.lower()
+    assert "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" in content
+
+
+def test_temporary_setup_is_scoped_and_cleanup_preserves_original_error() -> None:
+    """临时目录初始化失败或清理失败时，必须可审计且不覆盖原始部署异常。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+    init_index = content.index("$env:DOCKER_CONFIG = Join-Path")
+    setup_scope = content[init_index - 120 : init_index + 220]
+
+    assert "try {" in setup_scope
+    assert "$deploymentError = $null" in content
+    assert "if ($null -ne $deploymentError)" in content
+    assert "cleanup_failed" in content
+
+
+def test_server_consumes_request_id_once_and_rejects_replay(tmp_path: Path) -> None:
+    """固定服务器脚本必须拒绝已消费request_id，不能靠本机Skill防重放。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        preconsumed_request=True,
+    )
+
+    assert result.returncode != 0
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "request_id已经被服务器消费" in combined
+    claim = paths["state_root"] / "request-consumption" / f"{REQUEST_ID}.json"
+    assert claim.is_file()

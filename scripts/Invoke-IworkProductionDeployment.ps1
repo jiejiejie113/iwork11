@@ -56,6 +56,7 @@ $OutputEncoding = [Text.Encoding]::UTF8
 $IMAGE_REPOSITORY = 'ghcr.io/guchenkano/iwork'
 $DEPLOYMENT_LOCK_FILE = Join-Path $LockRoot 'production-deploy.lock'
 $RELEASE_CONFIG_ROOT = Join-Path $StateRoot 'release-config'
+$REQUEST_CONSUMPTION_ROOT = Join-Path $StateRoot 'request-consumption'
 $ACTIVE_RELEASE_FILE = Join-Path $StateRoot 'active-release.json'
 $LEGACY_COMPOSE_FILE = Join-Path $IworkRoot 'docker-compose.yml'
 $LEGACY_PROFILE_FILE = Join-Path $IworkRoot 'env\production.env'
@@ -597,6 +598,74 @@ function Get-PreflightReceiptPath {
     return Join-Path $StateRoot "preflight-$Identifier.json"
 }
 
+function Claim-RequestId {
+    <#
+    .SYNOPSIS
+    以不可覆盖的服务器收据消费本次部署请求ID，阻止同一请求被重新派发。
+
+    .DESCRIPTION
+    Skill的本机确认状态只能约束正常入口，不能约束直接手工触发Workflow。
+    服务器在完成输入校验后使用CreateNew原子创建请求消费收据；同一request_id
+    即使换成新的GitHub Run也不能再次使用。收据故意不删除，失败也必须使用新的
+    request_id重新走预检/确认流程。
+
+    .OUTPUTS
+    System.String。不可覆盖的请求消费收据路径。
+    #>
+    if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
+        throw "部署状态目录不存在：$StateRoot"
+    }
+    $stateItem = Get-Item -LiteralPath $StateRoot -Force
+    if (($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw '部署状态目录不能是重解析点。'
+    }
+    if (-not (Test-Path -LiteralPath $REQUEST_CONSUMPTION_ROOT -PathType Container)) {
+        New-Item -ItemType Directory -Path $REQUEST_CONSUMPTION_ROOT -Force | Out-Null
+    }
+    $consumptionRootItem = Get-Item -LiteralPath $REQUEST_CONSUMPTION_ROOT -Force
+    if (($consumptionRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw '请求消费目录不能是重解析点。'
+    }
+    $claimPath = Join-Path $REQUEST_CONSUMPTION_ROOT "$RequestId.json"
+    $claim = [ordered]@{
+        schema = 'iwork-request-consumption/v1'
+        status = 'consumed'
+        request_id = $RequestId
+        mode = $Mode
+        run_id = $RunId
+        expected_revision = $ExpectedRevision
+        image_digest = $ImageDigest
+        config_digest = $ConfigDigest
+        config_artifact_digest = $ConfigArtifactDigest
+        created_at = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    $claimBytes = [Text.UTF8Encoding]::new($false).GetBytes(
+        (($claim | ConvertTo-Json -Depth 6) + "`n")
+    )
+    try {
+        $stream = [IO.File]::Open(
+            $claimPath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
+        try {
+            $stream.Write($claimBytes, 0, $claimBytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    catch [IO.IOException] {
+        if (Test-Path -LiteralPath $claimPath -PathType Leaf) {
+            throw "request_id已经被服务器消费，禁止重复部署：$RequestId"
+        }
+        throw "请求消费收据写入失败：$claimPath；$($_.Exception.Message)"
+    }
+    return $claimPath
+}
+
 function Write-PreflightReceipt {
     <#
     .SYNOPSIS
@@ -604,7 +673,8 @@ function Write-PreflightReceipt {
     #>
     param(
         [Parameter(Mandatory = $true)][object]$ValidatedConfig,
-        [Parameter(Mandatory = $true)][object[]]$ContainerBaseline
+        [Parameter(Mandatory = $true)][object[]]$ContainerBaseline,
+        [Parameter(Mandatory = $true)][string]$RequestClaimPath
     )
 
     $receiptPath = Get-PreflightReceiptPath -Identifier $RunId
@@ -616,6 +686,7 @@ function Write-PreflightReceipt {
         mode = 'Preflight'
         run_id = $RunId
         request_id = $RequestId
+        request_claim_path = $RequestClaimPath
         actor = $Actor
         expected_revision = $ExpectedRevision
         image_digest = $ImageDigest
@@ -643,12 +714,21 @@ function Assert-PreflightReceipt {
     if ($Mode -ne 'Deploy') { return $null }
     $receiptPath = Get-PreflightReceiptPath -Identifier $PreflightRunId
     Assert-RequiredFile -Path $receiptPath -Description '绑定的预检证据'
+    $requestClaimPath = Join-Path $REQUEST_CONSUMPTION_ROOT "$PreflightRequestId.json"
+    Assert-RequiredFile -Path $requestClaimPath -Description '预检请求消费证据'
     try {
         $receipt = Get-Content -LiteralPath $receiptPath -Raw |
             ConvertFrom-Json
     }
     catch {
         throw "预检证据无法解析：$receiptPath"
+    }
+    try {
+        $claim = Get-Content -LiteralPath $requestClaimPath -Raw |
+            ConvertFrom-Json
+    }
+    catch {
+        throw "预检请求消费证据无法解析：$requestClaimPath"
     }
     $expected = @{
         schema = 'iwork-preflight-receipt/v1'
@@ -660,6 +740,7 @@ function Assert-PreflightReceipt {
         image_digest = $ImageDigest
         config_digest = $ConfigDigest
         config_artifact_digest = $ConfigArtifactDigest
+        request_claim_path = $requestClaimPath
         run_migrations = $false
         rollback_drill = $false
         result = 'validated'
@@ -672,6 +753,22 @@ function Assert-PreflightReceipt {
         }
         elseif ([string]$receipt.$name -cne [string]$expected[$name]) {
             throw "预检证据字段不匹配：$name"
+        }
+    }
+    $expectedClaim = @{
+        schema = 'iwork-request-consumption/v1'
+        status = 'consumed'
+        request_id = $PreflightRequestId
+        mode = 'Preflight'
+        run_id = $PreflightRunId
+        expected_revision = $ExpectedRevision
+        image_digest = $ImageDigest
+        config_digest = $ConfigDigest
+        config_artifact_digest = $ConfigArtifactDigest
+    }
+    foreach ($name in $expectedClaim.Keys) {
+        if ([string]$claim.$name -cne [string]$expectedClaim[$name]) {
+            throw "预检请求消费证据字段不匹配：$name"
         }
     }
     if (@($receipt.container_baseline).Count -ne $EXPECTED_CONTAINERS.Count) {
@@ -699,6 +796,7 @@ function Invoke-Preflight {
             -ExpectedSourceCommit $ExpectedRevision `
             -ExpectedImageDigest $ImageDigest
     }
+    $requestClaimPath = Claim-RequestId
     if ($null -ne $CoordinationLock) {
         $ValidatedConfig = Save-ProductionConfigBundle -ValidatedBundle $ValidatedConfig
     }
@@ -735,7 +833,8 @@ function Invoke-Preflight {
     if ($PersistReceipt) {
         $receiptPath = Write-PreflightReceipt `
             -ValidatedConfig $ValidatedConfig `
-            -ContainerBaseline $containerBaseline
+            -ContainerBaseline $containerBaseline `
+            -RequestClaimPath $requestClaimPath
     }
     [pscustomobject]@{
         Mode = 'Preflight'
@@ -757,6 +856,7 @@ function Invoke-Preflight {
         PreviousAlertWorkerImageId = $containerBaseline[1].ImageId
         StateFile = $null
         ReceiptFile = $receiptPath
+        RequestClaimPath = $requestClaimPath
         DurationSeconds = [Math]::Round(
             ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds,
             1
@@ -1384,9 +1484,10 @@ function Invoke-Deploy {
             -ExpectedSourceCommit $ExpectedRevision `
             -ExpectedImageDigest $ImageDigest
         $candidateConfig = Save-ProductionConfigBundle -ValidatedBundle $candidateConfig
-        $null = Invoke-Preflight `
+        $preflightResult = Invoke-Preflight `
             -CoordinationLock $coordinationLock `
             -ValidatedConfig $candidateConfig
+        $requestClaimPath = $preflightResult.RequestClaimPath
         $previousConfigSelection = Get-PreviousProductionConfig `
             -CandidateConfig $candidateConfig
         $previousConfig = $previousConfigSelection.Config
@@ -1479,6 +1580,7 @@ function Invoke-Deploy {
         $state = [ordered]@{
             RunId = $RunId
             RequestId = $RequestId
+            RequestClaimPath = $requestClaimPath
             Actor = $Actor
             Mode = 'Deploy'
             Status = 'deploying'

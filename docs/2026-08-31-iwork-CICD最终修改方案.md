@@ -3,12 +3,14 @@
 > 本文是阶段8后的改造设计与实施入口，不替代唯一进度基线
 > C:/Users/lipengfei/ZCodeProject/iwork/docs/2026-08-21-GitHub-Actions-CICD完整实施方案.md。
 > 每个切片必须在同一提交中回写总方案的阶段状态、Commit、Actions、测试、偏差和下一入口。
-> 本文当前只完成方案修订，不代表任何代码、准入策略或生产环境已经实施。
+> 本文是方案与实施入口；当前工作树已实现其中部分切片并完成隔离验收，但尚未推送本轮
+> Commit、配置生产签名材料或执行新的真实 Release/准入/生产切换。任何“已完成”仅指下文
+> 明确列出的本地代码与测试证据，不代表生产环境已经实施。
 
 > 制定日期：2026-08-31
 > 适用仓库：`GuChenkano/iwork`
 > 固定分支：`Keycloak`
-> 当前基线：`3effcb1554b70d404ebf251f1c544990182a6600`
+> 当前基线：`69baafa`（本轮实现已提交，待真实 CI 验证）
 
 ## 1. 方案目标
 
@@ -213,7 +215,6 @@ Release生成独立、不可变的`release-manifest.json`：
   "config_artifact_id": "GitHub Artifact ID",
   "config_artifact_digest": "sha256:...",
   "manifest_artifact_name": "iwork-release-manifest-<commit>",
-  "manifest_artifact_id": "GitHub Artifact ID",
   "mechanism_id": "认证后的机制指纹",
   "risk_envelope": "风险分类",
   "migration_policy_id": "迁移策略标识",
@@ -222,9 +223,17 @@ Release生成独立、不可变的`release-manifest.json`：
 ```
 
 Manifest与生产配置 Artifact 作为两个独立对象保存。Deploy只消费这份Manifest及其明确引用的
-配置 Artifact，不再分别从多个日志中猜测和拼接CI、Release和Digest证据。
-生产最低要求是 Release Run、Artifact ID、Artifact digest 和受保护服务器副本四者一致；
-可用时再增加 Sigstore/DSSE 或企业密钥签名。签名或哈希失效时不能人工把证据改回有效。
+配置 Artifact，不再分别从多个日志中猜测和拼接CI、Release和Digest证据。Manifest本体不写入
+自己的Artifact ID或Artifact digest；这两个字段属于上传后外部信任锚，必须与指定Release Run
+的Artifact元数据一致。生产最低要求是 Release Run、Artifact ID、Artifact digest 和受保护服务器
+副本四者一致。
+
+Manifest签名是强制门禁：Release使用受保护的
+`IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM`和Key ID生成RSA
+`RSASSA-PKCS1-v1_5-SHA256`签名，Deploy使用受保护的验证证书和同一Key ID验证；私钥不进入日志、
+Artifact或服务器状态。签名失败、Key ID不匹配、证书缺失或轮换未完成均失败关闭，不能人工把证据
+改回有效。签名密钥轮换必须先发布新的验证证书/Key ID并完成独立校验，再切换Release端私钥，
+旧Key的证书在保留期内只用于审计，不得让已撤销证书重新变为有效。
 
 > Manifest采用两个不可变对象的两阶段发布，禁止自引用：
 > 1. 先上传只包含 config-manifest.json、Compose 和 production.env 的配置 Artifact，取得其
@@ -232,9 +241,16 @@ Manifest与生产配置 Artifact 作为两个独立对象保存。Deploy只消�
 > 2. 再生成单独的 release-manifest.json，写入配置 Artifact 的 id/name/digest、镜像 Digest、
 >    Config Digest、Commit、CI/Release Run ID 与 attempt、request_id、Workflow path、ref、
 >    mechanism_id、risk_envelope 和 migration_policy_id；随后单独上传 Manifest Artifact。
-> 3. Manifest Artifact 自己的 digest 由 GitHub API 或受保护证据库在上传后取得，作为外部信任锚，
->    不写入 Manifest 自身。Deploy 同时校验两个 Artifact 的元数据和内容哈希。
-> 4. Actions Artifact 当前保留期为90天，不能单独支撑长期回滚；服务器 ACL 保护副本至少保留
+> 3. `upload-artifact@v4`输出的`artifact-digest`定义为最终immutable ZIP上传流原始字节的
+>    SHA-256，不是解压后目录或文件集合的逻辑Digest。`download-artifact@v4`虽然会对下载响应
+>    原始流计算`expectedHash`，但不匹配时仅产生Warning，不会让Step失败，因此不能作为生产
+>    失败关闭门禁。
+> 4. Manifest Artifact 自己的digest由GitHub API或受保护证据库在上传后取得，作为外部信任锚，
+>    不写入Manifest自身。Deploy必须按指定Artifact ID调用REST
+>    `/actions/artifacts/{id}/zip`：带Authorization的API Client禁止自动重定向，只读取302 Location；
+>    随后使用完全不带Authorization的独立Blob Client下载原始ZIP并计算SHA-256。只有与API
+>    `artifact.digest`精确一致后，才允许验证ZIP条目、解压、校验Manifest签名/字段和配置包文件哈希。
+> 5. Actions Artifact 当前保留期为90天，不能单独支撑长期回滚；服务器 ACL 保护副本至少保留
 >    最近三次实际 deployed Release，或将 Manifest/配置包归档到有明确保留策略的不可变存储。
 >    Artifact 已过期、被删除、签名/哈希不一致或镜像不可拉取时，回滚必须失败关闭。
 
@@ -271,17 +287,25 @@ Deploy只执行：
 
 输入契约必须新增并绑定 `release_run_id`、`release_run_attempt`、Manifest Artifact 的
 `artifact_id/name/digest` 和 `release_request_id`；不能依靠“同 Commit 最新成功 Run”猜测。
-Manifest中的 CI/Release Run、Workflow path、ref、Commit、request_id 和三类 Digest 必须与
-GitHub API返回的 Run/Artifact 元数据逐项一致，且配置 Artifact 与 Manifest Artifact 都要
-重新下载并校验内容哈希。
+Manifest中的CI/Release Run、Workflow path、ref、Commit、request_id和三类Digest必须与
+GitHub API返回的Run/Artifact元数据逐项一致。Artifact必须按ID而不是名称下载；若保留
+`actions/download-artifact`，至少必须使用与`name`互斥的`artifact-ids`，但由于其Digest不匹配只告警，
+仍不能满足生产失败关闭要求。正式实现应替换Action下载并执行以下固定顺序：
 
-1. 下载指定Release Run的Manifest和配置Artifact。
-2. 校验Manifest Schema、仓库、分支、Commit和三类Digest。
-3. 校验配置包文件哈希和镜像OCI revision。
-4. 校验Preflight收据。
-5. 校验服务器固定脚本、协调模块和看门狗机制哈希。
-6. 调用固定服务器部署脚本。
-7. 输出结构化摘要并清理临时凭据。
+1. 按`release_run_id`和两个Artifact ID读取唯一API元数据，校验Run、attempt、name、ID、过期状态和Digest。
+2. 使用`HttpClientHandler.AllowAutoRedirect = $false`的API Client调用每个
+   `/actions/artifacts/{id}/zip`，只接受预期重定向状态和绝对HTTPS Location。
+3. 使用没有Authorization、Cookie或其他GitHub凭据的独立Blob Client下载原始响应流，同时写入本次
+   `RUNNER_TEMP`唯一ZIP并计算SHA-256；禁止把GitHub Token转发到Blob Storage。
+4. 原始ZIP Digest与API`artifact.digest`不一致时立即失败，禁止解压、解析Manifest或调用部署脚本。
+5. Digest通过后验证ZIP条目：拒绝绝对路径、`..`路径穿越、重复条目、重解析点语义和非白名单文件。
+6. 解压到本次Run唯一目录；Manifest包只允许JSON和签名，配置包只允许既定生产配置文件。
+7. 校验Manifest签名、Schema、仓库、分支、Commit和三类Digest，再校验配置文件哈希和镜像OCI revision。
+8. 校验Preflight收据以及服务器固定脚本、协调模块和看门狗机制哈希。
+9. 调用固定服务器部署脚本，输出结构化摘要并清理ZIP、解压目录和临时凭据。
+
+Artifact API不可达、重定向异常、Location不是HTTPS、Blob下载失败、原始归档Digest不一致、ZIP结构异常、
+签名失败或清理失败均立即失败关闭。任何Artifact内容在原始归档Digest通过前都不得被解压或用于决策。
 
 Release已经证明CI链路，Deploy不再重复查询一个未绑定 `ci_request_id` 的“任意成功CI”；
 只接受 Manifest 明确引用且状态为 completed/success 的唯一 Release。
@@ -310,6 +334,10 @@ Job级 `if` 直接把拒绝显示为绿色 Skipped。Runner smoke 同样适用�
 - 每个Run使用唯一`DOCKER_CONFIG`目录。
 - 目录必须位于`RUNNER_TEMP`且不是重解析点。
 - 清理失败必须写Warning和收据，不能完全`SilentlyContinue`。
+- `DOCKER_CONFIG`初始化、配置包/Artifact归档下载、部署调用和清理必须处于同一`try/finally`
+  生命周期；清理失败不得覆盖原始部署异常。
+- `cleanup_failed`收据至少记录`GITHUB_RUN_ID`、`GITHUB_RUN_ATTEMPT`、`request_id`、失败路径、
+  原始错误和时间；正式部署仅允许`GITHUB_RUN_ATTEMPT=1`，重跑必须失败关闭并重新生成预览/确认。
 - Token不得进入日志、摘要、Artifact或状态文件。
 - Runner启动前清理可信范围内的历史临时目录。
 
@@ -534,6 +562,13 @@ GitHub `concurrency`只能控制iwork仓库内部并发，不能替代Portal、�
 ### 13.3 Preflight和Deploy
 
 - Deploy只接受指定 Release Manifest 及两个 Artifact 的唯一元数据，不接受 `Select-Object -First 1` 或“最新成功”猜测。
+- `config_artifact_digest`和`manifest_artifact_digest`必须被解释为`upload-artifact@v4`最终immutable ZIP
+  原始字节SHA-256；不能把解压后文件哈希替代为Artifact archive digest。
+- Deploy必须按Artifact ID手工获取原始ZIP；带Token的API请求禁止自动重定向，Blob下载请求不得包含
+  Authorization。原始ZIP Digest匹配后才允许解压和读取Manifest/配置。
+- `download-artifact`内建Digest mismatch Warning不能视为失败关闭；若仍先由Action解压，阶段4验收必须
+  标记为未完成。
+- ZIP路径穿越、绝对路径、重复条目、多余文件、异常重定向或Digest不匹配均必须产生显式Failure。
 - 未授权 actor/ref/event 必须产生显式 Failure；不能以绿色 Skipped 结束。
 - 临时凭据或配置目录清理失败必须留下不可覆盖的 cleanup_failed 收据并告警。
 - 外部探针必须覆盖基线、连续采样、SSE首个事件/心跳和共享依赖不可判定分支。
@@ -570,6 +605,37 @@ GitHub `concurrency`只能控制iwork仓库内部并发，不能替代Portal、�
 8. 以上全部通过后，最后关闭完整 CI 的普通 Push 触发；保留轻量 PR/Push 检查。
 9. 单独实现并验收 `rollback-iwork.yml`，仅允许历史实际 deployed 且未撤销版本。
 10. 运行一次新的完整 CI → Release → Preflight → 用户确认 → Deploy；独立执行业务探针与24小时观察。
+
+## 14.1 本轮工作树实施状态（2026-08-31）
+
+已在本地工作树实现并完成隔离验收的切片：
+
+- 完整 `ci.yml` 已切换为仅 `workflow_dispatch`，保留必填 `request_id`、Compose解析、迁移检查、
+  Python/PowerShell测试；PR反馈由无生产权限的 `ci-pr.yml` 承担，完整CI不再构建临时Docker镜像。
+- `dkt-cicd` 已实现 `publish`（本次CI→Release）、精确GUID Run关联、120秒发现窗口和最终查询；
+  iwork Release 强制绑定显式 `ci_request_id`，失败Run不解析Digest。
+- Release 已采用配置Artifact + 独立 `release-manifest.json`/签名Artifact 两阶段模型；Manifest
+  不自引用Artifact ID/Digest，RSA签名和Key ID是强制门禁，GHCR查询按HTTP错误分类。
+- Deploy证据链已加入指定Release Run/attempt、两个Artifact元数据、三类Digest、Manifest签名和
+  OCI标签校验；归档下载已改为按Artifact ID使用禁止自动重定向的API Client，Blob Client不携带
+  Authorization，原始ZIP Digest通过后才执行安全白名单解压。该切片已通过阶段4回归测试，仍需随本轮
+  提交进入真实CI验证；签名材料、生产Runner准入和真实生产验收仍未完成。
+- 服务器固定脚本已加入不可覆盖的`request-consumption`收据；正式部署绑定预检消费收据，重放失败关闭；
+  测试夹具已同步该契约。`apply=true`的Workflow re-run（`run_attempt != 1`）失败关闭。
+
+本地验证证据（未推送、未触发Actions、未操作生产）：CI/配置包/阶段4组合测试`68 passed`，dkt-cicd
+离线验收`133`个断言通过，20个PowerShell脚本/模块解析通过，`git diff --check`通过。为控制范围，
+本轮不重复全仓历史Ruff债务检查；提交前仍需同步版本源 Skill 到用户安装副本并逐文件复验SHA-256。
+
+尚未满足的外部条件与明确阻断：
+
+1. GitHub 尚未配置 `IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM`、
+   `IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID` 和 `IWORK_RELEASE_MANIFEST_VERIFY_CERT_B64`；配置前禁止真实Release。
+2. 生产Runner准入必须在空闲维护窗口安装本轮部署脚本/Workflow哈希并执行smoke；旧Hook不得放行新机制。
+3. 外部HTTPS/OIDC/SSE/通知等业务探针仍需先observe-only建立基线，再按方案启用硬门禁；浏览器真实账号
+   验收和24小时稳定观察未完成，不能以Actions成功替代。
+4. 只有以上本地门禁和签名/准入条件全部满足后，才可以按用户新确认执行真实CI、Release、Preflight和Deploy；
+   任一新失败立即停止并回写本总方案。
 
 ## 15. 明确不做的事项
 > 本方案全部切片的证据完成前，不执行生产切换；任一切片失败必须停止并分析，不能通过重试或旧证据绕过。

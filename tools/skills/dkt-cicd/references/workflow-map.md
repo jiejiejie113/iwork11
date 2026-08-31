@@ -23,7 +23,16 @@
 
 ## 动作输入
 
-### iwork 预检/部署
+### iwork 发布、预检/部署
+
+`publish` 是完整发版编排：针对固定分支当前 Commit 生成新的 `ci_request_id`，触发并
+等待本次 `ci.yml` 成功，再以该 ID 作为 `ci_request_id` 触发 `release.yml`。它只返回本次
+CI 与 Release 的 Run、request_id 和发布证据；CI 失败、Run 歧义或证据读取失败时不得触发
+Release。
+
+`release` 是底层重试入口，iwork 必须显式提供 `-CiRequestId`。脚本只接受同一 Commit、
+`workflow_dispatch`、`completed/success` 且唯一匹配该 request_id 的 CI Run；不再猜测最新
+成功 CI。CI 成功而 Release 失败时，只能重试 Release，不得改用其他 Commit 或旧 Run。
 
 必需：
 
@@ -85,8 +94,9 @@ Docker 健康状态。若用户需要实际容器状态，应另行执行获准�
 Actions 证据与 Docker 结果分开汇报。
 
 使用`-Wait`时，Run未以`completed / success`结束或`gh run watch`失败，脚本必须返回
-非零退出码。iwork 的`ci`、`release`、`preflight`和`deploy`每次 dispatch 都会生成
-独立GUID `request_id`并传给Workflow；脚本只关联`run-name`包含该ID的新Run。Portal
+非零退出码。iwork 的`ci`、`publish`、`release`、`preflight`和`deploy`每次 dispatch 都会生成
+独立GUID `request_id`并传给Workflow；其中`publish`即使未提供`-Wait`也会强制等待本次CI
+成功后才触发Release。脚本只关联`run-name`包含该ID的新Run。Portal
 在其Workflow完成同一输入契约前，继续按触发前Run ID快照、Commit、事件和时间窗关联。
 Run发现窗口为120秒，截止前会执行一次最终查询；触发与Run发现期间使用本机命名Mutex。
 若窗口内出现多个候选Run，脚本停止关联并要求人工核对，不能猜测最新Run就是本次触发，

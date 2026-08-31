@@ -10,6 +10,7 @@ import yaml
 # CI文件路径配置
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+PR_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci-pr.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 
 
@@ -31,12 +32,66 @@ def _read_release_workflow() -> str:
     return RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
+def _read_pr_workflow() -> str:
+    """读取PR轻量检查工作流文本。
+
+    Returns:
+        str: PR轻量检查工作流完整文本。
+    """
+    return PR_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def test_ci_workflow_is_manual_only_and_keeps_request_id() -> None:
+    """完整CI只能手工触发，并保留请求关联ID输入。"""
+    content = _read_workflow()
+
+    assert "  push:" not in content
+    assert "  pull_request:" not in content
+    assert "  workflow_dispatch:" in content
+    assert "request_id:" in content
+    assert "iwork ci · ${{ inputs.request_id }} · ${{ github.sha }}" in content
+    assert "group: iwork-ci-${{ github.sha }}" in content
+    assert "cancel-in-progress: false" in content
+
+
+def test_ci_pr_workflow_is_a_pinned_lightweight_pull_request_gate() -> None:
+    """PR轻量Workflow只能做托管Runner静态检查，不得触碰生产或发布。"""
+    content = _read_pr_workflow()
+    lowered = content.lower()
+    action_uses = re.findall(r"uses:\s+[^\s]+@([^\s]+)", content)
+
+    assert "pull_request:" in content
+    assert "      - Keycloak" in content
+    assert "runs-on: ubuntu-latest" in content
+    assert "contents: read" in content
+    assert "requirements-ci.txt" in content
+    assert "python -m ruff check --no-cache" in content
+    assert action_uses
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_uses)
+
+    for forbidden in (
+        "push:",
+        "workflow_dispatch:",
+        "pull_request_target",
+        "self-hosted",
+        "docker login",
+        "docker push",
+        "docker compose up",
+        "ghcr.io",
+        "dkt-secrets.env",
+        "production.env",
+        "secrets.",
+        "ssh ",
+    ):
+        assert forbidden not in lowered
+
+
 def test_ci_workflow_is_hosted_and_cannot_touch_production() -> None:
     """CI只能使用GitHub托管Runner，且不得包含任何生产部署入口。"""
     content = _read_workflow()
     lowered = content.lower()
 
-    assert "runs-on: ubuntu-latest" in content
+    assert "runs-on: windows-latest" in content
     for forbidden in (
         "self-hosted",
         "pull_request_target",
@@ -56,35 +111,38 @@ def test_ci_workflow_is_hosted_and_cannot_touch_production() -> None:
 
 
 def test_ci_workflow_uses_pinned_actions_and_expected_checks() -> None:
-    """CI必须固定Action提交，并执行隔离测试、生产包Ruff和无密钥镜像构建。"""
+    """CI必须固定Action提交，并执行代码、迁移、配置和脚本检查。"""
     content = _read_workflow()
     action_uses = re.findall(r"uses:\s+[^\s]+@([^\s]+)", content)
 
     assert action_uses
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_uses)
-    assert "Keycloak" in content
     assert "contents: read" in content
     assert "python -m pytest tests/ -q" in content
     assert "python -m ruff check --no-cache" in content
     assert "--ignore E402,W292 iwork" in content
-    assert "docker build" in content
-    assert "ci-iwork:$env:GITHUB_SHA" in content
+    assert "docker compose --env-file env/local.env config --quiet" in content
+    assert "docker build" not in content
+    assert "  build:" not in content
     assert "${GITHUB_SHA}" not in content
-    assert "清除临时构建上下文中的环境文件" in content
     assert "request_id:" in content
     assert "required: true" in content
     assert "inputs.request_id || github.run_id" not in content
-    assert "inputs.request_id || github.sha" in content
+    assert "inputs.request_id || github.sha" not in content
     assert "IWORK_REQUEST_ID=" in content
 
 
 def test_ci_test_job_preserves_non_secret_environment_profiles() -> None:
-    """测试Job必须保留供安全契约测试读取的无密钥环境配置模板。"""
+    """测试Job必须在不读取生产密钥的情况下校验Compose配置。"""
     content = _read_workflow()
-    test_job = content.split("  build:", maxsplit=1)[0]
+    test_job = content[content.index("  test:"):]
 
     assert "Get-ChildItem -Path . -Recurse" not in test_job
     assert "Remove-Item -LiteralPath .env -Force" in test_job
+    assert "docker compose --env-file env/local.env config --quiet" in test_job
+    assert "IWORK_DJANGO_SECRET_KEY: ci-only-django-secret" in test_job
+    assert "IWORK_APP_DB_PASSWORD: ci-only-app-password" in test_job
+    assert "IWORK_DB_PASSWORD: ci-only-read-password" in test_job
 
 
 def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
@@ -109,13 +167,19 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "contents: read" in content
     assert "ghcr.io/guchenkano/iwork" in lowered
     assert "org.opencontainers.image.revision" in content
-    assert "--format '{{.Manifest.Digest}}'" in content
+    assert "Invoke-WebRequest -UseBasicParsing -Method Head" in content
+    assert "Docker-Content-Digest" in content
+    assert "statusCode -eq 404" in content
+    assert "statusCode -in @(401, 403, 429)" in content
+    assert "per_page=$perPage&page=$page" in content
     assert "[DateTimeOffset]::UtcNow" in content
     assert "duration_seconds" in content
     assert "GITHUB_RUN_ID" in content
     assert "CI_REQUEST_ID" in content
     assert '$_.event -eq "workflow_dispatch"' in content
-    assert '([string]$_.display_title).Contains($env:CI_REQUEST_ID)' in content
+    assert "function Get-ExactRequestId" in content
+    assert "(Get-ExactRequestId -Title ([string]$_.display_title)) -ceq $env:CI_REQUEST_ID.ToLowerInvariant()" in content
+    assert 'display_title).Contains($env:CI_REQUEST_ID)' not in content
     assert content.count("$startedAt = [DateTimeOffset]::UtcNow") == 1
     assert "docker push" in content
     assert "docker pull" in content
@@ -129,6 +193,9 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "RAW_ARTIFACT_DIGEST" in content
     assert 'sha256:$rawArtifactDigest' in content
     assert 'Artifact digest格式无效' in content
+    assert "release-manifest.json" in content
+    assert "IWORK_RELEASE_MANIFEST_ARTIFACT_ID" in content
+    assert "IWORK_RELEASE_MANIFEST_ARTIFACT_DIGEST" in content
     assert "IWORK_REQUEST_ID=" in content
     assert (
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
@@ -157,7 +224,6 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
         "pull_request_target",
         "self-hosted",
         ":latest",
-        "secrets.",
         "dkt-secrets.env",
         "docker compose up",
         "deploy.ps1",
@@ -165,6 +231,46 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
         "192.168.0.97",
     ):
         assert forbidden not in lowered
+
+
+def test_release_ghcr_head_accepts_index_and_single_manifest_media_types() -> None:
+    """GHCR HEAD 查询必须兼容索引和两种单镜像 Manifest。"""
+    content = _read_release_workflow()
+    head_block = content[content.index("function Get-RemoteDigest"):content.index("function Invoke-LocalImageSmoke")]
+
+    assert "application/vnd.oci.image.index.v1+json" in head_block
+    assert "application/vnd.docker.distribution.manifest.list.v2+json" in head_block
+    assert "application/vnd.oci.image.manifest.v1+json" in head_block
+    assert "application/vnd.docker.distribution.manifest.v2+json" in head_block
+
+
+def test_release_reused_image_requires_repository_source_label() -> None:
+    """复用已有 Digest 时必须同时绑定 OCI source 与当前仓库。"""
+    content = _read_release_workflow()
+    revision_block = content[content.index("function Assert-ImageRevision"):content.index("$digest = Get-RemoteDigest")]
+
+    assert "org.opencontainers.image.source" in revision_block
+    assert '$expectedSource = "https://github.com/$env:GITHUB_REPOSITORY"' in revision_block
+    assert "$actualSource -cne $expectedSource" in revision_block
+    assert "source label" in revision_block.lower()
+
+
+def test_release_manifest_requires_detached_asymmetric_signature() -> None:
+    """Release Manifest必须生成可由生产端独立验证的非对称签名。"""
+    content = _read_release_workflow()
+    manifest_block = content[content.index("生成独立Release Manifest"):content.index("发布独立Release Manifest Artifact")]
+
+    assert "IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM" in manifest_block
+    assert "IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID" in manifest_block
+    assert "signature_algorithm" in manifest_block
+    assert "signature_key_id" in manifest_block
+    assert "RSASignaturePadding]::Pkcs1" in manifest_block
+    assert "SignData" in manifest_block
+    assert "release-manifest.sig" in manifest_block
+    assert "manifest_artifact_name" in manifest_block
+    assert "IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM" not in content[content.index("记录Manifest Artifact与稳定机器证据"):]
+    assert "Remove-Item Env:IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM" in manifest_block
+    assert "$ErrorActionPreference = 'Stop'" in content[content.index("清除临时构建上下文中的敏感文件"):content.index("使用短期令牌登录GHCR")]
 
 
 def test_release_publish_job_keeps_permissions_and_environment_at_job_scope() -> None:
@@ -199,3 +305,15 @@ def test_release_ci_binding_fails_closed_on_duplicate_request_id_matches() -> No
     assert "$successfulRuns = @($response.workflow_runs |" in verify_ci
     assert "$successfulRuns.Count -ne 1" in verify_ci
     assert "Select-Object -First 1" not in verify_ci
+
+
+def test_release_manifest_uses_verified_ci_job_outputs() -> None:
+    """Manifest必须引用verify-ci Job输出，不能读取publish Job不存在的steps上下文。"""
+    content = _read_release_workflow()
+
+    assert "CI_RUN_ID: ${{ needs.verify-ci.outputs.run_id }}" in content
+    assert "CI_RUN_ATTEMPT: ${{ needs.verify-ci.outputs.run_attempt }}" in content
+    assert "CI_REQUEST_ID: ${{ needs.verify-ci.outputs.ci_request_id }}" in content
+    assert "CI_RUN_ID: ${{ steps.ci.outputs.run_id }}" not in content
+    assert "CI_RUN_ATTEMPT: ${{ steps.ci.outputs.run_attempt }}" not in content
+    assert "CI_REQUEST_ID: ${{ steps.ci.outputs.ci_request_id }}" not in content

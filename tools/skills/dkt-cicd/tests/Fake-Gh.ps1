@@ -21,6 +21,9 @@ else {
 $imageDigest = 'sha256:' + ('1' * 64)
 $configDigest = 'sha256:' + ('5' * 64)
 $configArtifactDigest = 'sha256:' + ('7' * 64)
+$configArtifactId = '301'
+$manifestArtifactId = '401'
+$manifestArtifactDigest = 'sha256:' + ('8' * 64)
 $ciRequestId = '11111111-2222-3333-4444-555555555555'
 $releaseRequestId = '66666666-7777-8888-9999-aaaaaaaaaaaa'
 $portalDigest = 'sha256:' + ('2' * 64)
@@ -39,6 +42,8 @@ $preflightSourcePlaceholderConfigArtifactDigest = $env:DKT_CICD_FAKE_PREFLIGHT_S
 $malformedConfigArtifactDigest = $env:DKT_CICD_FAKE_MALFORMED_CONFIG_ARTIFACT_DIGEST -ceq '1'
 $mismatchedReleaseDigest = $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST -ceq '1'
 $releaseEventPush = $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH -ceq '1'
+$oldCiEventPush = $env:DKT_CICD_FAKE_OLD_CI_EVENT_PUSH -ceq '1'
+$duplicateCiRequest = $env:DKT_CICD_FAKE_DUPLICATE_CI_REQUEST -ceq '1'
 $discoveryDelayQueries = if ($env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES -match '^\d+$') {
     [int]$env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES
 }
@@ -145,7 +150,16 @@ if ($RemainingArguments.Count -ge 2 -and
             -WorkflowName 'CI' `
             -Status 'completed' `
             -Conclusion 'success' `
-            -RunName "iwork ci $revision $ciRequestId"
+            -RunName "iwork ci $revision $ciRequestId" `
+            -Event $(if ($oldCiEventPush) { 'push' } else { 'workflow_dispatch' })
+        if ($duplicateCiRequest) {
+            $items += Write-RunJson `
+                -Id 105 `
+                -WorkflowName 'CI' `
+                -Status 'completed' `
+                -Conclusion 'success' `
+                -RunName "iwork ci duplicate $revision $ciRequestId"
+        }
     }
     elseif ($workflow -eq 'release.yml') {
         $releaseEvent = if ($releaseEventPush) { 'push' } else { 'workflow_dispatch' }
@@ -282,6 +296,13 @@ if ($RemainingArguments.Count -ge 3 -and
             }
             else {
                 Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=$configArtifactDigest"
+            }
+            if ($runId -in @(102, 202)) {
+                Write-Output "IWORK_CONFIG_ARTIFACT_ID=$configArtifactId"
+                Write-Output "IWORK_CONFIG_ARTIFACT_NAME=iwork-production-config-$revision"
+                Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_ID=$manifestArtifactId"
+                Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_NAME=iwork-release-manifest-$revision"
+                Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_DIGEST=$manifestArtifactDigest"
             }
             if ($invalidConfigArtifactDigests) {
                 Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=sha256:$('8' * 64)"

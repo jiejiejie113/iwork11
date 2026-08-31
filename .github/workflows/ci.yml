@@ -1,14 +1,8 @@
 name: iwork CI
 run-name: >-
-  iwork ci · ${{ inputs.request_id || github.sha }}
+  iwork ci · ${{ inputs.request_id }} · ${{ github.sha }}
 
 on:
-  push:
-    branches:
-      - Keycloak
-  pull_request:
-    branches:
-      - Keycloak
   workflow_dispatch:
     inputs:
       request_id:
@@ -16,13 +10,17 @@ on:
         required: true
         type: string
 
+# ======
+# 完整 CI 的并发与最小权限
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: iwork-ci-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
+# ======
+# 完整 CI 检查 Job
 jobs:
   test:
     name: Python测试与静态检查
@@ -49,6 +47,15 @@ jobs:
       - name: 删除临时测试工作区中的根环境文件
         shell: pwsh
         run: if (Test-Path -LiteralPath .env) { Remove-Item -LiteralPath .env -Force }
+
+      - name: 校验Compose配置
+        shell: pwsh
+        env:
+          DKT_ENVIRONMENT: local
+          IWORK_DJANGO_SECRET_KEY: ci-only-django-secret
+          IWORK_APP_DB_PASSWORD: ci-only-app-password
+          IWORK_DB_PASSWORD: ci-only-read-password
+        run: docker compose --env-file env/local.env config --quiet
 
       - name: 配置Python 3.11
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -87,41 +94,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill安装测试失败" }
           & ./tools/skills/dkt-cicd/tests/Test-DktCicd.ps1
           if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill行为测试失败" }
-
-  build:
-    name: 无密钥Docker构建
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-          fetch-depth: 1
-
-      - name: 校验Compose配置
-        shell: pwsh
-        env:
-          DKT_ENVIRONMENT: local
-          IWORK_DJANGO_SECRET_KEY: ci-only-django-secret
-          IWORK_APP_DB_PASSWORD: ci-only-app-password
-          IWORK_DB_PASSWORD: ci-only-read-password
-        run: docker compose --env-file env/local.env config --quiet
-
-      - name: 清除临时构建上下文中的环境文件
-        shell: pwsh
-        run: >-
-          Get-ChildItem -Path . -Recurse -Force -File |
-          Where-Object { $_.Name -eq '.env' -or $_.Extension -eq '.env' } |
-          Remove-Item -Force
-
-      - name: 构建临时镜像
-        shell: pwsh
-        run: docker build --pull --tag "ci-iwork:$env:GITHUB_SHA" .
-
-      - name: 输出构建摘要
-        shell: pwsh
-        run: |
-          $imageId = docker image inspect "ci-iwork:$env:GITHUB_SHA" --format '{{.Id}}'
-          "### iwork CI构建`n`n- Commit: ``$env:GITHUB_SHA```n- Image ID: ``$imageId``" >> $env:GITHUB_STEP_SUMMARY

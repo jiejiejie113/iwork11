@@ -32,9 +32,10 @@ description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwo
   输入不得发送到 `deploy-portal.yml`。
 - 不把 `queued`、`in_progress` 当作成功。仅 `status=completed` 且
   `conclusion=success` 才可报告成功。
-- iwork 的 `ci`、`release`、`preflight` 和 `deploy` 触发时，脚本会为本次 dispatch
+- iwork 的 `ci`、`publish`、`release`、`preflight` 和 `deploy` 触发时，脚本会为本次 dispatch
   生成独立 GUID `request_id`，并按 Workflow 的 `run-name` 包含该 ID 关联新 Run；
-  `release` 会把已核验 CI Run 的 `ci_request_id` 传给 Release，`preflight`/`deploy`
+  `publish` 会先等待本次 CI 成功，再把已核验 CI Run 的 `ci_request_id` 传给 Release；
+  `release` 只消费用户通过 `-CiRequestId` 明确指定的成功 CI，`preflight`/`deploy`
   会把已核验 Release Run 的 `release_request_id` 传给生产 Workflow；上游关联 ID
   缺失、格式错误或不匹配时必须失败关闭。
   Portal 在对应Workflow完成同一输入契约前继续使用旧Run ID快照、Commit、事件和时间窗
@@ -51,7 +52,8 @@ description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwo
 | 查看最近 Actions/CI 状态 | `status -WorkflowKind ci`；全部 Workflow 使用默认值 `all` |
 | 查看某次失败日志 | `failed-log -RunId <id>` |
 | 运行测试或纯 CI | `ci` |
-| 构建并发布不可变 GHCR 镜像 | `release` |
+| 提交/发版当前版本（本次 CI 成功后发布） | `publish` |
+| 消费已有成功 CI 并发布不可变 GHCR 镜像 | `release -CiRequestId <guid>` |
 | 仅拉取、复验生产候选镜像 | `preflight` |
 | 部署到生产 | `deploy`，严格执行两段确认 |
 | 查看生产交付证据 | `production-status` |

@@ -1,6 +1,6 @@
 name: iwork GHCR不可变镜像发布
 run-name: >-
-  iwork release · ${{ inputs.request_id || github.sha }}
+  iwork release · ${{ inputs.request_id || github.sha }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -35,6 +35,9 @@ jobs:
       CI_REQUEST_ID: ${{ inputs.ci_request_id }}
     outputs:
       run_url: ${{ steps.ci.outputs.run_url }}
+      run_id: ${{ steps.ci.outputs.run_id }}
+      run_attempt: ${{ steps.ci.outputs.run_attempt }}
+      ci_request_id: ${{ steps.ci.outputs.ci_request_id }}
     steps:
       - name: 仅允许带关联ID的手工发布
         shell: pwsh
@@ -69,8 +72,43 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:GITHUB_SHA&status=completed&per_page=100"
-          $response = gh api $endpoint | ConvertFrom-Json
+          function Get-ExactRequestId {
+              param([AllowNull()][string]$Title)
+              $matches = [Regex]::Matches(
+                  [string]$Title,
+                  '(?i)(?<![0-9a-f])(?<request>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])'
+              )
+              if ($matches.Count -ne 1) {
+                  return $null
+              }
+              return $matches[0].Groups['request'].Value.ToLowerInvariant()
+          }
+          $allRuns = [System.Collections.Generic.List[object]]::new()
+          $page = 1
+          $perPage = 100
+          do {
+              $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:GITHUB_SHA&status=completed&per_page=$perPage&page=$page"
+              $rawResponse = gh api $endpoint 2>&1
+              $exitCode = $LASTEXITCODE
+              if ($exitCode -ne 0) {
+                  throw "CI Run查询失败（页码：$page，退出码：$exitCode）：$rawResponse"
+              }
+              try {
+                  $jsonText = $rawResponse -join "`n"
+                  $response = $jsonText | ConvertFrom-Json
+              }
+              catch {
+                  throw "CI Run查询返回无效JSON（页码：$page）。"
+              }
+              $pageRuns = @($response.workflow_runs)
+              foreach ($run in $pageRuns) {
+                  [void]$allRuns.Add($run)
+              }
+              $page++
+          } while ($pageRuns.Count -eq $perPage)
+
+          # 统一使用完整分页结果，保留后续唯一性检查的单一入口。
+          $response = [pscustomobject]@{ workflow_runs = @($allRuns) }
           $successfulRuns = @($response.workflow_runs |
               Where-Object {
                   $_.status -eq "completed" -and
@@ -78,7 +116,7 @@ jobs:
                   $_.event -eq "workflow_dispatch" -and
                   $_.head_branch -eq "Keycloak" -and
                   $_.head_sha -eq $env:GITHUB_SHA -and
-                  ([string]$_.display_title).Contains($env:CI_REQUEST_ID)
+                   (Get-ExactRequestId -Title ([string]$_.display_title)) -ceq $env:CI_REQUEST_ID.ToLowerInvariant()
               } |
               Sort-Object -Property created_at -Descending)
           if ($successfulRuns.Count -ne 1) {
@@ -86,6 +124,9 @@ jobs:
           }
           $successfulRun = $successfulRuns[0]
           "run_url=$($successfulRun.html_url)" >> $env:GITHUB_OUTPUT
+          "run_id=$($successfulRun.id)" >> $env:GITHUB_OUTPUT
+          "run_attempt=$($successfulRun.run_attempt)" >> $env:GITHUB_OUTPUT
+          "ci_request_id=$env:CI_REQUEST_ID" >> $env:GITHUB_OUTPUT
           "已确认CI: $($successfulRun.html_url)"
 
   publish:
@@ -99,7 +140,8 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/guchenkano/iwork
       IMAGE_REF: ghcr.io/guchenkano/iwork:${{ github.sha }}
-      CI_REQUEST_ID: ${{ inputs.ci_request_id }}
+      CI_REQUEST_ID: ${{ needs.verify-ci.outputs.ci_request_id }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: 校验请求关联ID
         if: github.event_name == 'workflow_dispatch'
@@ -136,14 +178,30 @@ jobs:
 
       - name: 清除临时构建上下文中的敏感文件
         shell: pwsh
-        run: >-
-          Get-ChildItem -Path . -Recurse -Force -File |
-          Where-Object {
-            $_.Name -eq '.env' -or
-            $_.Name -like '.env.*' -or
-            $_.Extension -in @('.env', '.db', '.sqlite', '.sqlite3', '.key', '.pem', '.p12', '.pfx')
-          } |
-          Remove-Item -Force
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sensitiveFiles = @(
+              Get-ChildItem -Path . -Recurse -Force -File |
+                  Where-Object {
+                      $_.Name -eq '.env' -or
+                      $_.Name -like '.env.*' -or
+                      $_.Extension -in @('.env', '.db', '.sqlite', '.sqlite3', '.key', '.pem', '.p12', '.pfx')
+                  }
+          )
+          foreach ($file in $sensitiveFiles) {
+              Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+          }
+          $remainingSensitiveFiles = @(
+              Get-ChildItem -Path . -Recurse -Force -File |
+                  Where-Object {
+                      $_.Name -eq '.env' -or
+                      $_.Name -like '.env.*' -or
+                      $_.Extension -in @('.env', '.db', '.sqlite', '.sqlite3', '.key', '.pem', '.p12', '.pfx')
+                  }
+          )
+          if ($remainingSensitiveFiles.Count -ne 0) {
+              throw '临时构建上下文仍包含敏感文件，已停止构建。'
+          }
 
       - name: 使用短期令牌登录GHCR
         shell: pwsh
@@ -161,26 +219,85 @@ jobs:
           $startedAt = [DateTimeOffset]::UtcNow
 
           function Get-RemoteDigest {
+              <#
+              .SYNOPSIS
+              读取 GHCR 标签的 Manifest Digest，并区分“明确不存在”和查询故障。
+
+              .DESCRIPTION
+              只有 HTTP 404 才返回空值。认证、限流、网络、TLS、超时和 5xx
+              均直接失败，禁止把它们误判成可创建的新标签。
+              #>
               param(
-                  [string] $ImageReference,
+                  [Parameter(Mandatory = $true)][string] $ImageReference,
                   [int] $Attempts = 1,
                   [int] $DelaySeconds = 5
               )
 
+              if ($ImageReference -notmatch '^ghcr\.io/(?<path>[A-Za-z0-9._/-]+):(?<tag>[A-Za-z0-9._-]+)$') {
+                  throw "GHCR镜像引用格式无效：$ImageReference"
+              }
+              $basic = [Convert]::ToBase64String(
+                  [Text.Encoding]::ASCII.GetBytes("$env:GITHUB_ACTOR`:$env:GITHUB_TOKEN")
+              )
+              $headers = @{
+                  Authorization = "Basic $basic"
+                  Accept = (
+                      'application/vnd.oci.image.index.v1+json, ' +
+                      'application/vnd.oci.image.manifest.v1+json, ' +
+                      'application/vnd.docker.distribution.manifest.list.v2+json, ' +
+                      'application/vnd.docker.distribution.manifest.v2+json'
+                  )
+              }
+              $uri = "https://ghcr.io/v2/$($Matches['path'])/manifests/$($Matches['tag'])"
               for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
-                  $digestOutput = docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}' 2>$null
-                  if ($LASTEXITCODE -eq 0) {
-                      $digest = @($digestOutput)[-1].Trim().Trim('"')
+                  try {
+                      $response = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $uri -Headers $headers -TimeoutSec 30
+                      $digest = ([string]$response.Headers['Docker-Content-Digest']).Trim()
                       if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
-                          throw "GHCR返回了无效Digest: $digest"
+                          throw "GHCR返回了无效Digest：$digest"
                       }
                       return $digest
                   }
-                  if ($attempt -lt $Attempts) {
-                      Start-Sleep -Seconds $DelaySeconds
+                  catch {
+                      $statusCode = $null
+                      if ($null -ne $_.Exception.Response) {
+                          try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
+                      }
+                      if ($statusCode -eq 404) {
+                          if ($attempt -lt $Attempts) {
+                              Start-Sleep -Seconds $DelaySeconds
+                              continue
+                          }
+                          return $null
+                      }
+                      if ($statusCode -in @(401, 403, 429) -or ($null -ne $statusCode -and $statusCode -ge 500)) {
+                          throw "GHCR查询失败（HTTP $statusCode），不会将错误当作标签不存在。"
+                      }
+                      throw "GHCR查询失败（网络、TLS、超时或未知错误），不会将错误当作标签不存在：$($_.Exception.Message)"
                   }
               }
               return $null
+          }
+
+          function Invoke-LocalImageSmoke {
+              <#
+              .SYNOPSIS
+              在无生产网络和占位凭据下验证待发布镜像能够加载 Django 应用。
+              #>
+              param([Parameter(Mandatory = $true)][string] $ImageReference)
+              $smokeArguments = @(
+                  'run', '--rm', '--network', 'none', '--entrypoint', 'python',
+                  '-e', 'DJANGO_SETTINGS_MODULE=iwork.settings',
+                  '-e', 'DJANGO_SECRET_KEY=ci-only-django-secret',
+                  '-e', 'ACCESS_DB_PASSWORD=ci-only-access-password',
+                  '-e', 'IWORK_DB_PASSWORD=ci-only-iwork-password',
+                  $ImageReference,
+                  '-c', 'import django; django.setup(); print("iwork-image-smoke-ok")'
+              )
+              $smokeOutput = docker @smokeArguments 2>&1
+              if ($LASTEXITCODE -ne 0 -or (($smokeOutput -join "`n") -notmatch 'iwork-image-smoke-ok')) {
+                  throw "本地隔离镜像Smoke失败：$ImageReference"
+              }
           }
 
           function Assert-ImageRevision {
@@ -188,9 +305,24 @@ jobs:
 
               docker pull $ImageReference
               if ($LASTEXITCODE -ne 0) { throw "按Digest拉取镜像失败: $ImageReference" }
-              $revision = docker image inspect $ImageReference --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
-              if ($LASTEXITCODE -ne 0 -or $revision.Trim() -ne $env:GITHUB_SHA) {
+              $labelsJson = docker image inspect $ImageReference --format '{{json .Config.Labels}}'
+              if ($LASTEXITCODE -ne 0) {
+                  throw "镜像OCI标签读取失败: $ImageReference"
+              }
+              try {
+                  $labels = $labelsJson | ConvertFrom-Json
+              }
+              catch {
+                  throw "镜像OCI标签不是有效JSON: $ImageReference"
+              }
+              $revision = [string]$labels.'org.opencontainers.image.revision'
+              $actualSource = [string]$labels.'org.opencontainers.image.source'
+              $expectedSource = "https://github.com/$env:GITHUB_REPOSITORY"
+              if ($revision.Trim() -ne $env:GITHUB_SHA) {
                   throw "镜像OCI revision与当前提交不一致"
+              }
+              if ($actualSource -cne $expectedSource) {
+                  throw "镜像OCI source label与当前仓库不一致"
               }
           }
 
@@ -199,6 +331,7 @@ jobs:
           if ($digest) {
               $reused = $true
               Assert-ImageRevision -ImageReference "$env:IMAGE_NAME@$digest"
+              Invoke-LocalImageSmoke -ImageReference "$env:IMAGE_NAME@$digest"
           }
           else {
               $createdAt = (git show -s --format=%cI $env:GITHUB_SHA).Trim()
@@ -208,6 +341,7 @@ jobs:
                   --label "org.opencontainers.image.created=$createdAt" `
                   --tag $env:IMAGE_REF .
               if ($LASTEXITCODE -ne 0) { throw "iwork镜像构建失败" }
+              Invoke-LocalImageSmoke -ImageReference $env:IMAGE_REF
               docker push $env:IMAGE_REF
               if ($LASTEXITCODE -ne 0) { throw "iwork镜像推送失败" }
               $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF -Attempts 6 -DelaySeconds 5
@@ -265,10 +399,13 @@ jobs:
           compression-level: 0
           include-hidden-files: false
 
-      - name: 记录发布身份
+      - name: 记录配置Artifact发布身份
+        id: config_metadata
         shell: pwsh
         env:
           RAW_ARTIFACT_DIGEST: ${{ steps.config_artifact.outputs.artifact-digest }}
+          CONFIG_ARTIFACT_ID: ${{ steps.config_artifact.outputs.artifact-id }}
+          CONFIG_ARTIFACT_NAME: iwork-production-config-${{ github.sha }}
         run: |
           $rawArtifactDigest = ([string]$env:RAW_ARTIFACT_DIGEST).Trim()
           if ($rawArtifactDigest -match '^sha256:[0-9a-f]{64}$') {
@@ -287,10 +424,150 @@ jobs:
               "- Artifact digest: ``$artifactDigest``"
               '- Artifact name: `iwork-production-config-${{ github.sha }}`'
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          if ($env:CONFIG_ARTIFACT_ID -notmatch '^[0-9]+$') {
+              throw "配置Artifact ID格式无效"
+          }
+          "artifact_name=$env:CONFIG_ARTIFACT_NAME" >> $env:GITHUB_OUTPUT
+          "artifact_id=$env:CONFIG_ARTIFACT_ID" >> $env:GITHUB_OUTPUT
+          "artifact_digest=$artifactDigest" >> $env:GITHUB_OUTPUT
           "IWORK_IMAGE_DIGEST=${{ steps.image.outputs.digest }}"
           "IWORK_CONFIG_DIGEST=${{ steps.config.outputs.config_digest }}"
           "IWORK_CONFIG_ARTIFACT_DIGEST=$artifactDigest"
           "IWORK_REQUEST_ID=${{ inputs.request_id }}"
+
+      - name: 生成独立Release Manifest
+        id: release_manifest
+        shell: pwsh
+        env:
+          CI_RUN_ID: ${{ needs.verify-ci.outputs.run_id }}
+          CI_RUN_ATTEMPT: ${{ needs.verify-ci.outputs.run_attempt }}
+          CI_REQUEST_ID: ${{ needs.verify-ci.outputs.ci_request_id }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_REQUEST_ID: ${{ inputs.request_id }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          CONFIG_DIGEST: ${{ steps.config.outputs.config_digest }}
+          CONFIG_ARTIFACT_NAME: ${{ steps.config_metadata.outputs.artifact_name }}
+          CONFIG_ARTIFACT_ID: ${{ steps.config_metadata.outputs.artifact_id }}
+          CONFIG_ARTIFACT_DIGEST: ${{ steps.config_metadata.outputs.artifact_digest }}
+          IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM }}
+          IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID: ${{ vars.IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($value in @(
+              $env:GITHUB_SHA, $env:CI_REQUEST_ID, $env:RELEASE_REQUEST_ID,
+              $env:IMAGE_DIGEST, $env:CONFIG_DIGEST, $env:CONFIG_ARTIFACT_DIGEST
+          )) {
+              if ([String]::IsNullOrWhiteSpace($value)) { throw 'Release Manifest字段不能为空' }
+          }
+          if ($env:GITHUB_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Manifest Commit格式无效' }
+          if ($env:IMAGE_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Manifest ImageDigest格式无效' }
+          if ($env:CONFIG_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Manifest ConfigDigest格式无效' }
+          if ($env:CONFIG_ARTIFACT_DIGEST -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Manifest ConfigArtifactDigest格式无效' }
+          if ($env:CI_REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Manifest CI request ID格式无效' }
+          if ($env:RELEASE_REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Manifest Release request ID格式无效' }
+          if ($env:CI_RUN_ID -notmatch '^[0-9]+$' -or $env:CI_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$') { throw 'Manifest CI Run标识格式无效' }
+          if ($env:RELEASE_RUN_ID -notmatch '^[0-9]+$' -or $env:RELEASE_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$') { throw 'Manifest Release Run标识格式无效' }
+          if ($env:CONFIG_ARTIFACT_ID -notmatch '^[0-9]+$') { throw 'Manifest Config Artifact ID格式无效' }
+          if ($env:IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID -notmatch '^[A-Za-z0-9._-]{1,128}$') { throw 'Manifest signing key ID格式无效' }
+          if ([String]::IsNullOrWhiteSpace($env:IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM)) { throw 'Manifest signing private key is not configured' }
+
+          $manifestDirectory = Join-Path $env:RUNNER_TEMP 'iwork-release-manifest'
+          New-Item -ItemType Directory -Path $manifestDirectory -Force | Out-Null
+          $manifestPath = Join-Path $manifestDirectory 'release-manifest.json'
+          $signaturePath = Join-Path $manifestDirectory 'release-manifest.sig'
+          $manifest = [ordered]@{
+              schema = 'iwork-release/v1'
+              repository = $env:GITHUB_REPOSITORY
+              branch = 'Keycloak'
+              commit = $env:GITHUB_SHA
+              ci_run_id = [long]$env:CI_RUN_ID
+              ci_run_attempt = [int]$env:CI_RUN_ATTEMPT
+              ci_request_id = $env:CI_REQUEST_ID
+              release_run_id = [long]$env:RELEASE_RUN_ID
+              release_run_attempt = [int]$env:RELEASE_RUN_ATTEMPT
+              release_request_id = $env:RELEASE_REQUEST_ID
+              image_digest = $env:IMAGE_DIGEST
+              config_digest = $env:CONFIG_DIGEST
+              config_artifact_name = $env:CONFIG_ARTIFACT_NAME
+              config_artifact_id = [long]$env:CONFIG_ARTIFACT_ID
+              config_artifact_digest = $env:CONFIG_ARTIFACT_DIGEST
+              manifest_artifact_name = "iwork-release-manifest-$env:GITHUB_SHA"
+              mechanism_id = 'iwork-release-mechanism-v1'
+              risk_envelope = 'application-only'
+              migration_policy_id = 'expand-contract-v1'
+              workflow = '.github/workflows/release.yml'
+              ref = 'refs/heads/Keycloak'
+              signature_algorithm = 'RSASSA-PKCS1-v1_5-SHA256'
+              signature_key_id = $env:IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID
+              created_at = [DateTimeOffset]::UtcNow.ToString('o')
+          }
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          $manifestText = (($manifest | ConvertTo-Json -Depth 8) + "`n")
+          [IO.File]::WriteAllText($manifestPath, $manifestText, $utf8)
+          $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+          $signatureBytes = $null
+          $rsa = [Security.Cryptography.RSA]::Create()
+          try {
+              try {
+                  $rsa.ImportFromPem($env:IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM)
+                  $signatureBytes = $rsa.SignData(
+                      $manifestBytes,
+                      [Security.Cryptography.HashAlgorithmName]::SHA256,
+                      [Security.Cryptography.RSASignaturePadding]::Pkcs1
+                  )
+              }
+              catch {
+                  throw 'Manifest signing failed; signing key is invalid or unsupported.'
+              }
+          }
+          finally {
+              $rsa.Dispose()
+              Remove-Item Env:IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM -ErrorAction SilentlyContinue
+          }
+          [IO.File]::WriteAllText($signaturePath, ([Convert]::ToBase64String($signatureBytes) + "`n"), $utf8)
+          Remove-Item Env:IWORK_RELEASE_MANIFEST_SIGNING_PRIVATE_KEY_PEM -ErrorAction SilentlyContinue
+          "manifest_path=$manifestDirectory" >> $env:GITHUB_OUTPUT
+          "manifest_name=iwork-release-manifest-$env:GITHUB_SHA" >> $env:GITHUB_OUTPUT
+
+      - name: 发布独立Release Manifest Artifact
+        id: manifest_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iwork-release-manifest-${{ github.sha }}
+          path: ${{ steps.release_manifest.outputs.manifest_path }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          include-hidden-files: false
+
+      - name: 记录Manifest Artifact与稳定机器证据
+        shell: pwsh
+        env:
+          MANIFEST_ARTIFACT_ID: ${{ steps.manifest_artifact.outputs.artifact-id }}
+          RAW_MANIFEST_ARTIFACT_DIGEST: ${{ steps.manifest_artifact.outputs.artifact-digest }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:MANIFEST_ARTIFACT_ID -notmatch '^[0-9]+$') { throw 'Manifest Artifact ID格式无效' }
+          $raw = ([string]$env:RAW_MANIFEST_ARTIFACT_DIGEST).Trim()
+          $manifestDigest = if ($raw -match '^sha256:[0-9a-f]{64}$') { $raw } elseif ($raw -match '^[0-9a-f]{64}$') { "sha256:$raw" } else { throw 'Manifest Artifact digest格式无效' }
+          @(
+              '### iwork release manifest'
+              ''
+              '- Manifest name: `iwork-release-manifest-${{ github.sha }}`'
+              "- Manifest artifact ID: ``$env:MANIFEST_ARTIFACT_ID``"
+              "- Manifest artifact digest: ``$manifestDigest``"
+              "- Config artifact ID: ``${{ steps.config_metadata.outputs.artifact_id }}``"
+              "- Config artifact digest: ``${{ steps.config_metadata.outputs.artifact_digest }}``"
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          "IWORK_RELEASE_MANIFEST_ARTIFACT_ID=$env:MANIFEST_ARTIFACT_ID"
+          "IWORK_RELEASE_MANIFEST_ARTIFACT_DIGEST=$manifestDigest"
+          "IWORK_RELEASE_MANIFEST_ARTIFACT_NAME=iwork-release-manifest-${{ github.sha }}"
+          "IWORK_CONFIG_ARTIFACT_ID=${{ steps.config_metadata.outputs.artifact_id }}"
+          "IWORK_CONFIG_ARTIFACT_NAME=${{ steps.config_metadata.outputs.artifact_name }}"
+          "IWORK_CONFIG_ARTIFACT_DIGEST=${{ steps.config_metadata.outputs.artifact_digest }}"
+          "IWORK_RELEASE_RUN_ID=${{ github.run_id }}"
+          "IWORK_RELEASE_RUN_ATTEMPT=${{ github.run_attempt }}"
 
       - name: 注销GHCR
         if: always()
