@@ -1444,7 +1444,7 @@ Manifest签名材料；在Runner空闲维护窗口安装并复验固定部署机
   六项外部探针的生产生产者、签名密钥和受控ACL仍未提供；Workflow不填充占位路径，正式`apply=true`
   会在切换前因缺少受信生产者失败关闭，避免以隔离测试夹具冒充生产业务探针。
 
-本地验证结果（2026-08-31收口复验）：阶段4部署测试`58 passed`，CI Workflow与配置包契约测试`32 passed`，
+本地验证结果（2026-08-31收口复验）：阶段4部署测试`60 passed`，CI Workflow与配置包契约测试`32 passed`，
 dkt-cicd离线验收`139`个断言通过；PowerShell解析、YAML/Compose和差异检查均通过。当前没有真实外部六项收据、
 受信看门狗清单安装哈希或生产兼容迁移证据，所以本节状态保持“部分完成/进行中”，不能标记阶段8完成。
 真实CI共617项通过、17项失败；失败集中在Hosted Runner临时文件Owner被误按生产域身份校验，
@@ -1461,6 +1461,14 @@ Owner/ACL专项规范见
 [2026-08-31-iwork-Owner-ACL校验规范.md](2026-08-31-iwork-Owner-ACL校验规范.md)。该规范是本节后续实现和验收的统一参考，
 特别要求把部署执行身份、探针生产者身份、文件Owner和允许写入主体分离，并使用SID化的显式ACL白名单；
 Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路径自动放宽校验。
+
+针对真实CI暴露的Owner兼容性，已按社区已合并的
+[libgit2 #6279](https://github.com/libgit2/libgit2/issues/6279) /
+[libgit2 #6341](https://github.com/libgit2/libgit2/pull/6341)案例和Microsoft
+[`icacls`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls)工具语义修复隔离夹具：
+`.NET SetOwner` 后立即回读实际Owner；仍为管理员组或设置异常时，使用数值SID调用`icacls /setowner`并再次回读，失败即显式失败关闭。
+夹具脚本使用UTF-8 BOM以兼容Windows PowerShell 5.1的系统代码页。生产校验器仍拒绝`S-1-5-32-544`，没有增加CI、Runner名称或管理员组放宽分支。
+本地阶段4测试已恢复为`60 passed`，尚未重新触发真实CI；真实CI通过前不得进入Release、生产准入或部署。
 
 下一入口：先重新通过包含Owner/ACL切片的真实CI；
 再在独立的DTD_nginx机制提交中提交并安装与上述看门狗清单字节一致的受信文件，提供六项探针收据生产者和签名/来源证明；

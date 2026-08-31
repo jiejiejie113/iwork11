@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -122,8 +123,10 @@ $directorySet = @($DirectoryPaths -split '\|' | ForEach-Object { [IO.Path]::GetF
         else {
             [Security.AccessControl.FileSecurity]::new()
         }
-        $acl.SetAccessRuleProtection($true, $false)
-        $acl.SetOwner($currentSid)
+        $null = $acl.SetAccessRuleProtection($true, $false)
+        $setOwnerError = $null
+        try { $acl.SetOwner($currentSid) }
+        catch { $setOwnerError = $_ }
     $readRights = if ($fullPath -in $directorySet) {
         [Security.AccessControl.FileSystemRights]::ListDirectory
     }
@@ -139,10 +142,10 @@ $directorySet = @($DirectoryPaths -split '\|' | ForEach-Object { [IO.Path]::GetF
     $none = [Security.AccessControl.InheritanceFlags]::None
     $noPropagation = [Security.AccessControl.PropagationFlags]::None
     $allow = [Security.AccessControl.AccessControlType]::Allow
-    $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    $null = $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
         $currentSid, $currentRights, $none, $noPropagation, $allow
     ))
-    $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    $null = $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
         $systemSid, [Security.AccessControl.FileSystemRights]::FullControl,
         $none, $noPropagation, $allow
     ))
@@ -152,12 +155,39 @@ $directorySet = @($DirectoryPaths -split '\|' | ForEach-Object { [IO.Path]::GetF
     else {
         [IO.File]::SetAccessControl($fullPath, $acl)
     }
+    $owner = (Get-Item -LiteralPath $fullPath -Force).
+        GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($null -ne $setOwnerError -or $owner -cne $currentSid.Value) {
+        try {
+            $null = & "$env:SystemRoot\System32\icacls.exe" $fullPath /setowner ("*" + $currentSid.Value) /C 2>&1
+        }
+        catch {
+            $detail = if ($null -ne $setOwnerError) { $setOwnerError.Exception.Message } else { $_.Exception.Message }
+            throw "无法调用icacls设置测试对象Owner：$detail"
+        }
+        if ($LASTEXITCODE -ne 0) {
+            $detail = if ($null -ne $setOwnerError) { $setOwnerError.Exception.Message } else { 'Owner回读不匹配' }
+            throw "icacls设置测试对象Owner失败：$fullPath；$detail"
+        }
+        $owner = (Get-Item -LiteralPath $fullPath -Force).
+            GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($owner -cne $currentSid.Value) {
+            throw "ACL Owner校验失败，icacls后仍为非当前SID：$owner"
+        }
+    }
 }
-$owner = (Get-Item -LiteralPath ([IO.Path]::GetFullPath($pathList[0])) -Force).
-    GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
-[Console]::Out.Write($owner)
+$owners = @($pathList | ForEach-Object {
+    (Get-Item -LiteralPath ([IO.Path]::GetFullPath($_)) -Force).
+        GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+})
+if (@($owners | Where-Object { $_ -cne $currentSid.Value }).Count -gt 0) {
+    throw "ACL Owner校验失败，仍存在非当前SID Owner：$($owners -join ',')"
+}
+[Console]::Out.Write($currentSid.Value)
 """,
-        encoding="utf-8",
+        # Windows PowerShell 5.1 按系统代码页读取无BOM脚本；加入UTF-8 BOM避免中文
+        # 文本被误解码后破坏字符串字面量（Hosted Runner 的默认代码页并不固定）。
+        encoding="utf-8-sig",
     )
     result = subprocess.run(  # noqa: S603 - 仅执行固定的隔离Windows ACL配置脚本
         [
@@ -662,6 +692,27 @@ def test_deployment_requires_explicit_owner_acl_trust_manifest() -> None:
     assert "$TrustManifestPath" in content
     assert "$TrustManifestSha256" in content
     assert "iwork-owner-acl/v1" in content
+
+
+def test_isolated_acl_fixture_reports_owner_setting_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACL设置或Owner回读失败时，夹具必须显式失败而不是放过测试。"""
+    target = tmp_path / "probe.ps1"
+    target.write_text("# isolated\n", encoding="utf-8")
+
+    def failed_acl_process(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args, returncode=1, stdout="", stderr="icacls owner failure"
+        )
+
+    monkeypatch.setattr(subprocess, "run", failed_acl_process)
+    with pytest.raises(RuntimeError, match="无法在隔离测试对象上应用严格Windows ACL"):
+        _configure_isolated_acl(tmp_path, [target], directory_paths=set())
+    setup_script = (tmp_path / "configure-test-acl.ps1").read_text(encoding="utf-8")
+    assert "icacls.exe" in setup_script
+    assert "/setowner" in setup_script
+    assert "ACL Owner校验失败" in setup_script
 
 
 def _run_deployment_script(

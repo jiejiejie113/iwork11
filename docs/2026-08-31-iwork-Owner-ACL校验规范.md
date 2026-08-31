@@ -203,3 +203,16 @@ Workflow 只固定传递 trust manifest 路径和 SHA（以及清单解析出的
 5. 在生产主机提供真实生产者、公钥/密钥、清单和 ACL 证据后，再更新 Workflow、安装器和部署脚本哈希。
 
 在第 5 步完成并通过生产主机只读核验前，`apply=true` 必须保持失败关闭；不得用测试夹具、`BUILTIN\\Administrators` 或旧收据替代生产证据。
+
+## 10. 社区验证依据与本仓库采用方式
+
+- [libgit2 #6279](https://github.com/libgit2/libgit2/issues/6279) 记录了同一类 Hosted Windows Runner 现象：默认 PowerShell 创建的文件可能由
+  `BUILTIN\\Administrators` 持有，而当前进程用户是 `runneradmin`。
+- [libgit2 #6341](https://github.com/libgit2/libgit2/pull/6341) 是已合并的修复：只有当前用户确实属于管理员组时，才把管理员组 Owner
+  视为普通仓库读取的可接受情况。该语义不能移植到 iwork 的生产信任边界，生产清单仍禁止管理员组 Owner。
+- [Microsoft `icacls` 文档](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls) 明确支持数值 SID、
+  `/setowner`、`/inheritancelevel:r` 和 `/verify`，适合在 Windows 上设置后立即回读验证。
+
+iwork 的 Hosted Runner 隔离夹具采用上述工具语义而不是放宽生产校验：先写入当前 SID+SYSTEM 的受保护 DACL，立即回读 Owner；若 .NET
+`SetOwner` 未生效或抛出异常，则调用 `icacls /setowner *<当前SID>`，再回读并在仍不匹配时失败关闭。夹具脚本使用 UTF-8 BOM，避免
+Windows PowerShell 5.1 按系统代码页解析中文字符串。生产脚本不调用该回退、不识别 CI 环境，也不把 `BUILTIN\\Administrators` 加入白名单。
