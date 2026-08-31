@@ -1380,3 +1380,19 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 - 业务探针：HTTPS健康端点`204`；容器内应用根路径`200`；实时API`200 application/json`；SSE`200 text/event-stream`。外部未带用户会话的实时API/SSE返回`401`，符合认证预期。部署后最近10分钟iwork/worker日志未发现错误或连接失败。
 - 收尾：部署锁、维护标记、候选/回滚运行容器均不存在；历史`.candidate.yml/.rollback.yml`仅作为审计留存。未执行数据库迁移、Redis清理、Keycloak/共享卷/网络/Nginx重建。
 - 当前状态：阶段8仍为“进行中”，原因仅为24小时稳定观察尚未完成；真实账号浏览器验收按用户决定作为风险豁免，不宣称实际通过。
+## 14.3 2026-08-31 阶段8后续改造方案审查与修订（设计未实施）
+用户提出的《2026-08-31-iwork-CICD最终修改方案》已完成只读审查和修订；该文件是阶段8后的改造设计，不是新的进度基线。
+本轮未修改业务代码、Workflow或服务器，未触发新的Actions或生产部署；阶段8仍保持进行中。
+
+设计稿已按审查结论明确：
+- 完整 CI 与无生产权限的轻量 PR/Push 检查分离；切换触发器必须在 Skill 编排验证完成后最后执行。
+- 采用 publish（本次 CI→Release）与 release（消费明确 CI 证据）两个语义，Release 成功不自动进入生产 Preflight。
+- 配置 Artifact 先上传，随后单独生成并上传 Release Manifest；Manifest Artifact digest 作为外部信任锚，禁止自引用。
+- Deploy 绑定 Release Run/attempt、两个 Artifact 的 id/name/digest、Commit、request_id 和三类 Digest，禁止“最新成功”猜测。
+- GHCR 仅明确 404 允许创建新标签；其他认证、网络、限流和服务端错误失败关闭；新镜像须隔离 Smoke 后推送。
+- 外部 HTTPS/OIDC/SSE/业务探针先 observe-only 建基线，再按候选故障与共享依赖故障分级；证书校验不得绕过。
+- 迁移必须有 migration_policy_id 和机器可验证兼容性证据；无证据时不允许自动应用回滚；手工回滚仅限历史实际 deployed 且未撤销版本。
+- 目标准入模型为机制指纹，ApprovedHeadSha 仅为迁移期补偿；临时凭据和配置目录清理失败必须形成告警收据。
+
+当前只读证据：设计稿仍是未跟踪文件；文档提交触发的 CI Run 33158352848 为 completed/success，约350秒。
+后续执行必须从设计稿第12节切片开始，并在每个切片同一提交中回写本总方案；任何切片失败停止分析，不得以旧证据重试绕过。
