@@ -1,8 +1,8 @@
 {% load static %}
 <!-- 共用标题栏 + tab导航（实时数据/生产详情/历史数据） -->
 <!-- 用法：在 header 标签内 include，之后再放各页面特有的控件 -->
-<h1 class="text-xl font-bold text-slate-100">{{ page_title }} <span v-if="stepnoFilter" class="text-slate-400">- {[ stepnoFilter ]}工序</span></h1>
-<div class="flex items-center gap-3 flex-wrap">
+<h1 class="iwork-page-title text-xl font-bold text-slate-100">{{ page_title }} <span v-if="stepnoFilter" class="text-slate-400">- {[ stepnoFilter ]}工序</span></h1>
+<div class="iwork-main-nav flex items-center gap-3 flex-wrap">
     <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
         <a :href="basePath"
             :class="currentView === 'realtime' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"

@@ -1,0 +1,33 @@
+{% comment %}
+    由服务端 User-Agent 标记设备类型：桌面端保留现有放大字号，
+    手机/平板恢复 Tailwind 默认字号，避免窄屏信息密度过低。
+{% endcomment %}
+<script>
+    const _iworkIsMobile = {{ is_mobile_device|yesno:"true,false" }};
+    const _iworkDesktopFontSize = {
+        'xs': ['15px', { lineHeight: '1.5' }],
+        'sm': ['17px', { lineHeight: '1.5' }],
+        'base': ['20px', { lineHeight: '1.5' }],
+        'lg': ['22px', { lineHeight: '1.5' }],
+        'xl': ['24px', { lineHeight: '1.5' }],
+        '2xl': ['29px', { lineHeight: '1.5' }],
+        '3xl': ['36px', { lineHeight: '1.5' }],
+    };
+    const _iworkMobileFontSize = {
+        'xs': ['12px', { lineHeight: '1rem' }],
+        'sm': ['14px', { lineHeight: '1.25rem' }],
+        'base': ['16px', { lineHeight: '1.5rem' }],
+        'lg': ['18px', { lineHeight: '1.75rem' }],
+        'xl': ['20px', { lineHeight: '1.75rem' }],
+        '2xl': ['24px', { lineHeight: '2rem' }],
+        '3xl': ['30px', { lineHeight: '2.25rem' }],
+    };
+    tailwind.config = {
+        darkMode: 'class',
+        theme: {
+            extend: {
+                fontSize: _iworkIsMobile ? _iworkMobileFontSize : _iworkDesktopFontSize,
+            },
+        },
+    };
+</script>

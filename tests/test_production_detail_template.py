@@ -346,9 +346,10 @@ def test_product_dimension_drag_is_frame_throttled_and_composited():
     assert 'if (activeTagDrag.value) onTagPointerCancel();' in TEMPLATE
 
 
-def test_worker_card_drag_owns_touch_gesture_and_handles_cancel():
-    """平板触摸拖动卡片时应阻止原生滚动接管并正确处理取消事件。"""
-    assert '.card-wrapper .card.grab { cursor:grab; touch-action:none; }' in TEMPLATE
+def test_worker_card_touch_scroll_is_preserved_and_mouse_drag_handles_cancel():
+    """触摸卡片应保留纵向滚动，鼠标排序仍应处理取消事件。"""
+    assert '.card-wrapper .card.grab { cursor:grab; touch-action:pan-y; }' in TEMPLATE
+    assert "if (e.pointerType === 'touch') return;" in TEMPLATE
     assert "window.addEventListener('pointercancel', onPointerUp);" in TEMPLATE
     assert "window.removeEventListener('pointercancel', onPointerUp);" in TEMPLATE
     assert 'if (activeDrag.value) onPointerUp();' in TEMPLATE

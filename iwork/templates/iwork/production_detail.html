@@ -11,24 +11,7 @@
         const _p = location.pathname;
         window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
     </script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontSize: {
-                        'xs': ['15px', { lineHeight: '1.5' }],
-                        'sm': ['17px', { lineHeight: '1.5' }],
-                        'base': ['20px', { lineHeight: '1.5' }],
-                        'lg': ['22px', { lineHeight: '1.5' }],
-                        'xl': ['24px', { lineHeight: '1.5' }],
-                        '2xl': ['29px', { lineHeight: '1.5' }],
-                        '3xl': ['36px', { lineHeight: '1.5' }],
-                    }
-                }
-            }
-        }
-    </script>
+    {% include 'iwork/_tailwind_config.html' %}
     <style>
         .tabular-nums { font-variant-numeric: tabular-nums; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -46,7 +29,7 @@
             display:flex; align-items:center; width:100%; height:100%;
             transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, opacity .2s ease;
         }
-        .card-wrapper .card.grab { cursor:grab; touch-action:none; }
+        .card-wrapper .card.grab { cursor:grab; touch-action:pan-y; }
         .card-wrapper .card.grab:active { cursor:grabbing; }
         /* 占位符 */
         .card-wrapper .card.placeholder { background:transparent; border:2px dashed #475569; opacity:.5; }
@@ -194,20 +177,73 @@
         /* 产品图表容器过渡 */
         .product-chart-panel { height: 300px; }
         #product-chart { transition: opacity 0.35s ease; }
+        .iwork-page-header { min-width: 0; }
+        .iwork-main-nav { min-width: 0; }
+        .iwork-detail-content { min-height: 0; }
+        .iwork-detail-toolbar { min-width: 0; }
+        .iwork-card-view {
+            min-height: 0;
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+        }
+        @media (hover: none) and (pointer: coarse) {
+            .card-wrapper .card.grab { cursor: default; }
+        }
+        body[data-device="mobile"] { touch-action: auto; }
+        body[data-device="mobile"] .iwork-app { padding: .5rem; }
+        body[data-device="mobile"] .iwork-page-header {
+            align-items: flex-start;
+            gap: .5rem;
+            margin-bottom: .5rem;
+        }
+        body[data-device="mobile"] .iwork-page-title {
+            font-size: 1.125rem;
+            line-height: 1.25;
+            flex: 1 1 100%;
+        }
+        body[data-device="mobile"] .iwork-main-nav {
+            width: 100%;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            gap: .35rem;
+        }
+        body[data-device="mobile"] .iwork-main-nav > div { flex-shrink: 0; }
+        body[data-device="mobile"] .iwork-main-nav a {
+            padding: .35rem .6rem;
+            font-size: .75rem;
+            white-space: nowrap;
+        }
+        body[data-device="mobile"] .iwork-detail-toolbar {
+            gap: .5rem;
+            margin-bottom: .5rem;
+            align-items: flex-start;
+        }
+        body[data-device="mobile"] .iwork-detail-summary { font-size: .75rem; line-height: 1.25; }
+        body[data-device="mobile"] .iwork-last-update { display: none; }
+        body[data-device="mobile"] .iwork-detail-controls {
+            width: 100%;
+            margin-left: 0;
+            gap: .35rem;
+        }
+        body[data-device="mobile"] .iwork-detail-controls input,
+        body[data-device="mobile"] .iwork-detail-controls select {
+            max-width: 100%;
+        }
         @media (min-width: 768px) and (max-width: 1366px),
                (min-width: 768px) and (max-height: 900px) {
             .product-chart-panel { height: clamp(180px, 24vh, 220px); }
         }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" style="touch-action:none;">
-<div id="app" class="container mx-auto flex flex-col h-full px-4 py-6"
+<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" data-device="{{ device_type }}" style="touch-action:auto;">
+<div id="app" class="iwork-app container mx-auto flex flex-col h-full min-h-0 px-4 py-6"
      data-initial-view="{{ initial_view }}"
      data-detail-type="{{ detail_type|default:'' }}"
      data-detail-key="{{ detail_key|default:'' }}">
 
     <!-- 顶部工具栏 -->
-    <header class="flex justify-between items-center mb-2 flex-wrap gap-4">
+    <header class="iwork-page-header flex justify-between items-center mb-2 flex-wrap gap-4">
         {% include 'iwork/_header.html' %}
         <div v-if="currentView === 'overview'" class="flex bg-slate-800 rounded-lg p-0.5 border border-slate-700">
             <button @click="groupMode = 'flow'; loadOverview()"
@@ -232,7 +268,7 @@
                 {[ historySnapshotMessage ]}
             </span>
         </div>
-        <span v-if="!isHistoricalDate" class="text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
+        <span v-if="!isHistoricalDate" class="iwork-last-update text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
         </div>
     </header>
 
@@ -587,14 +623,14 @@
 </div>
 
 <!-- ===== 详情页 ===== -->
-    <div v-if="currentView === 'detail'" class="flex-1 flex flex-col overflow-hidden">
+    <div v-if="currentView === 'detail'" class="iwork-detail-content flex-1 min-h-0 flex flex-col overflow-hidden">
         <!-- 工具栏：面包屑 + 控件组（单行） -->
-        <div class="flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap text-sm">
+        <div class="iwork-detail-toolbar flex-shrink-0 flex items-center gap-3 mb-4 flex-wrap text-sm">
             <!-- 左侧：面包屑 -->
             <a :href="overviewUrl" class="text-blue-400 hover:underline">生产详情</a>
             <span class="text-slate-600">/</span>
             <span class="font-semibold">{[ detailTitle ]}</span>
-            <span class="text-slate-400">
+            <span class="iwork-detail-summary text-slate-400">
                 👤 {[ detailSummary.worker_count ]}人
                 · 累计产量 {[ fmtNum(detailSummary.cumulative_qty) ]}
                 <span v-if="detailType === 'flow' && (detailSummary.group_target !== null || detailSummary.target_total > 0)">
@@ -640,7 +676,7 @@
             </span>
 
             <!-- 右侧：控件组 -->
-            <div class="flex items-center gap-3 ml-auto flex-wrap">
+            <div class="iwork-detail-controls flex items-center gap-3 ml-auto flex-wrap">
                 <div v-if="detailType !== 'initial_style'" class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
                     <button @click="detailLayout = 'table'"
                         :class="detailLayout === 'table' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
@@ -881,8 +917,8 @@
         </div>
 
         <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
-        <div v-if="detailType !== 'initial_style' && detailLayout === 'cards'" class="flex-1 overflow-y-auto">
-        <TransitionGroup name="flip" tag="div" class="grid grid-cols-2 gap-3">
+        <div v-if="detailType !== 'initial_style' && detailLayout === 'cards'" class="iwork-card-view flex-1 min-h-0 overflow-y-auto">
+        <TransitionGroup name="flip" tag="div" class="iwork-card-grid grid grid-cols-2 gap-3 pb-4">
             <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" class="card-wrapper">
                 <!-- 占位符：原位置显示虚线框 -->
                 <div v-if="activeDrag && dragIndex === idx" class="card placeholder"></div>
@@ -2937,6 +2973,8 @@ createApp({
 
         function onPointerDown(e, idx) {
             if (e.button !== undefined && e.button !== 0) return;
+            // 触摸设备保留原生纵向滚动，卡片排序仅由鼠标/触控板执行。
+            if (e.pointerType === 'touch') return;
             const el = e.currentTarget;
             const rect = el.getBoundingClientRect();
             dragIndex.value = idx;

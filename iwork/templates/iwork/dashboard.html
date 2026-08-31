@@ -12,24 +12,7 @@
         const _p = location.pathname;
         window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
     </script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontSize: {
-                        'xs': ['15px', { lineHeight: '1.5' }],
-                        'sm': ['17px', { lineHeight: '1.5' }],
-                        'base': ['20px', { lineHeight: '1.5' }],
-                        'lg': ['22px', { lineHeight: '1.5' }],
-                        'xl': ['24px', { lineHeight: '1.5' }],
-                        '2xl': ['29px', { lineHeight: '1.5' }],
-                        '3xl': ['36px', { lineHeight: '1.5' }],
-                    }
-                }
-            }
-        }
-    </script>
+    {% include 'iwork/_tailwind_config.html' %}
     <style>
         .tabular-nums { font-variant-numeric: tabular-nums; }
         .status-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
@@ -43,13 +26,41 @@
         .pf-tab-scroll::-webkit-scrollbar-track { background: #1e293b; border-radius: 3px; }
         .pf-tab-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
         .pf-tab-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .iwork-page-header { min-width: 0; }
+        .iwork-main-nav { min-width: 0; }
+        body[data-device="mobile"] .iwork-app { padding: .5rem; }
+        body[data-device="mobile"] .iwork-page-header {
+            align-items: flex-start;
+            gap: .5rem;
+            margin-bottom: .5rem;
+        }
+        body[data-device="mobile"] .iwork-page-title {
+            font-size: 1.125rem;
+            line-height: 1.25;
+            flex: 1 1 100%;
+        }
+        body[data-device="mobile"] .iwork-main-nav {
+            width: 100%;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            gap: .35rem;
+        }
+        body[data-device="mobile"] .iwork-main-nav > div {
+            flex-shrink: 0;
+        }
+        body[data-device="mobile"] .iwork-main-nav a {
+            padding: .35rem .6rem;
+            font-size: .75rem;
+            white-space: nowrap;
+        }
+        body[data-device="mobile"] .iwork-last-update { display: none; }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen">
-<div id="app" class="container mx-auto px-4 py-6" data-initial-view="{{ initial_view }}">
+<body class="bg-slate-900 text-slate-100 min-h-screen" data-device="{{ device_type }}">
+<div id="app" class="iwork-app container mx-auto px-4 py-6" data-initial-view="{{ initial_view }}">
 
     <!-- ========== 顶部工具栏 ========== -->
-    <header class="flex justify-between items-center mb-2 flex-wrap gap-4">
+    <header class="iwork-page-header flex justify-between items-center mb-2 flex-wrap gap-4">
         {% include 'iwork/_header.html' %}
 
             <!-- StepNo 全局过滤（单选下拉） -->
@@ -90,7 +101,7 @@
                 class="px-4 py-2 border border-slate-600 rounded-lg text-sm transition-colors">
                 {[ isPaused ? '恢复更新' : '暂停更新' ]}
             </button>
-            <span v-if="currentView === 'realtime'" class="text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
+            <span v-if="currentView === 'realtime'" class="iwork-last-update text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
         </div>
     </header>
 
