@@ -40,6 +40,23 @@ param(
     [string]$WeeklyMaintenanceFile = 'D:\DM\DTD_nginx\logs\watchdog\maintenance\docker-weekly-restart.json',
     [string]$SecretsFile = 'D:\DM\dkt-secrets.env',
     [string]$WatchdogScript = 'D:\DM\DTD_nginx\scripts\docker-health-watchdog.ps1',
+    [string]$WatchdogSha256 = '',
+    [string]$WatchdogManifestPath = '',
+    [string]$WatchdogManifestSha256 = '',
+    [string]$WatchdogTaskName = '',
+    [string]$WatchdogTaskPath = '\',
+    [string]$ExternalProbeUri = '',
+    [string]$ExternalProbeReceiptPath = '',
+    [string]$ExternalProbeAuthorizationEnvVar = '',
+    [string]$ExternalProbeProducerPath = '',
+    [string]$ExternalProbeProducerSha256 = '',
+    [string]$ExternalProbeSigningSecretFile = '',
+    [string]$ExternalProbeSigningSecretSha256 = '',
+    [string]$ExternalProbeProducerExpectedIdentity = '',
+    [ValidateRange(1, 3600)]
+    [int]$ExternalProbeMaxAgeSeconds = 300,
+    [ValidateRange(1, 600)]
+    [int]$ExternalProbeTimeoutSeconds = 30,
     [string]$DockerCommand = 'docker',
     [string]$ProductionMutexName = 'Global\DKT-Production-Deploy',
     [string]$RecoveryMutexName = 'Global\DKT-Docker-Recovery',
@@ -64,6 +81,17 @@ $EXPECTED_CONTAINERS = @('DKT_iwork', 'DKT_iwork_alert_worker')
 $RUN_MIGRATIONS_ENABLED = $RunMigrations -eq 'true'
 $ROLLBACK_DRILL_ENABLED = $RollbackDrill -eq 'true'
 $WATCHDOG_RECOVERY_MUTEX = 'Global\DKT-Docker-Recovery'
+$WATCHDOG_MECHANISM_SCHEMA = 'dkt-docker-health-watchdog/v1'
+$WATCHDOG_EXECUTION_IDENTITY = 'NT AUTHORITY\SYSTEM'
+$EXTERNAL_PROBE_CONTRACT_ID = 'iwork-external-probes-v2'
+$EXTERNAL_PROBE_NAMES = @(
+    'https_nginx',
+    'oidc_discovery',
+    'sse_first_event',
+    'sse_heartbeat',
+    'business_read',
+    'notification_chain'
+)
 $ROLLBACK_DRILL_FILE = Join-Path $StateRoot 'rollback-drill-v1.json'
 $COORDINATION_MODULE = Join-Path $PSScriptRoot 'ProductionCoordination.psm1'
 Import-Module -Name $COORDINATION_MODULE -Force
@@ -422,6 +450,596 @@ function Assert-ContainerHealthy {
     }
 }
 
+function Assert-TrustedProbeFile {
+    <#
+    .SYNOPSIS
+    验证外部探针信任文件的固定哈希、所有者和写权限边界。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+    if ($ExpectedSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "$Description SHA-256必须是64位小写十六进制。"
+    }
+    Assert-RequiredFile -Path $Path -Description $Description
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Description不能是重解析文件。"
+    }
+    if ((Get-Sha256 -Path $Path) -cne $ExpectedSha256) {
+        throw "$Description SHA-256不匹配。"
+    }
+    if ([String]::IsNullOrWhiteSpace($ExternalProbeProducerExpectedIdentity)) {
+        throw '缺少外部探针生产者预期身份。'
+    }
+    $acl = [IO.File]::GetAccessControl(
+        [IO.Path]::GetFullPath($Path),
+        [Security.AccessControl.AccessControlSections]::Owner -bor
+            [Security.AccessControl.AccessControlSections]::Access
+    )
+    if ([string]$acl.Owner -ine $ExternalProbeProducerExpectedIdentity) {
+        throw "$Description所有者不是受信探针身份：$($acl.Owner)"
+    }
+    $broadIdentities = @(
+        'Everyone', 'BUILTIN\Users', 'NT AUTHORITY\Authenticated Users',
+        'S-1-1-0', 'S-1-5-11'
+    )
+    $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor
+        [Security.AccessControl.FileSystemRights]::Modify -bor
+        [Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($rule in @($acl.GetAccessRules($true, $true, [Security.Principal.NTAccount]))) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            [string]$rule.IdentityReference -in $broadIdentities -and
+            (($rule.FileSystemRights -band $writeRights) -ne 0)) {
+            throw "$Description ACL允许非受信主体写入：$($rule.IdentityReference)"
+        }
+    }
+}
+
+function Assert-ExternalProbeProducer {
+    <#
+    .SYNOPSIS
+    在候选切换前验证探针生产者和签名密钥文件的信任边界。
+    #>
+    if ([String]::IsNullOrWhiteSpace($ExternalProbeProducerPath)) {
+        throw '缺少受信外部探针生产者。'
+    }
+    Assert-TrustedProbeFile `
+        -Path $ExternalProbeProducerPath `
+        -ExpectedSha256 $ExternalProbeProducerSha256 `
+        -Description '外部探针生产者'
+    Assert-TrustedProbeFile `
+        -Path $ExternalProbeSigningSecretFile `
+        -ExpectedSha256 $ExternalProbeSigningSecretSha256 `
+        -Description '外部探针签名密钥'
+    $receiptParent = [IO.Path]::GetDirectoryName(
+        [IO.Path]::GetFullPath($ExternalProbeReceiptPath)
+    )
+    if (-not (Test-Path -LiteralPath $receiptParent -PathType Container)) {
+        throw "外部探针收据目录不存在：$receiptParent"
+    }
+    $receiptParentItem = Get-Item -LiteralPath $receiptParent -Force
+    if (($receiptParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw '外部探针收据目录不能是重解析点。'
+    }
+    $receiptParentAcl = [IO.Directory]::GetAccessControl(
+        $receiptParent,
+        [Security.AccessControl.AccessControlSections]::Owner -bor
+            [Security.AccessControl.AccessControlSections]::Access
+    )
+    if ([string]$receiptParentAcl.Owner -ine $ExternalProbeProducerExpectedIdentity) {
+        throw '外部探针收据目录所有者不是受信探针身份。'
+    }
+    $broadIdentities = @(
+        'Everyone', 'BUILTIN\Users', 'NT AUTHORITY\Authenticated Users',
+        'S-1-1-0', 'S-1-5-11'
+    )
+    $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor
+        [Security.AccessControl.FileSystemRights]::Modify -bor
+        [Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($rule in @($receiptParentAcl.GetAccessRules(
+        $true, $true, [Security.Principal.NTAccount]
+    ))) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            [string]$rule.IdentityReference -in $broadIdentities -and
+            (($rule.FileSystemRights -band $writeRights) -ne 0)) {
+            throw "外部探针收据目录ACL允许非受信主体写入：$($rule.IdentityReference)"
+        }
+    }
+    if (Test-Path -LiteralPath $ExternalProbeReceiptPath) {
+        throw '外部探针收据在候选切换前已存在，拒绝复用或覆盖。'
+    }
+}
+
+function Test-FixedTimeBytesEqual {
+    <#
+    .SYNOPSIS
+    使用固定长度逐字节比较验证签名，避免提前返回。
+    #>
+    param([byte[]]$Left, [byte[]]$Right)
+    if ($null -eq $Left -or $null -eq $Right -or $Left.Length -ne $Right.Length) {
+        return $false
+    }
+    $difference = 0
+    for ($index = 0; $index -lt $Left.Length; $index++) {
+        $difference = $difference -bor ($Left[$index] -bxor $Right[$index])
+    }
+    return $difference -eq 0
+}
+
+function Invoke-AndAssertExternalProbe {
+    <#
+    .SYNOPSIS
+    在宿主机上验证生产外部探针生成的六项不可变收据。
+
+    .DESCRIPTION
+    外部探针必须在候选双容器切换完成后，由哈希固定且ACL受控的本地主机
+    生产者完成HTTPS/Nginx、OIDC、SSE首事件、
+    SSE心跳、关键只读业务接口和通知链路六项检查。收据绑定当前请求、
+    部署Run、候选Commit、镜像与配置Digest，并且在有限时间内生成；
+    缺少、重复、未知或未成功的探针项目均失败关闭。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][DateTimeOffset]$SwitchedAt,
+        [Parameter(Mandatory = $true)][object[]]$CandidateContainers
+    )
+    if (-not [String]::IsNullOrWhiteSpace($ExternalProbeUri) -or
+        -not [String]::IsNullOrWhiteSpace($ExternalProbeAuthorizationEnvVar)) {
+        throw '外部探针URI模式已禁用，只接受受控主机生成的六项收据。'
+    }
+    if ([String]::IsNullOrWhiteSpace($ExternalProbeReceiptPath)) {
+        throw '缺少外部探针六项收据路径。'
+    }
+    $nonce = [Guid]::NewGuid().ToString('N')
+    $challengeRoot = Join-Path $StateRoot 'external-probe-challenges'
+    if (-not (Test-Path -LiteralPath $challengeRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $challengeRoot -Force | Out-Null
+    }
+    $challengePath = Join-Path $challengeRoot "$RunId-$nonce.json"
+    $signaturePath = "$ExternalProbeReceiptPath.sig"
+    foreach ($outputPath in @($ExternalProbeReceiptPath, $signaturePath, $challengePath)) {
+        if (Test-Path -LiteralPath $outputPath) {
+            throw "外部探针一次性输出已存在，拒绝复用：$outputPath"
+        }
+    }
+    $challenge = [ordered]@{
+        schema = 'iwork-external-probe-challenge/v1'
+        nonce = $nonce
+        request_id = $RequestId
+        deployment_run_id = $RunId
+        switched_at = $SwitchedAt.ToString('o')
+        producer_sha256 = $ExternalProbeProducerSha256
+        containers = $CandidateContainers
+    }
+    Write-JsonAtomic -Path $challengePath -Value $challenge
+    try {
+        $powershellPath = Join-Path $env:SystemRoot `
+            'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Assert-RequiredFile -Path $powershellPath -Description 'Windows PowerShell'
+        $producerArguments = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $ExternalProbeProducerPath,
+            '-ChallengePath', $challengePath,
+            '-ReceiptPath', $ExternalProbeReceiptPath,
+            '-SignaturePath', $signaturePath,
+            '-SigningSecretFile', $ExternalProbeSigningSecretFile
+        )
+        & $powershellPath @producerArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "受信外部探针生产者失败；exit=$LASTEXITCODE"
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $challengePath -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path -LiteralPath $ExternalProbeReceiptPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) {
+        throw '受信外部探针生产者没有生成完整收据和签名。'
+    }
+    $receiptItem = Get-Item -LiteralPath $ExternalProbeReceiptPath -Force
+    if (($receiptItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw '外部探针六项收据不能位于重解析文件。'
+    }
+    $receiptBytes = [IO.File]::ReadAllBytes($ExternalProbeReceiptPath)
+    try {
+        $providedSignature = [Convert]::FromBase64String(
+            ([IO.File]::ReadAllText($signaturePath, [Text.UTF8Encoding]::new($false))).Trim()
+        )
+        $hmac = [Security.Cryptography.HMACSHA256]::new(
+            [IO.File]::ReadAllBytes($ExternalProbeSigningSecretFile)
+        )
+        try { $expectedSignature = $hmac.ComputeHash($receiptBytes) } finally { $hmac.Dispose() }
+        if (-not (Test-FixedTimeBytesEqual -Left $providedSignature -Right $expectedSignature)) {
+            throw 'signature mismatch'
+        }
+        $receipt = [Text.UTF8Encoding]::new($false, $true).GetString($receiptBytes) |
+            ConvertFrom-Json
+    }
+    catch {
+        throw "外部探针六项收据签名或JSON无效：$ExternalProbeReceiptPath"
+    }
+    if ($receipt -isnot [pscustomobject]) {
+        throw '外部探针六项收据必须是JSON对象。'
+    }
+    $requiredFields = @(
+        'schema', 'application', 'status', 'request_id', 'deployment_run_id',
+        'source_commit', 'image_digest', 'config_digest',
+        'config_artifact_digest', 'probe_contract_id', 'nonce', 'switched_at',
+        'checked_at', 'producer_identity', 'producer_sha256', 'containers', 'probes'
+    )
+    $actualFields = @($receipt.PSObject.Properties.Name)
+    if (
+        @($requiredFields | Where-Object { $_ -notin $actualFields }).Count -gt 0 -or
+        @($actualFields | Where-Object { $_ -notin $requiredFields }).Count -gt 0
+    ) {
+        throw '外部探针六项收据字段集合不符合固定Schema。'
+    }
+    if ([string]$receipt.schema -cne 'iwork-external-probe-receipt/v3') {
+        throw '外部探针六项收据Schema不受支持。'
+    }
+    if ([string]$receipt.application -cne 'iwork') {
+        throw '外部探针六项收据应用标识不正确。'
+    }
+    if ([string]$receipt.status -cne 'succeeded') {
+        throw '外部探针六项收据状态不是succeeded。'
+    }
+    if ([string]$receipt.request_id -cne $RequestId) {
+        throw '外部探针六项收据request_id不匹配。'
+    }
+    if ([string]$receipt.deployment_run_id -cne $RunId) {
+        throw '外部探针六项收据deployment_run_id不匹配。'
+    }
+    if ([string]$receipt.source_commit -cne $ExpectedRevision) {
+        throw '外部探针六项收据source_commit不匹配。'
+    }
+    if ([string]$receipt.image_digest -cne $ImageDigest) {
+        throw '外部探针六项收据image_digest不匹配。'
+    }
+    if ([string]$receipt.config_digest -cne $ConfigDigest) {
+        throw '外部探针六项收据config_digest不匹配。'
+    }
+    if ([string]$receipt.config_artifact_digest -cne $ConfigArtifactDigest) {
+        throw '外部探针六项收据config_artifact_digest不匹配。'
+    }
+    if ([string]$receipt.probe_contract_id -cne $EXTERNAL_PROBE_CONTRACT_ID) {
+        throw '外部探针六项收据契约标识不受支持。'
+    }
+    if ([string]$receipt.nonce -cne $nonce) {
+        throw '外部探针六项收据一次性nonce不匹配。'
+    }
+    if ([string]$receipt.producer_identity -ine $ExternalProbeProducerExpectedIdentity -or
+        [string]$receipt.producer_sha256 -cne $ExternalProbeProducerSha256) {
+        throw '外部探针六项收据生产者身份或哈希不匹配。'
+    }
+
+    $parseTimestamp = {
+        param([string]$Value, [string]$Description)
+        if ($Value -notmatch '(?:Z|[+-]\d{2}:\d{2})$') {
+            throw "$Description时间必须包含时区。"
+        }
+        $parsed = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse($Value, [ref]$parsed)) {
+            throw "$Description时间无效。"
+        }
+        $ageSeconds = ([DateTimeOffset]::UtcNow - $parsed).TotalSeconds
+        if ($ageSeconds -lt -60 -or $ageSeconds -gt $ExternalProbeMaxAgeSeconds) {
+            throw "$Description证据已过期或来自未来时间。"
+        }
+        return $parsed
+    }
+    $receiptSwitchedAt = & $parseTimestamp ([string]$receipt.switched_at) '候选切换'
+    if ([Math]::Abs(($receiptSwitchedAt - $SwitchedAt).TotalMilliseconds) -gt 1000) {
+        throw '外部探针六项收据switched_at不匹配。'
+    }
+    $receiptCheckedAt = & $parseTimestamp ([string]$receipt.checked_at) '外部探针六项收据'
+    if ($receiptCheckedAt -lt $SwitchedAt) {
+        throw '外部探针六项收据生成于候选切换前。'
+    }
+    $actualContainers = @($receipt.containers)
+    if ($actualContainers.Count -ne $CandidateContainers.Count) {
+        throw '外部探针六项收据缺少候选双容器绑定。'
+    }
+    foreach ($expectedContainer in $CandidateContainers) {
+        $matches = @($actualContainers | Where-Object {
+            [string]$_.Name -ceq [string]$expectedContainer.Name -and
+            [string]$_.ContainerId -ceq [string]$expectedContainer.ContainerId -and
+            [string]$_.ImageDigest -ceq [string]$expectedContainer.ImageDigest -and
+            [string]$_.Revision -ceq [string]$expectedContainer.Revision
+        })
+        if ($matches.Count -ne 1) {
+            throw "外部探针六项收据候选容器绑定不匹配：$($expectedContainer.Name)"
+        }
+    }
+
+    $probeItems = @($receipt.probes)
+    if ($probeItems.Count -ne $EXTERNAL_PROBE_NAMES.Count) {
+        throw "外部探针必须恰好包含六项，实际：$($probeItems.Count)"
+    }
+    $probeNames = @($probeItems | ForEach-Object { [string]$_.name })
+    if (@($probeNames | Sort-Object -Unique).Count -ne $EXTERNAL_PROBE_NAMES.Count -or
+        @($probeNames | Where-Object { $_ -notin $EXTERNAL_PROBE_NAMES }).Count -gt 0 -or
+        @($EXTERNAL_PROBE_NAMES | Where-Object { $_ -notin $probeNames }).Count -gt 0) {
+        throw '外部探针收据必须恰好包含固定六项，且不得重复或包含未知项。'
+    }
+
+    $probeResults = [ordered]@{}
+    foreach ($probe in $probeItems) {
+        if ($probe -isnot [pscustomobject]) {
+            throw '外部探针项目必须是JSON对象。'
+        }
+        $probeFields = @($probe.PSObject.Properties.Name)
+        $expectedProbeFields = @(
+            'name', 'status', 'uri', 'http_status', 'checked_at',
+            'duration_ms', 'evidence'
+        )
+        if (
+            @($expectedProbeFields | Where-Object { $_ -notin $probeFields }).Count -gt 0 -or
+            @($probeFields | Where-Object { $_ -notin $expectedProbeFields }).Count -gt 0
+        ) {
+            throw "外部探针项目字段集合无效：$($probe.name)"
+        }
+        $name = [string]$probe.name
+        if ($probe.status -cne 'succeeded') {
+            throw "外部探针项目未成功：$name"
+        }
+        try {
+            $probeUri = [Uri]$probe.uri
+        }
+        catch {
+            throw "外部探针项目URI无效：$name"
+        }
+        if (-not $probeUri.IsAbsoluteUri -or $probeUri.Scheme -cne 'https') {
+            throw "外部探针项目URI必须是绝对HTTPS地址：$name"
+        }
+        $statusCode = 0
+        if (-not [int]::TryParse([string]$probe.http_status, [ref]$statusCode) -or
+            $statusCode -lt 200 -or $statusCode -gt 299) {
+            throw "外部探针项目HTTP状态异常：$name"
+        }
+        $probeCheckedAt = & $parseTimestamp ([string]$probe.checked_at) "外部探针项目$name"
+        $durationMs = 0L
+        if (-not [long]::TryParse([string]$probe.duration_ms, [ref]$durationMs) -or
+            $durationMs -lt 0) {
+            throw "外部探针项目duration_ms无效：$name"
+        }
+        if ($probe.evidence -isnot [pscustomobject]) {
+            throw "外部探针项目evidence必须是JSON对象：$name"
+        }
+        $evidenceFields = @($probe.evidence.PSObject.Properties.Name)
+        switch ($name) {
+            'https_nginx' {
+                $expectedEvidence = @('reachable', 'tls_valid')
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    $probe.evidence.reachable -isnot [bool] -or
+                    $probe.evidence.tls_valid -isnot [bool] -or
+                    -not $probe.evidence.reachable -or -not $probe.evidence.tls_valid) {
+                    throw 'HTTPS/Nginx探针证据无效。'
+                }
+            }
+            'oidc_discovery' {
+                $expectedEvidence = @('issuer', 'jwks_uri')
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    [string]::IsNullOrWhiteSpace([string]$probe.evidence.issuer) -or
+                    [string]::IsNullOrWhiteSpace([string]$probe.evidence.jwks_uri)) {
+                    throw 'OIDC discovery探针证据无效。'
+                }
+                foreach ($uriText in @([string]$probe.evidence.issuer, [string]$probe.evidence.jwks_uri)) {
+                    $oidcUri = [Uri]$uriText
+                    if (-not $oidcUri.IsAbsoluteUri -or $oidcUri.Scheme -cne 'https') {
+                        throw 'OIDC discovery证据URI必须是绝对HTTPS地址。'
+                    }
+                }
+            }
+            'sse_first_event' {
+                $expectedEvidence = @('event_type', 'received')
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    [string]::IsNullOrWhiteSpace([string]$probe.evidence.event_type) -or
+                    $probe.evidence.received -isnot [bool] -or
+                    -not $probe.evidence.received) {
+                    throw 'SSE首事件探针证据无效。'
+                }
+            }
+            'sse_heartbeat' {
+                $expectedEvidence = @('heartbeat_received', 'interval_ms')
+                $intervalMs = 0L
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    $probe.evidence.heartbeat_received -isnot [bool] -or
+                    -not $probe.evidence.heartbeat_received -or
+                    -not [long]::TryParse([string]$probe.evidence.interval_ms, [ref]$intervalMs) -or
+                    $intervalMs -le 0) {
+                    throw 'SSE心跳探针证据无效。'
+                }
+            }
+            'business_read' {
+                $expectedEvidence = @('result_nonempty')
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    $probe.evidence.result_nonempty -isnot [bool] -or
+                    -not $probe.evidence.result_nonempty) {
+                    throw '关键只读业务接口探针证据无效。'
+                }
+            }
+            'notification_chain' {
+                $expectedEvidence = @('correlation_id', 'delivered')
+                if (@($expectedEvidence | Where-Object { $_ -notin $evidenceFields }).Count -gt 0 -or
+                    @($evidenceFields | Where-Object { $_ -notin $expectedEvidence }).Count -gt 0 -or
+                    [string]::IsNullOrWhiteSpace([string]$probe.evidence.correlation_id) -or
+                    $probe.evidence.delivered -isnot [bool] -or
+                    -not $probe.evidence.delivered -or
+                    [string]$probe.evidence.correlation_id -cne $RequestId) {
+                    throw '通知链路探针证据无效。'
+                }
+            }
+            default {
+                throw "未知外部探针项目：$name"
+            }
+        }
+        $probeResults[$name] = [pscustomobject]@{
+            Uri = $probeUri.AbsoluteUri
+            StatusCode = $statusCode
+            CheckedAt = $probeCheckedAt.ToString('o')
+            DurationMs = $durationMs
+        }
+    }
+
+    $receiptArchiveRoot = Join-Path $StateRoot 'external-probe-receipts'
+    if (-not (Test-Path -LiteralPath $receiptArchiveRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $receiptArchiveRoot -Force | Out-Null
+    }
+    $receiptArchivePath = Join-Path $receiptArchiveRoot "$RunId-$nonce.json"
+    $signatureArchivePath = "$receiptArchivePath.sig"
+    if ((Test-Path -LiteralPath $receiptArchivePath) -or
+        (Test-Path -LiteralPath $signatureArchivePath)) {
+        throw '外部探针归档收据已存在，拒绝覆盖。'
+    }
+    Move-Item -LiteralPath $ExternalProbeReceiptPath -Destination $receiptArchivePath
+    Move-Item -LiteralPath $signaturePath -Destination $signatureArchivePath
+
+    return [pscustomobject]@{
+        Mode = 'receipt'
+        ContractId = $EXTERNAL_PROBE_CONTRACT_ID
+        Uri = [string]$probeResults['https_nginx'].Uri
+        StatusCode = [int]$probeResults['https_nginx'].StatusCode
+        CheckedAt = $receiptCheckedAt.ToString('o')
+        ReceiptPath = [IO.Path]::GetFullPath($receiptArchivePath)
+        SignaturePath = [IO.Path]::GetFullPath($signatureArchivePath)
+        ProbeCount = $probeResults.Count
+        Probes = $probeResults
+    }
+}
+
+function Assert-WatchdogMechanism {
+    <#
+    .SYNOPSIS
+    验证SYSTEM看门狗脚本的SHA-256和跨仓库机制清单。
+    #>
+    if ($WatchdogSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'WatchdogSha256必须是64位小写十六进制。'
+    }
+    if ($WatchdogManifestSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'WatchdogManifestSha256必须是64位小写十六进制。'
+    }
+    Assert-RequiredFile -Path $WatchdogScript -Description 'Docker看门狗脚本'
+    Assert-RequiredFile -Path $WatchdogManifestPath -Description 'Docker看门狗机制清单'
+    $watchdogItem = Get-Item -LiteralPath $WatchdogScript -Force
+    if (($watchdogItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Docker看门狗脚本不能位于重解析文件。'
+    }
+    $watchdogDirectoryPath = [IO.Path]::GetDirectoryName(
+        [IO.Path]::GetFullPath($WatchdogScript)
+    )
+    $watchdogDirectory = Get-Item -LiteralPath $watchdogDirectoryPath -Force
+    if (($watchdogDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Docker看门狗脚本目录不能是重解析目录。'
+    }
+    $actualSha256 = Get-Sha256 -Path $WatchdogScript
+    if ($actualSha256 -cne $WatchdogSha256) {
+        throw "Docker看门狗SHA-256不匹配：$actualSha256"
+    }
+    $actualManifestSha256 = Get-Sha256 -Path $WatchdogManifestPath
+    if ($actualManifestSha256 -cne $WatchdogManifestSha256) {
+        throw "Docker看门狗机制清单SHA-256不匹配：$actualManifestSha256"
+    }
+    $manifestItem = Get-Item -LiteralPath $WatchdogManifestPath -Force
+    if (($manifestItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Docker看门狗机制清单不能位于重解析文件。'
+    }
+    try {
+        $manifest = Get-Content -LiteralPath $WatchdogManifestPath -Raw |
+            ConvertFrom-Json
+    }
+    catch {
+        throw 'Docker看门狗机制清单不是有效JSON。'
+    }
+    if ($manifest -isnot [pscustomobject]) {
+        throw 'Docker看门狗机制清单必须是JSON对象。'
+    }
+    $requiredFields = @(
+        'schema', 'application', 'script', 'script_sha256',
+        'recovery_mutex', 'execution_identity'
+    )
+    $manifestFields = @($manifest.PSObject.Properties.Name)
+    if (
+        @($requiredFields | Where-Object { $_ -notin $manifestFields }).Count -gt 0 -or
+        @($manifestFields | Where-Object { $_ -notin $requiredFields }).Count -gt 0
+    ) {
+        throw 'Docker看门狗机制清单字段集合不符合固定Schema。'
+    }
+    if ([string]$manifest.schema -cne $WATCHDOG_MECHANISM_SCHEMA) {
+        throw 'Docker看门狗机制清单Schema不受支持。'
+    }
+    if ([string]$manifest.application -cne 'DTD_nginx') {
+        throw 'Docker看门狗机制清单应用标识不正确。'
+    }
+    if ([string]$manifest.script -cne ([IO.Path]::GetFileName($WatchdogScript))) {
+        throw 'Docker看门狗机制清单脚本名不匹配。'
+    }
+    if ([string]$manifest.script_sha256 -cne $WatchdogSha256) {
+        throw 'Docker看门狗机制清单脚本SHA-256不匹配。'
+    }
+    if ([string]$manifest.recovery_mutex -cne $WATCHDOG_RECOVERY_MUTEX) {
+        throw 'Docker看门狗机制清单恢复Mutex不匹配。'
+    }
+    if ([string]$manifest.execution_identity -cne $WATCHDOG_EXECUTION_IDENTITY) {
+        throw 'Docker看门狗机制清单执行身份不匹配。'
+    }
+    $watchdogContent = Get-Content -LiteralPath $WatchdogScript -Raw
+    if ($watchdogContent -notmatch [Regex]::Escape($WATCHDOG_RECOVERY_MUTEX)) {
+        throw "Docker看门狗未声明共享恢复锁：$WATCHDOG_RECOVERY_MUTEX"
+    }
+
+    # 仅验证清单中的字符串不足以证明计划任务实际以SYSTEM执行。
+    # 生产Workflow必须传入固定任务名/路径；隔离测试不传时保持兼容，
+    # 但不会因此降低生产准入（Workflow的固定参数会触发下面的硬校验）。
+    if (-not [String]::IsNullOrWhiteSpace($WatchdogTaskName)) {
+        if ($WatchdogTaskName -notmatch '^[A-Za-z0-9._ -]{1,128}$') {
+            throw 'Docker看门狗计划任务名格式无效。'
+        }
+        if ($WatchdogTaskPath -notmatch '^\\(?:[^\\:*?"<>|]+\\)*$') {
+            throw 'Docker看门狗计划任务路径格式无效。'
+        }
+        try {
+            $tasks = @(Get-ScheduledTask `
+                -TaskName $WatchdogTaskName `
+                -TaskPath $WatchdogTaskPath `
+                -ErrorAction Stop)
+        }
+        catch {
+            throw "Docker看门狗计划任务不存在或不可读取：$WatchdogTaskPath$WatchdogTaskName"
+        }
+        if ($tasks.Count -ne 1) {
+            throw "Docker看门狗计划任务不唯一：$WatchdogTaskPath$WatchdogTaskName"
+        }
+        $task = $tasks[0]
+        $principal = $task.Principal
+        if ($null -eq $principal -or
+            [string]$principal.UserId -notin @('SYSTEM', 'S-1-5-18') -or
+            [string]$principal.LogonType -cne 'ServiceAccount' -or
+            [string]$principal.RunLevel -cne 'Highest') {
+            throw 'Docker看门狗计划任务必须使用SYSTEM/ServiceAccount/Highest。'
+        }
+        $expectedScriptPath = [IO.Path]::GetFullPath($WatchdogScript)
+        $allActions = @($task.Actions)
+        $matchingActions = @($task.Actions | Where-Object {
+            $execute = [string]$_.Execute
+            $arguments = [string]$_.Arguments
+            $arguments.IndexOf($expectedScriptPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            ($execute -match '(?i)(?:^|\\)powershell(?:\.exe)?$') -and
+            $arguments -match '(?i)(?:^|\s)-File(?:\s|=)'
+        })
+        if ($allActions.Count -ne 1 -or $matchingActions.Count -ne 1) {
+            throw 'Docker看门狗计划任务Action未固定到受信脚本。'
+        }
+    }
+}
+
 function Archive-ExpiredIworkDeploymentMarker {
     <#
     .SYNOPSIS
@@ -512,6 +1130,9 @@ function Assert-PreflightInputs {
     if ($ConfigArtifactDigest -notmatch '^sha256:[0-9a-f]{64}$') {
         throw 'ConfigArtifactDigest必须是sha256加64位小写十六进制。'
     }
+    if ($RUN_MIGRATIONS_ENABLED) {
+        throw 'run_migrations=true已禁用：缺少机器可验证的向后兼容迁移证据。'
+    }
     if ($Actor -cne 'GuChenkano') {
         throw "部署触发账号不正确：$Actor"
     }
@@ -550,10 +1171,9 @@ function Assert-PreflightInputs {
         throw "生产配置包目录不存在：$ConfigBundlePath"
     }
     Assert-RequiredFile -Path $SecretsFile -Description '中央密钥文件'
-    Assert-RequiredFile -Path $WatchdogScript -Description 'Docker看门狗脚本'
-    $watchdogContent = Get-Content -LiteralPath $WatchdogScript -Raw
-    if ($watchdogContent -notmatch [Regex]::Escape($WATCHDOG_RECOVERY_MUTEX)) {
-        throw "Docker看门狗未声明共享恢复锁：$WATCHDOG_RECOVERY_MUTEX"
+    Assert-WatchdogMechanism
+    if ($Mode -eq 'Deploy') {
+        Assert-ExternalProbeProducer
     }
 
     if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
@@ -1670,12 +2290,21 @@ function Invoke-Deploy {
             -CommandArguments @(
                 'up', '-d', '--no-build', '--no-deps', 'iwork', 'alert-worker'
             )
+        $candidateSwitchedAt = [DateTimeOffset]::UtcNow
         Wait-IworkReleaseHealthy
         Assert-DeployedImage -ContainerName 'DKT_iwork' -ExpectedImage $candidateImage
         Assert-DeployedImage `
             -ContainerName 'DKT_iwork_alert_worker' `
             -ExpectedImage $candidateImage
         Assert-IworkApplication
+        $candidateContainers = @(
+            Get-ContainerBaseline -ContainerName 'DKT_iwork'
+            Get-ContainerBaseline -ContainerName 'DKT_iwork_alert_worker'
+        )
+        $externalProbe = Invoke-AndAssertExternalProbe `
+            -SwitchedAt $candidateSwitchedAt `
+            -CandidateContainers $candidateContainers
+        $state.ExternalProbe = $externalProbe
 
         if ($ROLLBACK_DRILL_ENABLED) {
             $controlledRollbackRequested = $true
@@ -1701,6 +2330,7 @@ function Invoke-Deploy {
             ConfigBundlePath = $candidateConfig.BundlePath
             ComposeSha256 = $candidateConfig.ComposeSha256
             ProductionEnvSha256 = $candidateConfig.ProductionEnvSha256
+            ExternalProbe = $externalProbe
             Result = 'deployed'
             StateFile = $stateFile
             PreviousWebImageId = $previousWebImageId

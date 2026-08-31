@@ -1203,9 +1203,11 @@ Actions运行链接、测试与验收证据、未完成项、风险例外和下�
 
 #### 12.2.5 迁移、成对回滚与验收边界
 
-- 数据库迁移仍必须显式批准；`apply=false`和配置包预检不得执行迁移。
-- 迁移失败时只自动恢复应用镜像和配置包，不自动覆盖数据库；仅允许已审查的expand/contract迁移，备份用于
-  受控人工恢复。
+- 数据库迁移当前固定为`disabled-v1`：`run_migrations=true`在Skill、Workflow、Release Manifest和服务器
+  固定脚本中均在Docker调用前失败关闭；`apply=false`和配置包预检不得执行迁移。只有补齐版本化变更集合、
+  隔离数据库验证、迁移前后版本和可验证backward-compatible证明后，才能另行审查并启用新策略。
+- 在迁移策略保持禁用期间，部署失败只允许成对恢复应用镜像和配置包，不自动覆盖数据库；任何迁移相关
+  确认词或旧迁移证据都不能放行生产切换。
 - 普通部署失败、配置包校验失败或任一容器验收失败时，Web与Alert Worker必须以原部署收据中的旧镜像Digest
   和旧配置包Digest成对恢复，并再次验证HTTP、Django检查、Worker、实际镜像和配置包。
 - 生产验收必须分别记录CI、Release、Runner smoke、预检、正式切换、通知点击、CSRF、真实登录/退出、权限拒绝、
@@ -1413,3 +1415,37 @@ Access to the path 'Global\\DKT-Docker-Recovery' is denied.
 Manifest签名材料；在Runner空闲维护窗口安装并复验固定部署机制；之后才允许推送、真实CI/Release、
 `apply=false`预检和用户新确认后的正式Deploy。任一新失败立即停止并回写本总方案，不得复用旧Commit、
 旧Release或旧预检证据。
+
+## 14.4 2026-08-31 P1缺口修复切片（本地已验证，外部未执行）
+
+本轮针对最终修改方案中列出的六项P1缺口继续实施，进度仍以本总方案为唯一基线。
+本轮没有推送、触发Actions、更新生产准入或操作生产主机；旧Commit、旧Release、旧预检和旧确认均不可复用。
+
+已完成的本地切片：
+
+- iwork Preflight/Deploy不再查询同一Commit下任意成功CI；只消费已核验Release Manifest中的CI Run、CI request_id和三类Digest，
+  并保留缺失/重复证据失败关闭测试。
+- 生产Dockerfile固定为带完整Digest的`python:3.11-slim`，改用`requirements-prod.lock`和`pip --require-hashes`；生产锁排除pytest、
+  pytest-asyncio、PyInstaller和customtkinter，并为Dockerfile及锁文件声明LF字节策略。
+- GHCR已有Commit SHA标签在缺少可信历史Manifest/Artifact时直接拒绝复用，不再以OCI标签和隔离Smoke重新登记未经机制认证的旧镜像。
+- 数据库迁移策略切换为`disabled-v1`：Release Manifest、Deploy Workflow和服务器固定脚本均拒绝`run_migrations=true`，且在任何Docker调用前失败关闭；
+  兼容性证据、变更集合、隔离数据库结果和迁移前后版本未完成前不得恢复迁移入口。
+- `deployed`前的外部验收收紧为受控主机生成的`iwork-external-probe-receipt/v3`，必须绑定request、部署Run、Commit、Image/Config/ConfigArtifact Digest、
+  时间和固定契约，并且六项`https_nginx`、`oidc_discovery`、`sse_first_event`、`sse_heartbeat`、`business_read`、`notification_chain`全部成功；
+  缺项、重复、未知、过期、状态或专属证据错误均触发回滚，不能只凭容器内检查写入`deployed`。
+- SYSTEM看门狗同时校验脚本SHA-256、机制清单字段和清单文件自身SHA-256；Workflow不再接受用户提供的看门狗路径、哈希或外部探针URI。
+  已在DTD_nginx源仓库新增固定清单`scripts/docker-health-watchdog.manifest.json`，其字节哈希为
+  `a031d4a8f600bfeb15f15f05e4c626538a4ba7e218014c0ebef48d5f9c39cea2`，并已同步到iwork Workflow与本地契约测试。
+  该清单尚未提交、安装到生产目标或由生产主机复核，因此生产准入仍必须失败关闭，不能把源仓库文件或固定值当作已完成安装证明。
+- 固定部署脚本当前字节哈希为
+  `b9df596b665f26abc8e032e1d50a60c25d4a40114c98ef57e3d31c8e516f2d49`，已同步到本轮Workflow门禁。
+  六项外部探针的生产生产者、签名密钥和受控ACL仍未提供；Workflow不填充占位路径，正式`apply=true`
+  会在切换前因缺少受信生产者失败关闭，避免以隔离测试夹具冒充生产业务探针。
+
+本地验证结果（2026-08-31收口复验）：阶段4部署测试`58 passed`，CI Workflow与配置包契约测试`32 passed`，
+dkt-cicd离线验收`139`个断言通过；PowerShell解析、YAML/Compose和差异检查均通过。当前没有真实外部六项收据、
+受信看门狗清单安装哈希或生产兼容迁移证据，所以本节状态保持“部分完成/进行中”，不能标记阶段8完成。
+
+下一入口：先统一并审查本轮所有未提交文件，完成本地全套门禁并同步`dkt-cicd`安装副本；再在独立的DTD_nginx机制提交中提交并安装与上述看门狗清单字节一致的受信文件，
+提供六项探针收据生产者和签名/来源证明；完成后才可按“提交→CI→Release→生产准入更新→apply=false预检→新确认→apply=true”顺序推进。
+任一P1证据缺失立即停止并回写本总方案。

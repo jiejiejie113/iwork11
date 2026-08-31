@@ -97,6 +97,10 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
     assert "expected_revision:" in content
     assert "apply:" in content
     assert "run_migrations:" in content
+    assert "run_migrations=true is disabled" in content
+    assert "migration_policy_id = 'disabled-v1'" in content
+    assert "external_probe_uri:" not in content
+    assert "external_probe_authorization_env_var:" not in content
     assert "change_description:" in content
     assert "confirmation:" in content
     assert "type: boolean" in content
@@ -218,7 +222,7 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "ref = 'refs/heads/Keycloak'" in content
     assert "mechanism_id = 'iwork-release-mechanism-v1'" in content
     assert "risk_envelope = 'application-only'" in content
-    assert "migration_policy_id = 'expand-contract-v1'" in content
+    assert "migration_policy_id = 'disabled-v1'" in content
     assert "iwork-production-config/v1" in content
     assert "Production config commit mismatch." in content
     assert "Production config image digest mismatch." in content
@@ -229,6 +233,69 @@ def test_deploy_workflow_uses_pinned_server_script_and_ephemeral_ghcr_auth() -> 
     assert "-ConfigBundlePath $env:CONFIG_BUNDLE_PATH" in content
     assert "-RequestId $env:REQUEST_ID" in content
     assert '"IWORK_REQUEST_ID=$env:REQUEST_ID"' in content
+
+
+def test_deployment_contract_requires_external_probe_evidence() -> None:
+    """部署契约必须要求宿主机外部探针或显式探针收据。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "ExternalProbeUri" in content
+    assert "ExternalProbeReceiptPath" in content
+    assert "iwork-external-probe-receipt/v3" in content
+    assert "iwork-external-probes-v2" in content
+    assert "ExternalProbeProducerSha256" in content
+    assert "ExternalProbeSigningSecretSha256" in content
+    assert "producer_identity" in content
+    assert "switched_at" in content
+    assert "nonce" in content
+    assert "containers" in content
+    for probe_name in (
+        "https_nginx",
+        "oidc_discovery",
+        "sse_first_event",
+        "sse_heartbeat",
+        "business_read",
+        "notification_chain",
+    ):
+        assert probe_name in content
+    assert "外部探针六项收据" in content
+
+
+def test_deployment_contract_pins_watchdog_sha256_and_mechanism_manifest() -> None:
+    """部署前必须校验SYSTEM看门狗脚本哈希与机制清单。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "WatchdogSha256" in content
+    assert "WatchdogManifestPath" in content
+    assert "WatchdogManifestSha256" in content
+    assert "Get-Sha256" in content
+    assert "机制清单SHA-256" in content
+    assert "机制清单" in content
+
+
+def test_deploy_workflow_does_not_take_watchdog_integrity_from_dispatch_inputs() -> None:
+    """看门狗完整性值必须来自固定Workflow准入，而非手工输入。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "inputs.watchdog_sha256" not in content
+    assert "inputs.watchdog_manifest_path" not in content
+    assert "WATCHDOG_SHA256: e59f057be2cd427fb7633da22d6220e1167467fa4d3a707a47fd6414edfb0c53" in content
+    assert "WATCHDOG_MANIFEST_PATH: D:\\DM\\DTD_nginx\\scripts\\docker-health-watchdog.manifest.json" in content
+    assert "WATCHDOG_MANIFEST_SHA256: a031d4a8f600bfeb15f15f05e4c626538a4ba7e218014c0ebef48d5f9c39cea2" in content
+    assert "WATCHDOG_TASK_NAME: Docker-Health-Watchdog" in content
+    assert "WATCHDOG_TASK_PATH: \\" in content
+    assert "EXTERNAL_PROBE_RECEIPT_PATH: D:\\DM\\cicd-state\\iwork\\external-probe-receipt.json" in content
+
+
+def test_watchdog_integrity_checks_actual_scheduled_task_identity_and_action() -> None:
+    """看门狗门禁必须核验真实计划任务身份和固定脚本Action。"""
+    content = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8-sig")
+
+    assert "Get-ScheduledTask" in content
+    assert "ServiceAccount" in content
+    assert "RunLevel" in content
+    assert "Highest" in content
+    assert "Docker看门狗计划任务Action未固定到受信脚本" in content
 
 
 def test_deploy_workflow_verifies_signed_release_manifest_before_use() -> None:
@@ -243,6 +310,27 @@ def test_deploy_workflow_verifies_signed_release_manifest_before_use() -> None:
     assert "signature_algorithm" in content
     assert "signature_key_id" in content
     assert "Manifest signature verification failed" in content
+
+
+def test_deploy_workflow_verifies_artifacts_before_reading_manifest_or_config() -> None:
+    """干净Runner必须先下载/验收Artifact，再读取Manifest与配置内容。"""
+    content = DEPLOY_WORKFLOW_PATH.read_text(encoding="utf-8")
+    execution = content[content.index("- name: 校验候选镜像并执行预检或部署") :]
+
+    config_download = execution.index("-Description 'Config artifact'")
+    manifest_download = execution.index("-Description 'Manifest artifact'")
+    manifest_verified = execution.index(
+        "$releaseManifest = Get-VerifiedReleaseManifest -ManifestRoot $releaseManifestRoot"
+    )
+    ci_lookup = execution.index("$ciRun = Assert-SpecifiedWorkflowRun")
+    config_read = execution.index(
+        "$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json"
+    )
+    image_pull = execution.index("docker pull $candidateImage")
+
+    assert config_download < manifest_verified
+    assert manifest_download < manifest_verified
+    assert manifest_verified < ci_lookup < config_read < image_pull
 
 
 def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
@@ -441,8 +529,18 @@ def test_container_startup_can_skip_migrations_explicitly() -> None:
     content = START_SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "IWORK_RUN_MIGRATIONS" in content
-    assert '"${IWORK_RUN_MIGRATIONS:-true}" = "true"' in content
+    assert '"${IWORK_RUN_MIGRATIONS:-}" = "true"' in content
+    assert '"${IWORK_RUN_MIGRATIONS:-}" = "false"' in content
+    assert "IWORK_RUN_MIGRATIONS:-true" not in content
+    assert "必须显式设置" in content
     assert "根据部署策略跳过数据库迁移" in content
+
+
+def test_compose_defaults_migrations_to_explicit_false() -> None:
+    """普通Compose启动缺少迁移变量时必须显式落到false，而非隐式迁移。"""
+    content = COMPOSE_PATH.read_text(encoding="utf-8")
+
+    assert content.count("IWORK_RUN_MIGRATIONS: ${IWORK_RUN_MIGRATIONS:-false}") == 2
 
 
 def test_compose_env_file_is_overridable_by_verified_release_profile() -> None:
@@ -480,6 +578,12 @@ def _run_deployment_script(
     recovery_mutex_name: str | None = None,
     expected_identity: str | None = None,
     preconsumed_request: bool = False,
+    external_probe_receipt: bool = True,
+    external_probe_mutation: str | None = None,
+    external_probe_precreated: bool = False,
+    external_probe_producer: bool = True,
+    watchdog_sha256_override: str | None = None,
+    watchdog_manifest_sha256_override: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     """在隔离目录和伪Docker适配器下运行部署脚本。
 
@@ -506,6 +610,12 @@ def _run_deployment_script(
         recovery_mutex_name (str | None): 可选的恢复Mutex名称，用于隔离竞争测试。
         expected_identity (str | None): 可选的生产身份预期值，用于身份门禁回归测试。
         preconsumed_request (bool): 是否预置同一request_id的服务器消费收据。
+        external_probe_receipt (bool): 是否提供绑定候选发布的外部探针收据。
+        external_probe_mutation (str | None): 可选的外部探针收据破坏场景。
+        external_probe_precreated (bool): 是否在候选切换前预生成伪造收据。
+        external_probe_producer (bool): 是否提供受信本地主机探针生产者。
+        watchdog_sha256_override (str | None): 可选的错误看门狗哈希，用于门禁测试。
+        watchdog_manifest_sha256_override (str | None): 可选的错误看门狗清单哈希，用于门禁测试。
 
     Returns:
         tuple[subprocess.CompletedProcess[str], dict[str, object]]:
@@ -527,6 +637,10 @@ def _run_deployment_script(
     fake_docker = tmp_path / "fake-docker.ps1"
     fake_docker_wrapper = tmp_path / "fake-docker.cmd"
     watchdog_script = tmp_path / "docker-health-watchdog.ps1"
+    watchdog_manifest = tmp_path / "docker-health-watchdog-manifest.json"
+    external_probe_receipt_path = tmp_path / "external-probe-receipt.json"
+    external_probe_producer_path = tmp_path / "external-probe-producer.ps1"
+    external_probe_secret_path = tmp_path / "external-probe-signing.key"
     config_bundle = tmp_path / "config-bundle"
 
     profile.parent.mkdir(parents=True)
@@ -624,6 +738,153 @@ def _run_deployment_script(
         ),
         encoding="utf-8",
     )
+    watchdog_sha256 = hashlib.sha256(watchdog_script.read_bytes()).hexdigest()
+    watchdog_manifest.write_text(
+        json.dumps(
+            {
+                "schema": "dkt-docker-health-watchdog/v1",
+                "application": "DTD_nginx",
+                "script": watchdog_script.name,
+                "script_sha256": watchdog_sha256,
+                "recovery_mutex": "Global\\DKT-Docker-Recovery",
+                "execution_identity": "NT AUTHORITY\\SYSTEM",
+            }
+        ),
+        encoding="utf-8",
+    )
+    watchdog_manifest_sha256 = hashlib.sha256(watchdog_manifest.read_bytes()).hexdigest()
+    external_probe_secret_path.write_bytes(b"isolated-test-probe-signing-secret-32")
+    probe_template = {
+        "schema": "iwork-external-probe-receipt/v3",
+        "application": "iwork",
+        "status": "succeeded",
+        "request_id": REQUEST_ID,
+        "deployment_run_id": DEPLOYMENT_RUN_ID,
+        "source_commit": CANDIDATE_REVISION,
+        "image_digest": CANDIDATE_DIGEST,
+        "config_digest": config_digest,
+        "config_artifact_digest": CONFIG_ARTIFACT_DIGEST,
+        "probe_contract_id": "iwork-external-probes-v2",
+        "nonce": "__NONCE__",
+        "switched_at": "__SWITCHED_AT__",
+        "checked_at": "__CHECKED_AT__",
+        "producer_identity": "__IDENTITY__",
+        "producer_sha256": "__PRODUCER_SHA256__",
+        "containers": "__CONTAINERS__",
+        "probes": [
+                {
+                    "name": "https_nginx",
+                    "status": "succeeded",
+                    "uri": "https://iwork.example.test/",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 20,
+                    "evidence": {"reachable": True, "tls_valid": True},
+                },
+                {
+                    "name": "oidc_discovery",
+                    "status": "succeeded",
+                    "uri": "https://sso.example.test/realms/ditu/.well-known/openid-configuration",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 25,
+                    "evidence": {
+                        "issuer": "https://sso.example.test/realms/ditu",
+                        "jwks_uri": "https://sso.example.test/realms/ditu/protocol/openid-connect/certs",
+                    },
+                },
+                {
+                    "name": "sse_first_event",
+                    "status": "succeeded",
+                    "uri": "https://iwork.example.test/iwork/events/",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 30,
+                    "evidence": {"event_type": "snapshot", "received": True},
+                },
+                {
+                    "name": "sse_heartbeat",
+                    "status": "succeeded",
+                    "uri": "https://iwork.example.test/iwork/events/",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 1500,
+                    "evidence": {"heartbeat_received": True, "interval_ms": 1000},
+                },
+                {
+                    "name": "business_read",
+                    "status": "succeeded",
+                    "uri": "https://iwork.example.test/iwork/api/history/dates/",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 40,
+                    "evidence": {"result_nonempty": True},
+                },
+                {
+                    "name": "notification_chain",
+                    "status": "succeeded",
+                    "uri": "https://iwork.example.test/iwork/api/account/notifications/",
+                    "http_status": 200,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": 50,
+                    "evidence": {"correlation_id": REQUEST_ID, "delivered": True},
+                },
+        ],
+    }
+    external_probe_producer_path.write_text(
+        """param(
+    [string]$ChallengePath,
+    [string]$ReceiptPath,
+    [string]$SignaturePath,
+    [string]$SigningSecretFile
+)
+$ErrorActionPreference = 'Stop'
+$Mutation = [string]$env:FAKE_PROBE_MUTATION
+$challenge = Get-Content -LiteralPath $ChallengePath -Raw | ConvertFrom-Json
+$template = Get-Content -LiteralPath $env:FAKE_PROBE_TEMPLATE -Raw | ConvertFrom-Json
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$template.nonce = $challenge.nonce
+$template.switched_at = $challenge.switched_at
+$template.checked_at = [DateTimeOffset]::UtcNow.ToString('o')
+$template.producer_identity = $identity
+$template.producer_sha256 = $challenge.producer_sha256
+$template.containers = @($challenge.containers)
+foreach ($probe in @($template.probes)) { $probe.checked_at = $template.checked_at }
+if ($Mutation -eq 'missing') { $template.probes = @($template.probes)[0..4] }
+elseif ($Mutation -eq 'duplicate') { $template.probes = @($template.probes) + @($template.probes)[0] }
+elseif ($Mutation -eq 'unknown') { $template.probes[0].name = 'unknown_probe' }
+elseif ($Mutation -eq 'failed') { $template.probes[0].evidence.reachable = $false }
+elseif ($Mutation -eq 'expired') { $template.checked_at = '2020-01-01T00:00:00+00:00' }
+elseif ($Mutation -eq 'pre_switch') { $template.checked_at = ([DateTimeOffset]$challenge.switched_at).AddSeconds(-1).ToString('o') }
+elseif ($Mutation -eq 'nonce') { $template.nonce = '00000000000000000000000000000000' }
+elseif ($Mutation -eq 'identity') { $template.producer_identity = 'UNTRUSTED\\probe' }
+elseif ($Mutation -eq 'container') { $template.containers[0].ContainerId = 'stale-container-id' }
+$json = ($template | ConvertTo-Json -Depth 12 -Compress) + "`n"
+$bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+[IO.File]::WriteAllBytes($ReceiptPath, $bytes)
+$hmac = [Security.Cryptography.HMACSHA256]::new([IO.File]::ReadAllBytes($SigningSecretFile))
+try { $signature = $hmac.ComputeHash($bytes) } finally { $hmac.Dispose() }
+[IO.File]::WriteAllText($SignaturePath, ([Convert]::ToBase64String($signature) + "`n"), [Text.UTF8Encoding]::new($false))
+if ($Mutation -eq 'signature') { [IO.File]::WriteAllText($SignaturePath, ('AAAA' + "`n"), [Text.UTF8Encoding]::new($false)) }
+""",
+        encoding="utf-8",
+    )
+    probe_template_path = tmp_path / "external-probe-template.json"
+    probe_template_path.write_text(json.dumps(probe_template), encoding="utf-8")
+    producer_sha256 = hashlib.sha256(external_probe_producer_path.read_bytes()).hexdigest()
+    secret_sha256 = hashlib.sha256(external_probe_secret_path.read_bytes()).hexdigest()
+    if external_probe_precreated:
+        probe_receipt = dict(probe_template)
+        probe_receipt["nonce"] = "0" * 32
+        probe_receipt["switched_at"] = datetime.now(timezone.utc).isoformat()
+        probe_receipt["checked_at"] = datetime.now(timezone.utc).isoformat()
+        probe_receipt["producer_identity"] = "forged"
+        probe_receipt["producer_sha256"] = producer_sha256
+        probe_receipt["containers"] = []
+        external_probe_receipt_path.write_text(
+            json.dumps(probe_receipt),
+            encoding="utf-8",
+        )
     fake_docker.write_text(
         """param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CommandArgs)
 $line = $CommandArgs -join ' '
@@ -770,6 +1031,8 @@ exit /b %fakeDockerExitCode%
         "1" if fail_maintenance_cleanup else "0"
     )
     env["FAKE_MAINTENANCE_FILE"] = str(maintenance_file)
+    env["FAKE_PROBE_TEMPLATE"] = str(probe_template_path)
+    env["FAKE_PROBE_MUTATION"] = external_probe_mutation or "none"
     env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
@@ -858,8 +1121,7 @@ exit /b %fakeDockerExitCode%
         encoding="utf-8",
         errors="replace",
     ).stdout.strip()
-    result = subprocess.run(  # noqa: S603 - 仅执行仓库固定脚本与隔离测试参数
-        [
+    deployment_args = [
             str(POWERSHELL_EXE),
             "-NoProfile",
             "-ExecutionPolicy",
@@ -910,13 +1172,38 @@ exit /b %fakeDockerExitCode%
             str(fake_docker_wrapper if emit_compose_progress else fake_docker),
             "-WatchdogScript",
             str(watchdog_script),
+            "-WatchdogSha256",
+            watchdog_sha256_override or watchdog_sha256,
+            "-WatchdogManifestPath",
+            str(watchdog_manifest),
+            "-WatchdogManifestSha256",
+            watchdog_manifest_sha256_override or watchdog_manifest_sha256,
             "-HealthTimeoutSeconds",
             str(health_timeout_seconds),
             "-ProductionMutexName",
             f"Local\\iwork-stage4-production-{tmp_path.name}",
             "-RecoveryMutexName",
             recovery_mutex_name or f"Local\\iwork-stage4-recovery-{tmp_path.name}",
-        ],
+        ]
+    if external_probe_receipt and mode == "Deploy":
+        deployment_args.extend(
+            [
+                "-ExternalProbeReceiptPath",
+                str(external_probe_receipt_path),
+                "-ExternalProbeProducerPath",
+                str(external_probe_producer_path if external_probe_producer else tmp_path / "missing-producer.ps1"),
+                "-ExternalProbeProducerSha256",
+                producer_sha256,
+                "-ExternalProbeSigningSecretFile",
+                str(external_probe_secret_path),
+                "-ExternalProbeSigningSecretSha256",
+                secret_sha256,
+                "-ExternalProbeProducerExpectedIdentity",
+                identity,
+            ]
+        )
+    result = subprocess.run(  # noqa: S603 - 仅执行仓库固定脚本与隔离测试参数
+        deployment_args,
         capture_output=True,
         encoding="utf-8",
         env=env,
@@ -929,10 +1216,147 @@ exit /b %fakeDockerExitCode%
         "lock_root": lock_root,
         "maintenance_file": maintenance_file,
         "watchdog_script": watchdog_script,
+        "watchdog_manifest": watchdog_manifest,
+        "external_probe_receipt": external_probe_receipt_path,
+        "external_probe_producer": external_probe_producer_path,
         "config_bundle": config_bundle,
         "previous_config_path": previous_config_path,
         "previous_config_digest": previous_config_digest,
     }
+
+
+def test_deploy_fails_closed_without_external_probe_evidence(tmp_path: Path) -> None:
+    """正式部署缺少外部探针或收据时不得以容器内检查结果宣告成功。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        external_probe_receipt=False,
+    )
+
+    assert result.returncode != 0
+    assert "外部探针" in result.stderr
+
+
+def test_deploy_rejects_external_probe_receipt_created_before_candidate_switch(
+    tmp_path: Path,
+) -> None:
+    """正式部署不得复用候选容器切换前预生成的外部探针收据。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        external_probe_precreated=True,
+    )
+
+    assert result.returncode != 0
+    assert "切换前" in result.stderr or "已存在" in result.stderr
+
+
+def test_deploy_fails_closed_without_trusted_external_probe_producer(
+    tmp_path: Path,
+) -> None:
+    """缺少哈希固定的本地主机探针生产者时不得开始候选切换。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        external_probe_producer=False,
+    )
+
+    assert result.returncode != 0
+    docker_calls = (
+        paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+        if paths["docker_log"].is_file()
+        else ""
+    )
+    assert "up -d --no-build --no-deps iwork alert-worker" not in docker_calls
+    assert "探针生产者" in result.stderr
+
+
+def test_deploy_requires_exact_six_external_probe_receipt_items(tmp_path: Path) -> None:
+    """外部探针收据缺项、重复项和未知项均不得放行部署。"""
+    for variant in ("missing", "duplicate", "unknown", "failed"):
+        result, paths = _run_deployment_script(
+            tmp_path / variant,
+            mode="Deploy",
+            external_probe_mutation=variant,
+        )
+
+        assert result.returncode != 0, variant
+        docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
+        assert "up -d --no-build --no-deps iwork alert-worker" in docker_calls, variant
+
+
+def test_deploy_rejects_expired_external_probe_receipt(tmp_path: Path) -> None:
+    """外部探针收据超过有效窗口时必须失败并走回滚。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        external_probe_mutation="expired",
+    )
+
+    assert result.returncode != 0
+    assert "已过期" in result.stderr
+    assert (paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json").is_file()
+
+
+def test_deploy_rejects_signed_probe_receipt_from_before_switch(tmp_path: Path) -> None:
+    """即使签名有效，checked_at早于候选切换也必须回滚。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Deploy",
+        external_probe_mutation="pre_switch",
+    )
+
+    assert result.returncode != 0
+    assert "切换前" in result.stderr
+
+
+def test_deploy_binds_probe_receipt_to_nonce_identity_and_candidate_containers(
+    tmp_path: Path,
+) -> None:
+    """有效签名不能替代nonce、生产者身份和候选双容器的逐项绑定。"""
+    expected_errors = {
+        "nonce": "nonce",
+        "identity": "生产者身份",
+        "container": "候选容器绑定",
+        "signature": "签名",
+    }
+    for mutation, expected_error in expected_errors.items():
+        result, paths = _run_deployment_script(
+            tmp_path / mutation,
+            mode="Deploy",
+            external_probe_mutation=mutation,
+        )
+
+        assert result.returncode != 0, mutation
+        assert expected_error in result.stderr, mutation
+
+
+def test_preflight_fails_closed_on_watchdog_sha256_mismatch(tmp_path: Path) -> None:
+    """看门狗脚本哈希不匹配时必须在Docker调用前失败。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        watchdog_sha256_override="0" * 64,
+    )
+
+    assert result.returncode != 0
+    assert "看门狗SHA-256" in result.stderr
+    assert not paths["docker_log"].exists()
+
+
+def test_preflight_fails_closed_on_watchdog_manifest_sha256_mismatch(
+    tmp_path: Path,
+) -> None:
+    """看门狗机制清单自身哈希不匹配时必须在Docker调用前失败。"""
+    result, paths = _run_deployment_script(
+        tmp_path,
+        mode="Preflight",
+        watchdog_manifest_sha256_override="0" * 64,
+    )
+
+    assert result.returncode != 0
+    assert "机制清单SHA-256" in result.stderr
+    assert not paths["docker_log"].exists()
 
 
 def test_deploy_waits_for_cross_identity_recovery_mutex_to_be_released(
@@ -1251,6 +1675,12 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert state["CandidateProductionEnvSha256"] == hashlib.sha256(
         b"DKT_ENVIRONMENT=production\n"
     ).hexdigest()
+    assert state["ExternalProbe"]["Mode"] == "receipt"
+    assert state["ExternalProbe"]["StatusCode"] == 200
+    archived_receipt = Path(state["ExternalProbe"]["ReceiptPath"])
+    assert archived_receipt.is_file()
+    assert Path(state["ExternalProbe"]["SignaturePath"]).is_file()
+    assert not paths["external_probe_receipt"].exists()
     assert state["PreviousConfigDigest"] == state["CandidateConfigDigest"]
     assert state["PreviousConfigBootstrap"] is True
     active_release = json.loads(
@@ -1377,7 +1807,7 @@ def test_controlled_rollback_drill_rejects_database_migrations(
     )
 
     assert result.returncode != 0
-    assert "禁止执行数据库迁移" in result.stderr
+    assert "run_migrations=true已禁用" in result.stderr
     assert not paths["docker_log"].exists()
     assert not (paths["state_root"] / "rollback-drill-v1.json").exists()
 
@@ -1478,28 +1908,20 @@ def test_active_release_pointer_must_bind_audit_identity_and_config_hashes(
         assert "活动发布指针" in result.stderr
 
 
-def test_migration_deployment_creates_database_backup_and_checksum(
+def test_migration_deployment_is_disabled_without_compatibility_evidence(
     tmp_path: Path,
 ) -> None:
-    """启用迁移时，切换容器前必须生成数据库备份及SHA-256。"""
+    """没有机器可验证兼容性证据时，迁移开关必须在Docker调用前失败关闭。"""
     result, paths = _run_deployment_script(
         tmp_path,
         mode="Deploy",
         run_migrations=True,
     )
 
-    assert result.returncode == 0, result.stderr
-    docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
-    assert "exec dkt_mysql sh -c" in docker_calls
-    assert "mysqldump" in docker_calls
-    assert f"cp dkt_mysql:/tmp/iwork-{DEPLOYMENT_RUN_ID}.sql" in docker_calls
-
-    state_file = paths["state_root"] / f"{DEPLOYMENT_RUN_ID}.json"
-    state = json.loads(state_file.read_text(encoding="utf-8"))
-    backup_path = Path(state["DatabaseBackupPath"])
-    assert backup_path.is_file()
-    assert backup_path.stat().st_size > 0
-    assert len(state["DatabaseBackupSha256"]) == 64
+    assert result.returncode != 0
+    assert "run_migrations=true已禁用" in result.stderr
+    assert not paths["docker_log"].exists()
+    assert not (paths["state_root"] / "backups").exists()
 
 
 def test_database_backup_is_restricted_to_runner_system_and_administrators() -> None:

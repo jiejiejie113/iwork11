@@ -48,6 +48,12 @@ jobs:
           if ($env:GITHUB_EVENT_NAME -cne "workflow_dispatch") {
               throw "发布只允许workflow_dispatch触发"
           }
+          if ($env:GITHUB_REPOSITORY -cne "GuChenkano/iwork") {
+              throw "发布只能在受信仓库运行"
+          }
+          if ($env:GITHUB_ACTOR -cne "GuChenkano") {
+              throw "发布触发账号不在准入清单"
+          }
           if ($env:REQUEST_ID -notmatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") {
               throw "Invalid request ID format."
           }
@@ -62,6 +68,12 @@ jobs:
           $allowedBranch = $env:GITHUB_REF -eq "refs/heads/Keycloak"
           if (-not $allowedBranch) {
               throw "仅允许从Keycloak分支发布"
+          }
+          if ($env:GITHUB_REPOSITORY -cne "GuChenkano/iwork") {
+              throw "发布只能在受信仓库运行"
+          }
+          if ($env:GITHUB_ACTOR -cne "GuChenkano") {
+              throw "发布触发账号不在准入清单"
           }
           if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") {
               throw "发布提交不是完整的40位SHA"
@@ -329,9 +341,7 @@ jobs:
           $digest = Get-RemoteDigest -ImageReference $env:IMAGE_REF
           $reused = $false
           if ($digest) {
-              $reused = $true
-              Assert-ImageRevision -ImageReference "$env:IMAGE_NAME@$digest"
-              Invoke-LocalImageSmoke -ImageReference "$env:IMAGE_NAME@$digest"
+              throw "检测到已存在的 Commit SHA 标签，但当前 Release 缺少可信历史 Manifest/Artifact 复用证据，已失败关闭。"
           }
           else {
               $createdAt = (git show -s --format=%cI $env:GITHUB_SHA).Trim()
@@ -495,7 +505,7 @@ jobs:
               manifest_artifact_name = "iwork-release-manifest-$env:GITHUB_SHA"
               mechanism_id = 'iwork-release-mechanism-v1'
               risk_envelope = 'application-only'
-              migration_policy_id = 'expand-contract-v1'
+              migration_policy_id = 'disabled-v1'
               workflow = '.github/workflows/release.yml'
               ref = 'refs/heads/Keycloak'
               signature_algorithm = 'RSASSA-PKCS1-v1_5-SHA256'
@@ -566,6 +576,9 @@ jobs:
           "IWORK_CONFIG_ARTIFACT_ID=${{ steps.config_metadata.outputs.artifact_id }}"
           "IWORK_CONFIG_ARTIFACT_NAME=${{ steps.config_metadata.outputs.artifact_name }}"
           "IWORK_CONFIG_ARTIFACT_DIGEST=${{ steps.config_metadata.outputs.artifact_digest }}"
+          "IWORK_CI_REQUEST_ID=$env:CI_REQUEST_ID"
+          "IWORK_CI_RUN_ID=$env:CI_RUN_ID"
+          "IWORK_CI_RUN_ATTEMPT=$env:CI_RUN_ATTEMPT"
           "IWORK_RELEASE_RUN_ID=${{ github.run_id }}"
           "IWORK_RELEASE_RUN_ATTEMPT=${{ github.run_attempt }}"
 

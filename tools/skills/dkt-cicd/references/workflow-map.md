@@ -43,7 +43,9 @@ Release。
 - `-ChangeDescription`：非空变更说明。
 
 预检固定传递 `apply=false`、`rollback_drill=false`、`run_migrations=false`、
-`confirmation=PREFLIGHT IWORK`。
+`confirmation=PREFLIGHT IWORK`。当前迁移策略为永久失败关闭的 `disabled-v1`：在形成
+机器可验证的向后兼容变更集合、隔离数据库结果和前后版本证明前，任何
+`run_migrations=true` 都必须在 Docker 调用前拒绝，不提供“有迁移”的确认路径。
 
 正式部署必须传入成功预检返回的 `-PreflightRunId`，格式为
 `<workflow_run_id>-<run_attempt>`。该 Run 必须是同一 Commit 的
@@ -51,13 +53,12 @@ Release。
 它只能来自 `apply=false` 的 iwork 预检，脚本会重新读取其完整三类 Digest 并逐项比对当前
 输入，任何绑定缺失、运行状态不符或证据不一致都失败关闭。
 
-部署确认预览返回：
+部署确认预览仅返回无迁移路径：
 
-- 无迁移：`DEPLOY IWORK <Revision>`
-- 有迁移：`DEPLOY IWORK WITH MIGRATIONS <Revision>`
+`DEPLOY IWORK <Revision>`
 
-用户逐字确认后，Skill 向 Workflow 传递其原生确认词 `DEPLOY IWORK` 或
-`DEPLOY IWORK WITH MIGRATIONS`。确认前必须先生成参数绑定的本地预览状态；该状态15分钟
+用户逐字确认后，Skill 向 Workflow 传递原生确认词 `DEPLOY IWORK`；任何迁移确认词或
+`run_migrations=true` 都失败关闭。确认前必须先生成参数绑定的本地预览状态；该状态15分钟
 有效、单次消费，参数变化或直接携带确认词都将失败关闭。
 
 ### Portal 预检/部署

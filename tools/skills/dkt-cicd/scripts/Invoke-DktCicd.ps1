@@ -54,6 +54,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($RunMigrations) {
+    throw 'run_migrations=true 在 Skill 入口立即失败关闭；preflight/deploy 不接受数据库迁移开关。'
+}
+
 # ======
 # 固定仓库与 Workflow 路由
 $SERVICE_CONFIG = @{
@@ -77,6 +81,7 @@ $SERVICE_CONFIG = @{
 }
 $REVISION_PATTERN = '^[0-9a-f]{40}$'
 $DIGEST_PATTERN = '^sha256:[0-9a-f]{64}$'
+$GUID_PATTERN = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 $CONFIG_ARTIFACT_PLACEHOLDER_PATTERN = '^\$(?:artifactDigest|env:CONFIG_ARTIFACT_DIGEST)$'
 $RUN_DISCOVERY_TIMEOUT_SECONDS = if (
     $env:DKT_CICD_TEST_MODE -ceq '1' -and
@@ -785,15 +790,33 @@ function Get-RunEvidence {
             '(?im)(?:^|[^A-Za-z0-9])IWORK_RELEASE_MANIFEST_ARTIFACT_NAME\s*=\s*(?<value>iwork-release-manifest-[0-9a-f]{40})'
         )
         $manifestArtifactNames = @($manifestArtifactNameMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $ciRequestIdMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_CI_REQUEST_ID\s*=\s*(?<value>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        )
+        $ciRequestIds = @($ciRequestIdMatches | ForEach-Object { $_.Groups['value'].Value.ToLowerInvariant() } | Select-Object -Unique)
+        $ciRunIdMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_CI_RUN_ID\s*=\s*(?<value>[0-9]+)'
+        )
+        $ciRunIds = @($ciRunIdMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
+        $ciRunAttemptMatches = [regex]::Matches(
+            $logResult.Output,
+            '(?im)(?:^|[^A-Za-z0-9])IWORK_CI_RUN_ATTEMPT\s*=\s*(?<value>[1-9][0-9]*)'
+        )
+        $ciRunAttempts = @($ciRunAttemptMatches | ForEach-Object { $_.Groups['value'].Value } | Select-Object -Unique)
         if (
             $RequireReleaseManifest -and
             ($configArtifactIds.Count -ne 1 -or
              $configArtifactNames.Count -ne 1 -or
              $manifestArtifactIds.Count -ne 1 -or
              $manifestArtifactDigests.Count -ne 1 -or
-             $manifestArtifactNames.Count -ne 1)
+             $manifestArtifactNames.Count -ne 1 -or
+             $ciRequestIds.Count -ne 1 -or
+             $ciRunIds.Count -ne 1 -or
+             $ciRunAttempts.Count -ne 1)
         ) {
-            throw 'iwork Release日志必须提供唯一完整的配置Artifact和Release Manifest元数据。'
+            throw 'iwork Release日志必须提供唯一完整的配置Artifact、Release Manifest和CI绑定元数据。'
         }
         return [ordered]@{
             Digests = @($digests)
@@ -810,6 +833,9 @@ function Get-RunEvidence {
             ManifestArtifactId = if ($manifestArtifactIds.Count -eq 1) { [long]$manifestArtifactIds[0] } else { $null }
             ManifestArtifactName = if ($manifestArtifactNames.Count -eq 1) { $manifestArtifactNames[0] } else { $null }
             ManifestArtifactDigest = if ($manifestArtifactDigests.Count -eq 1) { $manifestArtifactDigests[0] } else { $null }
+            CiRequestId = if ($ciRequestIds.Count -eq 1) { $ciRequestIds[0] } else { $null }
+            CiRunId = if ($ciRunIds.Count -eq 1) { [long]$ciRunIds[0] } else { $null }
+            CiRunAttempt = if ($ciRunAttempts.Count -eq 1) { [int]$ciRunAttempts[0] } else { $null }
         }
     }
 
@@ -1314,6 +1340,9 @@ try {
     if ($Action -notin @('preflight', 'deploy')) {
         throw "不支持的动作：$Action"
     }
+    if ($Service -eq 'iwork' -and $RunMigrations) {
+        throw 'iwork preflight/deploy 不接受数据库迁移开关：run_migrations=true 已禁用，缺少机器可验证的向后兼容迁移证据。'
+    }
     if ($Service -eq 'iwork' -and [String]::IsNullOrWhiteSpace($ReleaseRequestId)) {
         throw 'iwork preflight/deploy 必须提供明确的成功 Release request_id（-ReleaseRequestId），禁止猜测最新 Release。'
     }
@@ -1330,12 +1359,17 @@ try {
         throw 'iwork 正式部署必须提供成功的apply=false预检Run标识（-PreflightRunId）。'
     }
 
-    Assert-SuccessfulWorkflowForRevision `
-        -ServiceName $Service `
-        -Workflow $config.CiWorkflow `
-        -ExpectedRevision $resolvedRevision `
-        -Description '纯 CI' `
-        -RequireWorkflowDispatch:($Service -eq 'iwork') | Out-Null
+    if ($Service -ne 'iwork') {
+        # Portal 尚未迁移到 Release Manifest 的 CI 绑定契约，继续保留其旧的
+        # Commit/事件门禁；iwork 的 CI 证据必须来自下方已核验 Release Manifest，
+        # 不得在这里猜测同一 Commit 的任意成功 CI。
+        Assert-SuccessfulWorkflowForRevision `
+            -ServiceName $Service `
+            -Workflow $config.CiWorkflow `
+            -ExpectedRevision $resolvedRevision `
+            -Description '纯 CI' `
+            -RequireWorkflowDispatch:($Service -eq 'iwork') | Out-Null
+    }
     $releaseRun = Assert-SuccessfulWorkflowForRevision `
         -ServiceName $Service `
         -Workflow $config.ReleaseWorkflow `
@@ -1415,6 +1449,11 @@ try {
             -RequireConfigDigest `
             -RequireConfigArtifactDigest `
             -RequireReleaseManifest
+        if ($publishedEvidence.CiRequestId -notmatch $GUID_PATTERN -or
+            $publishedEvidence.CiRunId -le 0 -or
+            $publishedEvidence.CiRunAttempt -le 0) {
+            throw 'iwork Release Manifest未提供有效的CI request_id/Run绑定，已停止触发。'
+        }
         $publishedDigests = @($publishedEvidence.Digests)
         if ($publishedDigests.Count -ne 1 -or $publishedDigests[0] -cne $ImageDigest) {
             throw 'iwork 输入 Digest 与同一 Commit 的成功 GHCR 发布产物不一致，已停止触发。'

@@ -27,15 +27,31 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - name: 记录请求关联ID
+      - name: 校验请求关联ID和运行身份
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
+          if ($env:GITHUB_REPOSITORY -cne 'GuChenkano/iwork') {
+              throw 'CI只能在受信仓库运行。'
+          }
+          if ($env:GITHUB_REF -cne 'refs/heads/Keycloak') {
+              throw '完整CI只能在Keycloak分支运行。'
+          }
           if ($env:REQUEST_ID -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
               throw 'Invalid request ID format.'
           }
+          @(
+              '## iwork CI审计摘要'
+              ''
+              "- Repository: $env:GITHUB_REPOSITORY"
+              "- Ref: $env:GITHUB_REF"
+              "- Commit: $env:GITHUB_SHA"
+              "- Actor: $env:GITHUB_ACTOR"
+              "- Request ID: $env:REQUEST_ID"
+              "- Run: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           "IWORK_REQUEST_ID=$env:REQUEST_ID"
 
       - name: 检出代码
@@ -94,3 +110,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill安装测试失败" }
           & ./tools/skills/dkt-cicd/tests/Test-DktCicd.ps1
           if ($LASTEXITCODE -ne 0) { throw "dkt-cicd Skill行为测试失败" }
+
+      - name: 记录CI结果摘要
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+              ''
+              '- Result: determined by GitHub Actions job conclusion'
+              "- Completed at: $([DateTimeOffset]::UtcNow.ToString('o'))"
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8

@@ -83,6 +83,7 @@ function Invoke-SkillProcess {
         [switch]$ReleaseEventPush,
         [switch]$OldCiEventPush,
         [switch]$DuplicateCiRequest,
+        [switch]$MissingCiBinding,
         [switch]$MismatchedReleaseDigest,
         [int]$DiscoveryDelayQueries = 0,
         [switch]$FinalDiscoveryQuery,
@@ -114,6 +115,7 @@ function Invoke-SkillProcess {
     $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH = if ($ReleaseEventPush) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_OLD_CI_EVENT_PUSH = if ($OldCiEventPush) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_DUPLICATE_CI_REQUEST = if ($DuplicateCiRequest) { '1' } else { '0' }
+    $env:DKT_CICD_FAKE_MISSING_CI_BINDING = if ($MissingCiBinding) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST = if ($MismatchedReleaseDigest) { '1' } else { '0' }
     $env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES = [string]$DiscoveryDelayQueries
     $env:DKT_CICD_TEST_DISCOVERY_TIMEOUT_SECONDS = if ($FinalDiscoveryQuery) { '0' } else { $null }
@@ -131,8 +133,17 @@ function Invoke-SkillProcess {
     $allArguments = @(
         '-NoLogo', '-NoProfile', '-File', $scriptPath
     ) + $flattenedArguments + @('-GhExecutable', $fakeGhPath, '-OutputJson')
-    $output = @(& $engineExecutable @allArguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    # Windows PowerShell 会把子进程 stderr 包装成 NativeCommandError；测试需要保留
+    # 失败输出和退出码，不能让预期的失败在辅助函数内部中断整套回归测试。
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $engineExecutable @allArguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
     $result = [pscustomobject]@{
         ExitCode = $exitCode
@@ -144,6 +155,19 @@ function Invoke-SkillProcess {
     }
     return $result
 }
+
+$runMigrationsAtEntry = Invoke-SkillProcess -Arguments @(
+    '-Action', 'preflight', '-Service', 'iwork', '-RunMigrations'
+) -Mode success -PreserveState
+Assert-True -Condition (
+    $runMigrationsAtEntry.ExitCode -eq 1 -and
+    $runMigrationsAtEntry.Output.Contains('run_migrations=true')
+) -Message 'run_migrations=true 必须在 Skill 入口立即失败关闭'
+Assert-True -Condition (
+    -not (Test-Path -LiteralPath (Join-Path $runMigrationsAtEntry.StateDirectory 'arguments.log')) -and
+    -not (Get-ChildItem -LiteralPath $runMigrationsAtEntry.StateDirectory -Filter '*.dispatched' -ErrorAction SilentlyContinue)
+) -Message '入口拒绝 run_migrations=true 时不得调用 gh 或生成 Workflow 请求'
+Remove-TestStateDirectory -Path $runMigrationsAtEntry.StateDirectory
 
 foreach ($mode in @('queued', 'in_progress', 'success', 'failure')) {
     $statusResult = Invoke-SkillProcess -Arguments @(
@@ -508,7 +532,7 @@ $preflightResult = Invoke-SkillProcess -Arguments @(
     '-ConfigArtifactDigest', $configArtifactDigest,
     $releaseEvidenceArguments,
     '-ChangeDescription', '部署前预检绑定', '-Wait'
-) -Mode success
+) -Mode success -PreserveState
 $preflightJson = $preflightResult.Output | ConvertFrom-Json
 $preflightRunId = [string]$preflightJson.Run.RunIdentifier
 Assert-True -Condition ($preflightRunId -eq '203-1') -Message '预检成功结果必须返回稳定Run标识'
@@ -516,6 +540,29 @@ Assert-True -Condition (
     ($preflightJson.Run.RunName -match '(?i)\bpreflight\b') -and
     ($preflightJson.Run.Workflow -eq 'iwork controlled production deployment')
 ) -Message '预检绑定结果必须确认部署Workflow身份和apply=false标题'
+$preflightArgumentsLog = Get-Content -LiteralPath (Join-Path $preflightResult.StateDirectory 'arguments.log') -Raw
+Assert-True -Condition (
+    -not $preflightArgumentsLog.Contains('--workflow' + [char]31 + 'ci.yml')
+) -Message 'iwork预检应直接使用已核验Release Manifest的CI绑定，不得再次查询未绑定CI'
+Remove-TestStateDirectory -Path $preflightResult.StateDirectory
+
+$missingCiBinding = Invoke-SkillProcess -Arguments @(
+    '-Action', 'preflight', '-Service', 'iwork', '-Revision', $revision,
+    '-ImageDigest', $imageDigest, '-ConfigDigest', $configDigest,
+    '-ConfigArtifactDigest', $configArtifactDigest,
+    $releaseEvidenceArguments,
+    '-ChangeDescription', '缺少 Manifest CI 绑定验收'
+) -Mode success -MissingCiBinding -PreserveState
+Assert-True -Condition (
+    $missingCiBinding.ExitCode -eq 1 -and
+    $missingCiBinding.Output.Contains('CI绑定元数据')
+) -Message 'Release Manifest 缺少 ci_request_id/Run 绑定时必须失败关闭'
+$missingCiBindingArgumentsLog = Get-Content -LiteralPath (Join-Path $missingCiBinding.StateDirectory 'arguments.log') -Raw
+Assert-True -Condition (
+    -not $missingCiBindingArgumentsLog.Contains('--workflow' + [char]31 + 'ci.yml') -and
+    -not (Test-Path -LiteralPath (Join-Path $missingCiBinding.StateDirectory 'deploy-iwork.yml.dispatched'))
+) -Message '缺少 Manifest CI 绑定时不得查询任意 CI 或触发生产 Workflow'
+Remove-TestStateDirectory -Path $missingCiBinding.StateDirectory
 
 $changedPreview = Invoke-SkillProcess -Arguments @(
     '-Action', 'deploy', '-Service', 'iwork', '-Revision', $revision,
@@ -572,6 +619,9 @@ $deployResult = Invoke-SkillProcess -Arguments @(
 Assert-True -Condition ($deployResult.ExitCode -eq 0) -Message '精确确认后应允许触发假部署'
 Assert-True -Condition (Test-Path -LiteralPath (Join-Path $deployResult.StateDirectory 'deploy-iwork.yml.dispatched')) -Message '假部署应被记录为已触发'
 $deployLog = Get-Content -LiteralPath (Join-Path $deployResult.StateDirectory 'arguments.log') -Raw
+Assert-True -Condition (
+    -not $deployLog.Contains('--workflow' + [char]31 + 'ci.yml')
+) -Message 'iwork部署应直接使用已核验Release Manifest的CI绑定，不得查询未绑定CI'
 Assert-True -Condition ($deployLog.Contains('apply=true')) -Message '部署必须传 apply=true'
 Assert-True -Condition ($deployLog.Contains("config_digest=$configDigest")) -Message '部署必须传入发布验证过的 ConfigDigest'
 Assert-True -Condition ($deployLog.Contains("config_artifact_digest=$configArtifactDigest")) -Message '部署必须传入发布验证过的 ConfigArtifactDigest'

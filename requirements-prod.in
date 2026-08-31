@@ -1,0 +1,40 @@
+# Django 核心
+Django==5.2.6
+
+# 环境变量管理
+django-environ==0.12.0
+
+# MySQL 驱动
+mysqlclient==2.2.7
+pymysql==1.1.2
+
+# 数据处理
+pandas==2.2.3
+numpy==2.2.6
+openpyxl==3.1.5
+
+# 日志管理
+loguru==0.7.3
+
+# 定时任务
+celery==5.5.3
+django-celery-beat==2.8.1
+eventlet==0.40.3
+greenlet==3.2.4
+
+# Redis
+redis==5.2.1
+django-redis==5.4.0
+
+# REST API
+djangorestframework==3.16.1
+requests==2.32.3
+
+# ASGI 服务器
+uvicorn[standard]==0.34.0
+httptools==0.6.4
+watchfiles==1.0.5
+websockets==15.0.1
+
+# 源码包构建后端（固定版本，供mysqlclient在镜像中复现构建）
+setuptools==80.9.0

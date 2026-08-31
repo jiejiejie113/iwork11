@@ -12,6 +12,8 @@ services:
       ACCESS_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
       LOCAL_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
       IWORK_DB_PASSWORD: ${IWORK_DB_PASSWORD:?Set IWORK_DB_PASSWORD in dkt-secrets.env}
+      # 缺省只能显式跳过迁移；生产Workflow仍会拒绝true。
+      IWORK_RUN_MIGRATIONS: ${IWORK_RUN_MIGRATIONS:-false}
     volumes:
       - ./logs:/app/logs
       - ./sqlite:/app/sqlite:ro
@@ -41,6 +43,7 @@ services:
       ACCESS_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
       LOCAL_DB_PASSWORD: ${IWORK_APP_DB_PASSWORD:?Set IWORK_APP_DB_PASSWORD in dkt-secrets.env}
       IWORK_DB_PASSWORD: ${IWORK_DB_PASSWORD:?Set IWORK_DB_PASSWORD in dkt-secrets.env}
+      IWORK_RUN_MIGRATIONS: ${IWORK_RUN_MIGRATIONS:-false}
     volumes:
       - ./logs:/app/logs
     networks:

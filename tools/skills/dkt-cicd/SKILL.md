@@ -21,6 +21,9 @@ description: 使用本机 GitHub CLI 安全查询、触发、监控并汇报 iwo
   展示服务、仓库、分支、Commit、Digest、环境、迁移开关和变更说明；只接受用户在
   看到本次预览后给出的精确确认词。预览状态与全部参数绑定、15分钟有效且只能消费一次；
   不得直接携带确认词跳过预览，也不得把更早的笼统授权视为本次确认。
+- iwork 当前迁移策略固定为 `disabled-v1`：`run_migrations=true` 在 Skill、Workflow、
+  Release Manifest 和服务器固定脚本中均失败关闭；在形成机器可验证的向后兼容证据前，
+  不提供迁移部署或迁移确认路径。
 - iwork `deploy` 还必须传入成功 `preflight` 返回的 `-PreflightRunId`（格式为
   `<workflow_run_id>-<run_attempt>`）。绑定的 Run 必须是同一 Commit、`completed/success`、
   `workflow_dispatch` 且其 `run-name`/标题包含 `request_id` 的 `apply=false` 预检；脚本会

@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 PR_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci-pr.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
+DOCKERFILE_PATH = ROOT / "Dockerfile"
+PRODUCTION_LOCK_PATH = ROOT / "requirements-prod.lock"
 
 
 def _read_workflow() -> str:
@@ -39,6 +41,92 @@ def _read_pr_workflow() -> str:
         str: PR轻量检查工作流完整文本。
     """
     return PR_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def _read_dockerfile() -> str:
+    """读取生产镜像构建文件。
+
+    Returns:
+        str: Dockerfile完整文本。
+    """
+    return DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+
+def _read_production_lock() -> str:
+    """读取生产依赖锁定文件。
+
+    Returns:
+        str: 生产依赖锁文件完整文本。
+    """
+    return PRODUCTION_LOCK_PATH.read_text(encoding="utf-8")
+
+
+def test_production_dockerfile_uses_digest_and_hashed_lock() -> None:
+    """生产镜像必须固定基础镜像并通过哈希锁安装依赖。"""
+    content = _read_dockerfile()
+
+    assert re.search(r"(?m)^FROM python:3\.11-slim@sha256:[0-9a-f]{64}\s*$", content)
+    assert 'test "$ID" = "debian"' in content
+    assert 'test "$VERSION_CODENAME" = "trixie"' in content
+    assert "COPY requirements-prod.lock ." in content
+    assert "pip install --no-cache-dir --require-hashes --no-build-isolation -r requirements-prod.lock" in content
+    assert "COPY requirements.txt" not in content
+    assert "-r requirements.txt" not in content
+
+
+def test_production_dockerfile_pins_source_build_backend() -> None:
+    """源码包构建不得在隔离环境中解析未锁定的构建后端。"""
+    dockerfile = _read_dockerfile()
+    lock = _read_production_lock()
+
+    assert "--no-build-isolation" in dockerfile
+    assert re.search(r"(?m)^setuptools==[0-9][^\\s]* \\\s*$", lock)
+
+
+def test_production_dockerfile_uses_snapshot_apt_without_recommends() -> None:
+    """生产镜像的Debian输入必须固定快照并禁止安装推荐包。"""
+    content = _read_dockerfile()
+
+    assert re.search(r"(?m)^ARG DEBIAN_SNAPSHOT=\d{8}T\d{6}Z\s*$", content)
+    assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in content
+    assert "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" in content
+    assert "apt-get install -y --no-install-recommends --no-install-suggests" in content
+    assert re.search(r"apt-get(?:\s+-o [^\n;]+)? update", content)
+
+
+def test_production_lock_has_exact_versions_hashes_and_no_dev_tools() -> None:
+    """生产依赖锁必须是精确版本哈希，并排除开发及桌面打包依赖。"""
+    content = _read_production_lock()
+    package_lines = [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "--"))
+    ]
+
+    assert package_lines
+    assert all("==" in line for line in package_lines)
+    assert not re.search(r"(?:>=|<=|~=|>|<)", content)
+    assert re.search(r"--hash=sha256:[0-9a-f]{64}", content)
+    assert not re.search(
+        r"(?im)^(?:pytest(?:-asyncio)?|pyinstaller|customtkinter)==",
+        content,
+    )
+
+
+def test_production_lock_excludes_linux_irrelevant_windows_only_packages() -> None:
+    """Linux生产镜像不得把Windows条件依赖固化成无条件安装。"""
+    content = _read_production_lock()
+
+    assert not re.search(r"(?im)^(?:colorama|win32-setctime)==", content)
+
+
+def test_production_build_inputs_have_stable_text_bytes() -> None:
+    """生产构建锁和Dockerfile必须固定为LF，避免跨平台字节漂移。"""
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    assert "Dockerfile text eol=lf" in attributes
+    assert "requirements-prod.in text eol=lf" in attributes
+    assert "requirements-prod.lock text eol=lf" in attributes
 
 
 def test_ci_workflow_is_manual_only_and_keeps_request_id() -> None:
@@ -130,6 +218,9 @@ def test_ci_workflow_uses_pinned_actions_and_expected_checks() -> None:
     assert "inputs.request_id || github.run_id" not in content
     assert "inputs.request_id || github.sha" not in content
     assert "IWORK_REQUEST_ID=" in content
+    assert "GITHUB_REPOSITORY -cne 'GuChenkano/iwork'" in content
+    assert "GITHUB_REF -cne 'refs/heads/Keycloak'" in content
+    assert "GITHUB_STEP_SUMMARY" in content
 
 
 def test_ci_test_job_preserves_non_secret_environment_profiles() -> None:
@@ -178,6 +269,8 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "CI_REQUEST_ID" in content
     assert '$_.event -eq "workflow_dispatch"' in content
     assert "function Get-ExactRequestId" in content
+    assert 'GITHUB_REPOSITORY -cne "GuChenkano/iwork"' in content
+    assert 'GITHUB_ACTOR -cne "GuChenkano"' in content
     assert "(Get-ExactRequestId -Title ([string]$_.display_title)) -ceq $env:CI_REQUEST_ID.ToLowerInvariant()" in content
     assert 'display_title).Contains($env:CI_REQUEST_ID)' not in content
     assert content.count("$startedAt = [DateTimeOffset]::UtcNow") == 1
@@ -253,6 +346,21 @@ def test_release_reused_image_requires_repository_source_label() -> None:
     assert '$expectedSource = "https://github.com/$env:GITHUB_REPOSITORY"' in revision_block
     assert "$actualSource -cne $expectedSource" in revision_block
     assert "source label" in revision_block.lower()
+
+
+def test_release_existing_sha_tag_fails_closed_without_trusted_provenance() -> None:
+    """已有 SHA 标签缺少可信历史 Manifest/Artifact 时必须拒绝复用。"""
+    content = _read_release_workflow()
+    reuse_start = content.index("if ($digest) {")
+    reuse_end = content.index("else {", reuse_start)
+    reuse_block = content[reuse_start:reuse_end]
+
+    assert "throw" in reuse_block
+    assert "可信" in reuse_block
+    assert "Manifest" in reuse_block
+    assert "Artifact" in reuse_block
+    assert "Assert-ImageRevision" not in reuse_block
+    assert "Invoke-LocalImageSmoke" not in reuse_block
 
 
 def test_release_manifest_requires_detached_asymmetric_signature() -> None:

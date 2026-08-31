@@ -136,8 +136,17 @@ jobs:
       RUN_MIGRATIONS: ${{ inputs.run_migrations }}
       CHANGE_DESCRIPTION: ${{ inputs.change_description }}
       CONFIRMATION: ${{ inputs.confirmation }}
+      WATCHDOG_SHA256: e59f057be2cd427fb7633da22d6220e1167467fa4d3a707a47fd6414edfb0c53
+      WATCHDOG_MANIFEST_PATH: D:\DM\DTD_nginx\scripts\docker-health-watchdog.manifest.json
+      # 该字节哈希对应受控DONGMING主机上固定安装的Docker看门狗机制清单，
+      # 用于绑定SYSTEM恢复脚本、共享Mutex和执行身份；它不是六项外部探针收据。
+      # 清单缺失或哈希不匹配时必须失败关闭，不能由dispatch输入替换。
+      WATCHDOG_MANIFEST_SHA256: a031d4a8f600bfeb15f15f05e4c626538a4ba7e218014c0ebef48d5f9c39cea2
+      WATCHDOG_TASK_NAME: Docker-Health-Watchdog
+      WATCHDOG_TASK_PATH: \
+      EXTERNAL_PROBE_RECEIPT_PATH: D:\DM\cicd-state\iwork\external-probe-receipt.json
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: 43a0cf8bcfe02eb2fcc89fc9010e1107907e608626e03a38e9f4e08fd7e3fd89
+      DEPLOY_SCRIPT_SHA256: b9df596b665f26abc8e032e1d50a60c25d4a40114c98ef57e3d31c8e516f2d49
       DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
       DEPLOY_COORDINATION_MODULE_SHA256: 0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7
       IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID: ${{ vars.IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID }}
@@ -152,6 +161,7 @@ jobs:
           if ($env:GITHUB_ACTOR -cne 'GuChenkano') { throw 'Production deploy actor is not approved.' }
           if ($env:GITHUB_REF -cne 'refs/heads/Keycloak') { throw 'Production deploy ref is not approved.' }
           if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') { throw 'Invalid OCI revision format.' }
+          if ($env:RUN_MIGRATIONS -eq 'true') { throw 'run_migrations=true is disabled until a machine-verifiable backward-compatible migration proof exists.' }
           foreach ($pair in @(
               @('REQUEST_ID', $env:REQUEST_ID),
               @('RELEASE_REQUEST_ID', $env:RELEASE_REQUEST_ID),
@@ -423,7 +433,7 @@ jobs:
                   ref = 'refs/heads/Keycloak'
                   mechanism_id = 'iwork-release-mechanism-v1'
                   risk_envelope = 'application-only'
-                  migration_policy_id = 'expand-contract-v1'
+                  migration_policy_id = 'disabled-v1'
               }
               foreach ($field in $manifestChecks.Keys) {
                   if ([string]$releaseManifest.$field -cne [string]$manifestChecks[$field]) {
@@ -504,62 +514,9 @@ jobs:
               return $run
           }
 
-          $ciRun = Assert-SpecifiedWorkflowRun `
-              -WorkflowFile 'ci.yml' `
-              -Description 'CI' `
-              -RunId ([long]$releaseManifest.ci_run_id) `
-              -RunAttempt ([int]$releaseManifest.ci_run_attempt) `
-              -ExpectedRequestId ([string]$releaseManifest.ci_request_id)
-          $releaseRun = Assert-SpecifiedWorkflowRun `
-              -WorkflowFile 'release.yml' `
-              -Description 'GHCR release' `
-              -RunId ([long]$env:RELEASE_RUN_ID) `
-              -RunAttempt ([int]$env:RELEASE_RUN_ATTEMPT) `
-              -ExpectedRequestId $env:RELEASE_REQUEST_ID
-
-          $manifestPath = Join-Path $env:CONFIG_BUNDLE_PATH 'config-manifest.json'
-          $composePath = Join-Path $env:CONFIG_BUNDLE_PATH 'docker-compose.yml'
-          $profilePath = Join-Path $env:CONFIG_BUNDLE_PATH 'env\production.env'
-          foreach ($requiredPath in @($manifestPath, $composePath, $profilePath)) {
-              if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-                  throw "Production config bundle file is missing: $requiredPath"
-              }
-          }
-          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-          if ($manifest.schema -cne 'iwork-production-config/v1') {
-              throw 'Production config schema mismatch.'
-          }
-          if ($manifest.source_commit -cne $env:EXPECTED_REVISION) {
-              throw 'Production config commit mismatch.'
-          }
-          if ($manifest.image_digest -cne $env:IMAGE_DIGEST) {
-              throw 'Production config image digest mismatch.'
-          }
-          if ($manifest.config_digest -cne $env:CONFIG_DIGEST) {
-              throw 'Production config digest mismatch.'
-          }
-          $composeHash = (
-              Get-FileHash -LiteralPath $composePath -Algorithm SHA256
-          ).Hash.ToLowerInvariant()
-          $profileHash = (
-              Get-FileHash -LiteralPath $profilePath -Algorithm SHA256
-          ).Hash.ToLowerInvariant()
-          if ($composeHash -cne $manifest.compose_sha256) {
-              throw 'Production compose hash mismatch.'
-          }
-          if ($profileHash -cne $manifest.production_env_sha256) {
-              throw 'Production profile hash mismatch.'
-          }
-
           $mode = if ($env:APPLY -eq 'true') { 'Deploy' } else { 'Preflight' }
           $expectedConfirmation = if ($env:ROLLBACK_DRILL -eq 'true') {
               'ROLLBACK DRILL IWORK ONCE'
-          }
-          elseif (
-              $mode -eq 'Deploy' -and
-              $env:RUN_MIGRATIONS -eq 'true'
-          ) {
-              'DEPLOY IWORK WITH MIGRATIONS'
           }
           elseif ($mode -eq 'Deploy') {
               'DEPLOY IWORK'
@@ -886,6 +843,56 @@ jobs:
                   -ExpectedFiles @('release-manifest.json', 'release-manifest.sig') `
                   -Description 'Manifest artifact'
               $releaseManifest = Get-VerifiedReleaseManifest -ManifestRoot $releaseManifestRoot
+
+              # Read CI/Release bindings and config only after archive digests,
+              # safe extraction, and manifest signature verification succeed.
+              # A clean runner or stale directory must never provide evidence.
+              $ciRun = Assert-SpecifiedWorkflowRun `
+                  -WorkflowFile 'ci.yml' `
+                  -Description 'CI' `
+                  -RunId ([long]$releaseManifest.ci_run_id) `
+                  -RunAttempt ([int]$releaseManifest.ci_run_attempt) `
+                  -ExpectedRequestId ([string]$releaseManifest.ci_request_id)
+              $releaseRun = Assert-SpecifiedWorkflowRun `
+                  -WorkflowFile 'release.yml' `
+                  -Description 'GHCR release' `
+                  -RunId ([long]$env:RELEASE_RUN_ID) `
+                  -RunAttempt ([int]$env:RELEASE_RUN_ATTEMPT) `
+                  -ExpectedRequestId $env:RELEASE_REQUEST_ID
+
+              $manifestPath = Join-Path $env:CONFIG_BUNDLE_PATH 'config-manifest.json'
+              $composePath = Join-Path $env:CONFIG_BUNDLE_PATH 'docker-compose.yml'
+              $profilePath = Join-Path $env:CONFIG_BUNDLE_PATH 'env/production.env'
+              foreach ($requiredPath in @($manifestPath, $composePath, $profilePath)) {
+                  if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                      throw "Production config bundle file is missing: $requiredPath"
+                  }
+              }
+              $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+              if ($manifest.schema -cne 'iwork-production-config/v1') {
+                  throw 'Production config schema mismatch.'
+              }
+              if ($manifest.source_commit -cne $env:EXPECTED_REVISION) {
+                  throw 'Production config commit mismatch.'
+              }
+              if ($manifest.image_digest -cne $env:IMAGE_DIGEST) {
+                  throw 'Production config image digest mismatch.'
+              }
+              if ($manifest.config_digest -cne $env:CONFIG_DIGEST) {
+                  throw 'Production config digest mismatch.'
+              }
+              $composeHash = (
+                  Get-FileHash -LiteralPath $composePath -Algorithm SHA256
+              ).Hash.ToLowerInvariant()
+              $profileHash = (
+                  Get-FileHash -LiteralPath $profilePath -Algorithm SHA256
+              ).Hash.ToLowerInvariant()
+              if ($composeHash -cne $manifest.compose_sha256) {
+                  throw 'Production compose hash mismatch.'
+              }
+              if ($profileHash -cne $manifest.production_env_sha256) {
+                  throw 'Production profile hash mismatch.'
+              }
               "IWORK_CONFIG_ARTIFACT_ARCHIVE_VERIFIED=true"
               "IWORK_RELEASE_MANIFEST_ARCHIVE_VERIFIED=true"
 
@@ -922,6 +929,12 @@ jobs:
                   -RunId $deploymentRunId `
                   -Actor $env:GITHUB_ACTOR `
                   -ChangeDescription $env:CHANGE_DESCRIPTION `
+                  -WatchdogSha256 $env:WATCHDOG_SHA256 `
+                  -WatchdogManifestPath $env:WATCHDOG_MANIFEST_PATH `
+                  -WatchdogManifestSha256 $env:WATCHDOG_MANIFEST_SHA256 `
+                  -WatchdogTaskName $env:WATCHDOG_TASK_NAME `
+                  -WatchdogTaskPath $env:WATCHDOG_TASK_PATH `
+                  -ExternalProbeReceiptPath $env:EXTERNAL_PROBE_RECEIPT_PATH `
                   -RunMigrations $env:RUN_MIGRATIONS `
                   -RollbackDrill $env:ROLLBACK_DRILL
               if ($LASTEXITCODE -ne 0) {

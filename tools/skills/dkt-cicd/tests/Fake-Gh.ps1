@@ -44,6 +44,7 @@ $mismatchedReleaseDigest = $env:DKT_CICD_FAKE_MISMATCHED_RELEASE_DIGEST -ceq '1'
 $releaseEventPush = $env:DKT_CICD_FAKE_RELEASE_EVENT_PUSH -ceq '1'
 $oldCiEventPush = $env:DKT_CICD_FAKE_OLD_CI_EVENT_PUSH -ceq '1'
 $duplicateCiRequest = $env:DKT_CICD_FAKE_DUPLICATE_CI_REQUEST -ceq '1'
+$missingCiBinding = $env:DKT_CICD_FAKE_MISSING_CI_BINDING -ceq '1'
 $discoveryDelayQueries = if ($env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES -match '^\d+$') {
     [int]$env:DKT_CICD_FAKE_DISCOVERY_DELAY_QUERIES
 }
@@ -303,6 +304,11 @@ if ($RemainingArguments.Count -ge 3 -and
                 Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_ID=$manifestArtifactId"
                 Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_NAME=iwork-release-manifest-$revision"
                 Write-Output "IWORK_RELEASE_MANIFEST_ARTIFACT_DIGEST=$manifestArtifactDigest"
+                if (-not $missingCiBinding) {
+                    Write-Output "IWORK_CI_REQUEST_ID=$ciRequestId"
+                    Write-Output 'IWORK_CI_RUN_ID=101'
+                    Write-Output 'IWORK_CI_RUN_ATTEMPT=1'
+                }
             }
             if ($invalidConfigArtifactDigests) {
                 Write-Output "IWORK_CONFIG_ARTIFACT_DIGEST=sha256:$('8' * 64)"
