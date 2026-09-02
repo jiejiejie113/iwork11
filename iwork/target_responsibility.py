@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -24,6 +25,28 @@ from iwork.statistics import get_business_date
 # ======
 # 本地目标责任配置
 LOCAL_DB_ALIAS = 'iwork_local'
+DEFAULT_TARGET_WORK_MINUTES = int(
+    (Decimal(str(settings.IWORK_TARGET_DEFAULT_WORK_HOURS)) * 60).quantize(
+        Decimal('1'),
+        rounding=ROUND_HALF_UP,
+    )
+)
+MIN_TARGET_WORK_MINUTES = settings.IWORK_TARGET_MIN_WORK_MINUTES
+MAX_TARGET_WORK_MINUTES = int(
+    (Decimal(str(settings.IWORK_TARGET_MAX_WORK_HOURS)) * 60).quantize(
+        Decimal('1'),
+        rounding=ROUND_HALF_UP,
+    )
+)
+TARGET_WORK_HOURS_ERROR = (
+    f'工作时间必须大于 0 且不超过 {MAX_TARGET_WORK_MINUTES / 60:g} 小时'
+)
+
+# 目标责任中允许继续保留旧的可空工时字段；只有非空工时才算新提交完整。
+TARGET_INCOMPLETE_STATUSES = {
+    DailyTargetObligation.Status.PENDING,
+    DailyTargetObligation.Status.OVERDUE,
+}
 
 
 def _default_deadline_time() -> time:
@@ -53,6 +76,57 @@ class TargetResponsibilityError(Exception):
         self.code = code
         self.message = message
         self.http_status = http_status
+
+
+def is_group_target_complete(target: GroupTargetProduction | None) -> bool:
+    """判断整组目标是否具备门禁认可的完整提交值。
+
+    ``target_qty`` 只要明确存在就算已填写，零是合法值；计划工作分钟必须
+    非空。该判断只依赖目标记录本身，不会为旧记录回填或修改任何业务字段。
+
+    Args:
+        target (GroupTargetProduction | None): 当日整组目标记录。
+
+    Returns:
+        bool: 目标产量和工作时间均已填写时返回 ``True``。
+    """
+    return bool(
+        target is not None
+        and getattr(target, 'target_qty', None) is not None
+        and getattr(target, 'planned_work_minutes', None) is not None
+    )
+
+
+def target_submission_status(
+    target: GroupTargetProduction | None,
+    deadline_at: datetime,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """根据目标完整性和截止时间计算统一责任状态。
+
+    Args:
+        target (GroupTargetProduction | None): 当日整组目标记录。
+        deadline_at (datetime): 已冻结的目标提交截止时间。
+        now (datetime | None): 可注入的当前时刻。
+
+    Returns:
+        str: ``fulfilled``、``fulfilled_late``、``pending`` 或 ``overdue``。
+    """
+    instant = _now_instant(now)
+    if not is_group_target_complete(target):
+        return (
+            DailyTargetObligation.Status.OVERDUE
+            if instant > deadline_at
+            else DailyTargetObligation.Status.PENDING
+        )
+    submitted_at = getattr(target, 'submitted_at', None) or getattr(target, 'updated_at', None)
+    submitted_at = _now_instant(submitted_at) if submitted_at is not None else instant
+    return (
+        DailyTargetObligation.Status.FULFILLED
+        if submitted_at <= deadline_at
+        else DailyTargetObligation.Status.FULFILLED_LATE
+    )
 
 
 def require_subject(identity: IworkIdentity | None) -> IworkIdentity:
@@ -314,32 +388,49 @@ def ensure_daily_target_obligations(
             )
             _sync_obligation_leaders(obligation, leaders)
             if target is not None:
-                submitted_at = target.submitted_at or target.updated_at
-                obligation.status = (
-                    DailyTargetObligation.Status.FULFILLED
-                    if submitted_at <= obligation.deadline_at
-                    else DailyTargetObligation.Status.FULFILLED_LATE
+                obligation.status = target_submission_status(
+                    target,
+                    obligation.deadline_at,
+                    now=instant,
                 )
-                obligation.submitted_by_subject = target.submitted_by_subject
-                obligation.submitted_by_username = target.submitted_by_username
-                obligation.submitted_at = submitted_at
-                obligation.waived_at = None
-            elif leaders and obligation.status == DailyTargetObligation.Status.WAIVED:
+                if is_group_target_complete(target):
+                    submitted_at = target.submitted_at or target.updated_at
+                    submitted_at = (
+                        _now_instant(submitted_at)
+                        if submitted_at is not None
+                        else instant
+                    )
+                    obligation.submitted_by_subject = target.submitted_by_subject
+                    obligation.submitted_by_username = target.submitted_by_username
+                    obligation.submitted_at = submitted_at
+                    obligation.waived_at = None
+                else:
+                    # 旧记录可能只有目标产量；不把其历史提交信息误当成完整责任。
+                    obligation.submitted_by_subject = ''
+                    obligation.submitted_by_username = ''
+                    obligation.submitted_at = None
+                    obligation.waived_at = None
+            elif leaders:
+                previous_status = obligation.status
                 obligation.status = (
                     DailyTargetObligation.Status.OVERDUE
                     if instant > obligation.deadline_at
                     else DailyTargetObligation.Status.PENDING
                 )
+                obligation.submitted_by_subject = ''
+                obligation.submitted_by_username = ''
+                obligation.submitted_at = None
                 obligation.waived_at = None
-                GroupTargetAuditLog.objects.using(LOCAL_DB_ALIAS).create(
-                    target_date=target_date,
-                    flow_name=flow_name,
-                    action='obligation_revived',
-                    actor_subject='system',
-                    actor_username='',
-                    old_value={'status': DailyTargetObligation.Status.WAIVED},
-                    new_value={'status': obligation.status},
-                )
+                if previous_status == DailyTargetObligation.Status.WAIVED:
+                    GroupTargetAuditLog.objects.using(LOCAL_DB_ALIAS).create(
+                        target_date=target_date,
+                        flow_name=flow_name,
+                        action='obligation_revived',
+                        actor_subject='system',
+                        actor_username='',
+                        old_value={'status': DailyTargetObligation.Status.WAIVED},
+                        new_value={'status': obligation.status},
+                    )
             elif obligation.status == DailyTargetObligation.Status.PENDING:
                 obligation.status = (
                     DailyTargetObligation.Status.OVERDUE
@@ -470,7 +561,8 @@ def save_group_target(
         flow_name (str): 生产组名称。
         target_date (date): 目标业务日期。
         target_qty (int): 非负整组目标，零是有效提交。
-        planned_work_minutes (int | None): 可选计划工作分钟。
+        planned_work_minutes (int | None): 必填计划工作分钟；旧字段仍允许为
+            ``NULL``，但新提交不能省略。
 
     Returns:
         GroupTargetProduction: 已保存目标。
@@ -488,7 +580,16 @@ def save_group_target(
     require_flow_permission(identity, flow_name, target_date)
     if target_qty < 0:
         raise TargetResponsibilityError('invalid_target_qty', '整组目标不能小于 0')
-    submitted_at = timezone.now()
+    if (
+        isinstance(planned_work_minutes, bool)
+        or not isinstance(planned_work_minutes, int)
+        or not MIN_TARGET_WORK_MINUTES <= planned_work_minutes <= MAX_TARGET_WORK_MINUTES
+    ):
+        raise TargetResponsibilityError(
+            'work_hours_required',
+            TARGET_WORK_HOURS_ERROR,
+        )
+    submitted_at = _now_instant(timezone.now())
     with transaction.atomic(using=LOCAL_DB_ALIAS):
         sync_principal(identity)
         ensure_daily_target_obligations(target_date, now=submitted_at)
@@ -519,8 +620,7 @@ def save_group_target(
             'submitted_at': submitted_at,
             'is_late': submitted_at > obligation.deadline_at,
         }
-        if planned_work_minutes is not None:
-            defaults['planned_work_minutes'] = planned_work_minutes
+        defaults['planned_work_minutes'] = planned_work_minutes
         target, _ = GroupTargetProduction.objects.using(LOCAL_DB_ALIAS).update_or_create(
             target_date=target_date,
             flow_name=flow_name,

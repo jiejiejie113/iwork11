@@ -46,6 +46,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "iwork.middleware.TrustedProxyMiddleware",  # IP 校验：仅接受 Docker 内网请求（纵深防御）
+    "iwork.middleware.TargetSubmissionGateMiddleware",  # 当前负责人必须先提交今日目标
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -212,6 +213,18 @@ IWORK_ADMIN_GROUPS = env.list(
 IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE = env(
     'IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE',
     default='09:00',
+)
+IWORK_TARGET_DEFAULT_WORK_HOURS = env.float(
+    'IWORK_TARGET_DEFAULT_WORK_HOURS',
+    default=10.0,
+)
+IWORK_TARGET_MAX_WORK_HOURS = env.float(
+    'IWORK_TARGET_MAX_WORK_HOURS',
+    default=24.0,
+)
+IWORK_TARGET_MIN_WORK_MINUTES = env.int(
+    'IWORK_TARGET_MIN_WORK_MINUTES',
+    default=1,
 )
 IWORK_ACCOUNT_ACCESS_VALIDATION_URL = env(
     'IWORK_ACCOUNT_ACCESS_VALIDATION_URL',

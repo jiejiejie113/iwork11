@@ -45,6 +45,9 @@ from iwork.local_models import (
     TargetProduction,
 )
 from iwork.target_responsibility import (
+    MAX_TARGET_WORK_MINUTES,
+    MIN_TARGET_WORK_MINUTES,
+    TARGET_WORK_HOURS_ERROR,
     TargetResponsibilityError,
     require_admin,
     require_subject,
@@ -1707,32 +1710,46 @@ def set_targets(request):
             )
 
         work_hours = request.data.get('work_hours')
-        planned_work_minutes = None
-        if work_hours is not None:
-            try:
-                work_hours_decimal = Decimal(str(work_hours).strip())
-            except (InvalidOperation, ValueError):
-                work_hours_decimal = Decimal(0)
-            if (
-                not work_hours_decimal.is_finite()
-                or work_hours_decimal <= 0
-                or work_hours_decimal > 24
-            ):
-                return Response(
-                    {'error': '工作时间必须大于 0 且不超过 24 小时'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            planned_work_minutes = int(
-                (work_hours_decimal * 60).quantize(
-                    Decimal('1'),
-                    rounding=ROUND_HALF_UP,
-                )
+        if work_hours is None or (isinstance(work_hours, str) and not work_hours.strip()):
+            return Response(
+                {
+                    'error': '保存目标时必须提供工作时间',
+                    'code': 'work_hours_required',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            if planned_work_minutes < 1:
-                return Response(
-                    {'error': '工作时间必须大于 0 且不超过 24 小时'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        try:
+            work_hours_decimal = Decimal(str(work_hours).strip())
+        except (InvalidOperation, ValueError):
+            work_hours_decimal = Decimal(0)
+        min_work_hours = Decimal(MIN_TARGET_WORK_MINUTES) / Decimal(60)
+        max_work_hours = Decimal(MAX_TARGET_WORK_MINUTES) / Decimal(60)
+        if (
+            not work_hours_decimal.is_finite()
+            or work_hours_decimal < min_work_hours
+            or work_hours_decimal > max_work_hours
+        ):
+            return Response(
+                {
+                    'error': TARGET_WORK_HOURS_ERROR,
+                    'code': 'invalid_work_hours',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        planned_work_minutes = int(
+            (work_hours_decimal * 60).quantize(
+                Decimal('1'),
+                rounding=ROUND_HALF_UP,
+            )
+        )
+        if not MIN_TARGET_WORK_MINUTES <= planned_work_minutes <= MAX_TARGET_WORK_MINUTES:
+            return Response(
+                {
+                    'error': TARGET_WORK_HOURS_ERROR,
+                    'code': 'invalid_work_hours',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         target_date_value = request.data.get('target_date')
         try:
@@ -1869,6 +1886,11 @@ def set_targets(request):
     wo_targets = normalized_wo_targets
 
     return Response({'status': 'ok', 'count': len(targets), 'wo_count': len(wo_targets)})
+
+
+# DRF 默认把 ``@api_view`` 标记为免 CSRF；该接口由可信代理身份调用，
+# 仍需由 Django 的 CsrfViewMiddleware 校验浏览器写请求。
+set_targets.csrf_exempt = False
 
 
 # ============================================================================

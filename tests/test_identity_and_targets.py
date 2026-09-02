@@ -140,7 +140,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
         flow_name='SO3-L3A',
         target_date=target_date,
         target_qty=0,
-        planned_work_minutes=None,
+        planned_work_minutes=600,
     )
 
     obligation = DailyTargetObligation.objects.get(
@@ -302,7 +302,7 @@ def test_late_submission_preserves_overdue_fact():
             flow_name='SO3-L3A',
             target_date=target_date,
             target_qty=1,
-            planned_work_minutes=None,
+            planned_work_minutes=600,
         )
 
     obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')

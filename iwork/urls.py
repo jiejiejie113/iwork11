@@ -24,6 +24,7 @@ from iwork.alerts import api as alerts_api
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("history/", views.history_dashboard, name="history-dashboard"),
+    path("targets/today/", views.today_targets, name="today-targets"),
 
     # 静态文件：uvicorn 不提供 runserver 的静态服务，应用必须自带路由。
     # nginx 会把 /iwork/static/ 重写为 /static/ 后转发到本应用。
@@ -53,6 +54,11 @@ urlpatterns = [
 
     # 可信账户与目标责任管理 API
     path("api/account/me/", api_views_account.me, name="account-me"),
+    path(
+        "api/account/today-targets/",
+        api_views_account.today_targets,
+        name="account-today-targets",
+    ),
     path("api/account/subscriptions/", alerts_api.subscriptions, name="account-subscriptions"),
     path("api/account/notifications/", alerts_api.notifications, name="account-notifications"),
     path(

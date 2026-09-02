@@ -1,5 +1,6 @@
 import json
 import re
+from urllib.parse import urlsplit
 
 from django.shortcuts import redirect, render
 from django.core.serializers.json import DjangoJSONEncoder
@@ -16,6 +17,25 @@ MOBILE_USER_AGENT_RE = re.compile(
     r"opera mobi|windows phone|mobile|tablet|kindle|silk|fennec)",
     re.IGNORECASE,
 )
+
+
+def _safe_internal_return_path(value: str | None) -> str:
+    """校验门禁完成后的站内返回地址，拒绝开放重定向。
+
+    Args:
+        value (str | None): 查询参数中携带的候选返回地址。
+
+    Returns:
+        str: 仅包含站内绝对路径的地址；非法值返回空字符串。
+    """
+    if not isinstance(value, str) or not value or '\\' in value:
+        return ''
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith('/'):
+        return ''
+    if parsed.path.startswith('//'):
+        return ''
+    return value
 
 
 def _device_context(request):
@@ -85,6 +105,25 @@ def history_dashboard(request):
         'initial_view': 'history',
     })
     return render(request, 'iwork/dashboard.html', context)
+
+
+@vary_on_headers('User-Agent')
+@require_http_methods(['GET'])
+def today_targets(request):
+    """渲染今日目标强制填报和多组快捷输入页面。
+
+    Args:
+        request: 当前页面请求；可选 ``next`` 为门禁完成后的站内返回地址。
+
+    Returns:
+        HttpResponse: 今日目标输入页面。
+    """
+    context = _with_device_context(request, {
+        'page_title': '今日目标',
+        'initial_view': 'today_targets',
+        'return_to': _safe_internal_return_path(request.GET.get('next')),
+    })
+    return render(request, 'iwork/today_targets.html', context)
 
 
 @vary_on_headers('User-Agent')

@@ -6,26 +6,35 @@ from datetime import date, time
 import requests
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.utils import timezone
+from loguru import logger
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from iwork.local_models import (
     DailyTargetObligation,
+    GroupTargetProduction,
     IworkPrincipal,
     ManagedFlowAssignment,
     TargetSubmissionPolicy,
 )
 from iwork.statistics import get_business_date
 from iwork.target_responsibility import (
+    DEFAULT_TARGET_WORK_MINUTES,
+    MAX_TARGET_WORK_MINUTES,
+    MIN_TARGET_WORK_MINUTES,
     LOCAL_DB_ALIAS,
     TargetResponsibilityError,
     active_assignment_query,
+    deadline_for_date,
     ensure_daily_target_obligations,
+    is_group_target_complete,
     require_admin,
     require_subject,
     set_submission_policy,
     sync_principal,
+    target_submission_status,
     waive_unfinished_obligations,
 )
 
@@ -233,6 +242,195 @@ def me(request):
     payload = identity.as_dict()
     payload['flow_assignments'] = [_assignment_payload(item) for item in assignments]
     return Response(payload)
+
+
+def _today_target_work_hours(
+    target: GroupTargetProduction | None,
+    historical_work_minutes: int | None,
+) -> float:
+    """计算今日目标页面使用的工作小时草稿值。
+
+    当前记录优先，其次沿用该 Flow 最近一次有工时的历史记录，最后使用
+    统一的 10 小时默认值。这个值只用于页面初始草稿，不代表已经提交。
+
+    Args:
+        target (GroupTargetProduction | None): 当日目标记录。
+        historical_work_minutes (int | None): 最近历史工时分钟数。
+
+    Returns:
+        float: 页面显示的工作小时数。
+    """
+    minutes = getattr(target, 'planned_work_minutes', None)
+    if minutes is None:
+        minutes = historical_work_minutes
+    if minutes is None:
+        minutes = DEFAULT_TARGET_WORK_MINUTES
+    return minutes / 60
+
+
+def _today_target_payload(
+    flow_name: str,
+    target: GroupTargetProduction | None,
+    obligation: DailyTargetObligation | None,
+    historical_work_minutes: int | None,
+    *,
+    target_date: date,
+    now,
+) -> dict[str, object]:
+    """序列化今日目标快捷输入页面的单组数据。
+
+    Args:
+        flow_name (str): 生产组名称。
+        target (GroupTargetProduction | None): 当日目标记录。
+        obligation (DailyTargetObligation | None): 当日责任记录。
+        historical_work_minutes (int | None): 最近历史工时分钟数。
+        target_date (date): 当前业务日期。
+        now (datetime): 当前时刻，用于无责任记录时计算状态。
+
+    Returns:
+        dict[str, object]: 前端使用的单组目标字段。
+    """
+    target_set = target is not None and getattr(target, 'target_qty', None) is not None
+    work_hours_set = target is not None and target.planned_work_minutes is not None
+    complete = is_group_target_complete(target)
+    work_hours_source = (
+        'current'
+        if work_hours_set
+        else 'history'
+        if historical_work_minutes is not None
+        else 'default'
+    )
+    deadline_at = obligation.deadline_at if obligation else deadline_for_date(target_date)
+    status_value = (
+        obligation.status
+        if obligation is not None
+        else target_submission_status(target, deadline_at, now=now)
+    )
+    submitted_at = None
+    if complete:
+        if obligation is not None:
+            submitted_at = obligation.submitted_at
+        elif target is not None:
+            submitted_at = target.submitted_at or target.updated_at
+    return {
+        'flow': flow_name,
+        'group_target': target.target_qty if target_set else None,
+        'work_hours': _today_target_work_hours(target, historical_work_minutes),
+        'work_hours_source': work_hours_source,
+        'target_set': target_set,
+        'work_hours_set': work_hours_set,
+        'complete': complete,
+        'status': status_value,
+        'deadline_at': deadline_at.isoformat(),
+        'submitted_at': submitted_at.isoformat() if submitted_at else None,
+        'can_edit': True,
+    }
+
+
+@api_view(['GET'])
+def today_targets(request):
+    """返回当前账号可编辑的今日目标及完整性汇总。
+
+    普通组长只看到当前业务日有效负责的 Flow；管理员看到
+    ``VISIBLE_FLOWS`` 全部 Flow。当前目标缺少工时的旧记录仍会返回，且
+    ``complete`` 为 ``False``，不会被接口读取时自动补写。
+
+    Args:
+        request (Request): 当前可信身份请求。
+
+    Returns:
+        Response: 今日业务日期、截止时间、汇总和分组目标列表。
+    """
+    identity, error = _identity_or_response(request)
+    if error:
+        return error
+
+    try:
+        business_date = get_business_date()
+        now = timezone.now()
+        if identity.is_admin:
+            flow_names = list(settings.VISIBLE_FLOWS)
+        else:
+            assigned_flows = ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
+                active_assignment_query(business_date),
+                principal__subject=identity.subject,
+                flow_name__in=settings.VISIBLE_FLOWS,
+            ).values_list('flow_name', flat=True)
+            assigned_flow_set = set(assigned_flows)
+            flow_names = [flow for flow in settings.VISIBLE_FLOWS if flow in assigned_flow_set]
+
+        ensure_daily_target_obligations(business_date, now=now)
+        targets = {
+            item.flow_name: item
+            for item in GroupTargetProduction.objects.using(LOCAL_DB_ALIAS).filter(
+                target_date=business_date,
+                flow_name__in=flow_names,
+            )
+        }
+        obligations = {
+            item.flow_name: item
+            for item in DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).filter(
+                target_date=business_date,
+                flow_name__in=flow_names,
+            )
+        }
+        historical_work_minutes: dict[str, int] = {}
+        if flow_names:
+            historical_rows = (
+                GroupTargetProduction.objects.using(LOCAL_DB_ALIAS)
+                .filter(
+                    flow_name__in=flow_names,
+                    target_date__lt=business_date,
+                )
+                .exclude(planned_work_minutes__isnull=True)
+                .order_by('flow_name', '-target_date', '-updated_at')
+                .values_list('flow_name', 'planned_work_minutes')
+            )
+            for flow_name, work_minutes in historical_rows:
+                if flow_name not in historical_work_minutes:
+                    historical_work_minutes[flow_name] = int(work_minutes)
+
+        groups = [
+            _today_target_payload(
+                flow_name,
+                targets.get(flow_name),
+                obligations.get(flow_name),
+                historical_work_minutes.get(flow_name),
+                target_date=business_date,
+                now=now,
+            )
+            for flow_name in flow_names
+        ]
+        completed_count = sum(1 for item in groups if item['complete'])
+        total_count = len(groups)
+        summary = {
+            'completed_count': completed_count,
+            'incomplete_count': total_count - completed_count,
+            'total_count': total_count,
+            'all_complete': completed_count == total_count,
+        }
+        return Response({
+            'business_date': business_date.isoformat(),
+            'deadline_at': deadline_for_date(business_date).isoformat(),
+            'default_work_hours': DEFAULT_TARGET_WORK_MINUTES / 60,
+            'min_work_hours': MIN_TARGET_WORK_MINUTES / 60,
+            'max_work_hours': MAX_TARGET_WORK_MINUTES / 60,
+            'summary': summary,
+            'completed_count': completed_count,
+            'incomplete_count': total_count - completed_count,
+            'total_count': total_count,
+            'all_complete': summary['all_complete'],
+            'groups': groups,
+        })
+    except Exception as exc:
+        logger.exception('读取今日目标失败: subject={} error={}', identity.subject, exc)
+        return Response(
+            {
+                'error': '今日目标数据暂不可用',
+                'code': 'target_data_unavailable',
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 @api_view(['GET'])

@@ -19,6 +19,9 @@
         <a :href="basePath + 'history/'"
             :class="currentView === 'history' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
             class="px-4 py-2 rounded-md text-sm transition-colors font-medium">历史数据</a>
+        <a :href="basePath + 'targets/today/'"
+            :class="currentView === 'today_targets' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
+            class="px-4 py-2 rounded-md text-sm transition-colors font-medium">今日目标</a>
     </div>
 
     <div class="relative" data-iwork-notification-center>

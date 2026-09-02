@@ -1599,7 +1599,7 @@ class TestSetTargets:
 
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
-            data={'flow': 'SO3-L3A', 'group_target': 1000},
+            data={'flow': 'SO3-L3A', 'group_target': 1000, 'work_hours': 10},
             format='json',
         )
 
@@ -1615,9 +1615,10 @@ class TestSetTargets:
             target_date=date.today(),
             flow_name='SO3-L3A',
             target_qty=1000,
-            planned_work_minutes=None,
+            planned_work_minutes=600,
         )
-        mock_cache.set.assert_called_once_with(
+        assert mock_cache.set.call_count == 2
+        mock_cache.set.assert_any_call(
             f'group_target:{date.today().isoformat()}:SO3-L3A',
             1000,
             timeout=mock_cache.set.call_args.kwargs['timeout'],

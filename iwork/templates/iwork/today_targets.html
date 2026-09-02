@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script>
+        // 自动检测部署子路径（如 /iwork/）。
+        const _p = location.pathname;
+        window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
+    </script>
+    {% include 'iwork/_tailwind_config.html' %}
+    <style>
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+        body[data-device="mobile"] .iwork-app { padding: .5rem; }
+        body[data-device="mobile"] .iwork-page-header {
+            align-items: flex-start;
+            gap: .5rem;
+            margin-bottom: .75rem;
+        }
+        body[data-device="mobile"] .iwork-page-title {
+            font-size: 1.125rem;
+            line-height: 1.25;
+            flex: 1 1 100%;
+        }
+        body[data-device="mobile"] .iwork-main-nav {
+            width: 100%;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            gap: .35rem;
+        }
+        body[data-device="mobile"] .iwork-main-nav > div { flex-shrink: 0; }
+        body[data-device="mobile"] .iwork-main-nav a {
+            padding: .35rem .6rem;
+            font-size: .75rem;
+            white-space: nowrap;
+        }
+        input[type="number"] { color-scheme: dark; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen" data-device="{{ device_type }}">
+<div id="app" class="iwork-app container mx-auto px-4 py-6" data-initial-view="today_targets">
+    <header class="iwork-page-header flex justify-between items-center mb-4 flex-wrap gap-4">
+        {% include 'iwork/_header.html' %}
+    </header>
+
+    {{ return_to|json_script:"today-target-return-to" }}
+
+    <main>
+        <section class="mb-4 rounded-xl border border-blue-800 bg-blue-950/60 p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-xl font-semibold text-blue-100">今日目标</h2>
+                    <p class="mt-1 text-sm text-blue-200">
+                        今日业务日：<span class="font-semibold">{[ businessDate || '--' ]}</span>
+                        <span class="mx-1 text-blue-400">·</span>
+                        截止：<span class="font-semibold">{[ formatDeadline(deadlineAt) ]}</span>
+                    </p>
+                </div>
+                <div class="text-sm text-blue-100">
+                    <span class="font-semibold">必须完成今日目标产量和工作时间</span>
+                    <span class="ml-2 text-blue-300">逾期仍可补填，提交后立即解除阻断</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="rounded-xl border border-slate-700 bg-slate-800 p-4">
+                <div class="text-xs text-slate-400">负责分组</div>
+                <div class="mt-1 text-2xl font-bold tabular-nums">{[ totalCount ]}</div>
+            </div>
+            <div class="rounded-xl border border-emerald-800 bg-emerald-950/50 p-4">
+                <div class="text-xs text-emerald-300">已完成</div>
+                <div class="mt-1 text-2xl font-bold text-emerald-200 tabular-nums">{[ completedCount ]}</div>
+            </div>
+            <div class="rounded-xl border border-amber-800 bg-amber-950/50 p-4">
+                <div class="text-xs text-amber-300">待完成</div>
+                <div class="mt-1 text-2xl font-bold text-amber-200 tabular-nums">{[ incompleteCount ]}</div>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800 p-4">
+                <div class="text-xs text-slate-400">默认工时</div>
+                <div class="mt-1 text-2xl font-bold tabular-nums">{[ defaultWorkHours ]} 小时</div>
+            </div>
+        </section>
+
+        <section class="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-4">
+            <span class="mr-2 text-sm font-medium text-slate-200">快捷设置全部草稿工时：</span>
+            <button type="button" @click="applyWorkHours(8)"
+                    class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
+                全部 8 小时
+            </button>
+            <button type="button" @click="applyWorkHours(10)"
+                    class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
+                全部 10 小时
+            </button>
+            <span class="text-xs text-slate-400">只修改当前页面草稿，点击保存后才会提交。</span>
+        </section>
+
+        <div v-if="loading" class="rounded-xl border border-slate-700 bg-slate-800 p-8 text-center text-slate-300">
+            正在读取今日目标…
+        </div>
+        <div v-else-if="loadError" class="rounded-xl border border-red-800 bg-red-950/60 p-4 text-red-200">
+            {[ loadError ]}
+            <button type="button" @click="loadTargets" class="ml-3 rounded-md bg-red-800 px-3 py-1 text-sm hover:bg-red-700">重试</button>
+        </div>
+        <div v-else-if="groups.length === 0" class="rounded-xl border border-slate-700 bg-slate-800 p-8 text-center text-slate-300">
+            当前账号没有有效负责的生产组。
+        </div>
+        <section v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <article v-for="item in groups" :key="item.flow"
+                     class="rounded-xl border bg-slate-800 p-4 shadow-lg"
+                     :class="item.complete && !item.dirty ? 'border-emerald-800' : 'border-amber-800'">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-lg font-semibold text-slate-100">{[ item.flow ]}</h3>
+                        <p class="mt-1 text-xs text-slate-400">
+                            截止 {[ formatDeadline(item.deadline_at) ]}
+                            <span v-if="item.submitted_at">· 提交于 {[ formatDateTime(item.submitted_at) ]}</span>
+                        </p>
+                    </div>
+                    <span class="rounded-full border px-3 py-1 text-xs font-medium" :class="statusClass(item)">
+                        {[ statusText(item) ]}
+                    </span>
+                </div>
+
+                <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label class="block">
+                        <span class="mb-1 block text-sm text-slate-300">今日目标产量</span>
+                        <input v-model.number="item.group_target" @input="markDraft(item)"
+                               type="number" min="0" step="1" inputmode="numeric"
+                               placeholder="请输入目标产量"
+                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <span class="mt-1 block text-xs text-slate-500">可填写 0，空白不算完成。</span>
+                    </label>
+                    <label class="block">
+                        <span class="mb-1 block text-sm text-slate-300">计划工作时间（小时）</span>
+                        <input v-model.number="item.work_hours" @input="markDraft(item)"
+                               type="number" :min="minWorkHours" :max="maxWorkHours" step="0.5" inputmode="decimal"
+                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <span v-if="!item.work_hours_set" class="mt-1 block text-xs text-amber-300">
+                            <template v-if="item.work_hours_source === 'history'">沿用最近历史工时草稿</template>
+                            <template v-else>默认 {[ defaultWorkHours ]} 小时草稿</template>，保存后才算已填写。
+                        </span>
+                        <span v-else class="mt-1 block text-xs text-emerald-300">已提交工作时间，可按需覆盖。</span>
+                    </label>
+                </div>
+
+                <div v-if="item.dirty" class="mt-3 rounded-md border border-blue-800 bg-blue-950/50 px-3 py-2 text-xs text-blue-200">
+                    草稿已修改，尚未保存。
+                </div>
+                <div v-if="item.error" class="mt-3 rounded-md border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-200">
+                    {[ item.error ]}
+                </div>
+                <div class="mt-4 flex items-center justify-between gap-3">
+                    <span v-if="!draftIsValid(item)" class="text-xs text-amber-300">
+                        请填写非负整数目标和 {[ minWorkHours ]}～{[ maxWorkHours ]} 小时内的工作时间。
+                    </span>
+                    <span v-else class="text-xs text-slate-500">保存本组不会影响其他分组。</span>
+                    <button type="button" @click="saveGroup(item)" :disabled="item.saving || savingAll || !draftIsValid(item)"
+                            class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
+                        {[ item.saving ? '保存中…' : '保存本组' ]}
+                    </button>
+                </div>
+            </article>
+        </section>
+
+        <div v-if="groups.length" class="mt-5 flex flex-wrap items-center justify-end gap-3">
+            <span v-if="saveAllMessage" class="text-sm text-slate-300">{[ saveAllMessage ]}</span>
+            <button type="button" @click="saveAll" :disabled="savingAll || loading"
+                    class="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+                {[ savingAll ? '正在逐组保存…' : '保存全部' ]}
+            </button>
+        </div>
+    </main>
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted } = Vue;
+    const rawReturnTo = JSON.parse(document.getElementById('today-target-return-to').textContent || '""');
+
+    function toPublicPath(value) {
+        if (!value) return '';
+        if (window.basePath === '/' || value === window.basePath || value.startsWith(window.basePath)) {
+            return value;
+        }
+        return `${window.basePath.replace(/\/$/, '')}${value}`;
+    }
+
+    const returnTo = toPublicPath(rawReturnTo);
+
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return '';
+    }
+
+    async function responsePayload(response) {
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (error) {
+            payload = {};
+        }
+        if (!response.ok) {
+            const message = payload.error || '请求失败，请稍后重试';
+            const requestError = new Error(message);
+            requestError.code = payload.code || '';
+            throw requestError;
+        }
+        return payload;
+    }
+
+    createApp({
+        delimiters: ['{[', ']}'],
+        setup() {
+            const basePath = window.basePath;
+            const currentView = ref('today_targets');
+            const groups = ref([]);
+            const businessDate = ref('');
+            const deadlineAt = ref('');
+            const defaultWorkHours = ref(0);
+            const minWorkHours = ref(0);
+            const maxWorkHours = ref(0);
+            const summary = ref({ completed_count: 0, incomplete_count: 0, total_count: 0, all_complete: false });
+            const loading = ref(true);
+            const loadError = ref('');
+            const savingAll = ref(false);
+            const saveAllMessage = ref('');
+            const errorByFlow = {};
+
+            const completedCount = computed(() => summary.value.completed_count || 0);
+            const incompleteCount = computed(() => summary.value.incomplete_count || 0);
+            const totalCount = computed(() => summary.value.total_count || 0);
+
+            function formatDeadline(value) {
+                if (!value) return '--';
+                return new Date(value).toLocaleString('zh-CN', {
+                    timeZone: 'Asia/Bangkok', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit',
+                });
+            }
+
+            function formatDateTime(value) {
+                return formatDeadline(value);
+            }
+
+            function applyPayload(payload, preserveDirtyDrafts = false) {
+                const dirtyDrafts = new Map();
+                if (preserveDirtyDrafts) {
+                    groups.value.forEach(item => {
+                        if (item.dirty) {
+                            dirtyDrafts.set(item.flow, {
+                                group_target: item.group_target,
+                                work_hours: item.work_hours,
+                                work_hours_source: item.work_hours_source,
+                                dirty: true,
+                            });
+                        }
+                    });
+                }
+                businessDate.value = payload.business_date || '';
+                deadlineAt.value = payload.deadline_at || '';
+                defaultWorkHours.value = Number(payload.default_work_hours);
+                minWorkHours.value = Number(payload.min_work_hours);
+                maxWorkHours.value = Number(payload.max_work_hours);
+                summary.value = payload.summary || {
+                    completed_count: payload.completed_count || 0,
+                    incomplete_count: payload.incomplete_count || 0,
+                    total_count: payload.total_count || 0,
+                    all_complete: Boolean(payload.all_complete),
+                };
+                groups.value = (payload.groups || []).map(item => {
+                    const serverItem = {
+                        ...item,
+                        group_target: item.target_set ? Number(item.group_target) : '',
+                        work_hours: item.work_hours === null || item.work_hours === undefined
+                            ? defaultWorkHours.value
+                            : Number(item.work_hours),
+                        work_hours_source: item.work_hours_source
+                            || (item.work_hours_set ? 'current' : 'default'),
+                        dirty: false,
+                        saving: false,
+                        error: errorByFlow[item.flow] || '',
+                    };
+                    return dirtyDrafts.has(item.flow)
+                        ? { ...serverItem, ...dirtyDrafts.get(item.flow) }
+                        : serverItem;
+                });
+            }
+
+            async function loadTargets({ preserveDirtyDrafts = false } = {}) {
+                loading.value = true;
+                loadError.value = '';
+                try {
+                    const response = await fetch(`${basePath}api/account/today-targets/`, {
+                        headers: { 'Accept': 'application/json' },
+                    });
+                    const payload = await responsePayload(response);
+                    applyPayload(payload, preserveDirtyDrafts);
+                } catch (error) {
+                    loadError.value = error.message || '今日目标读取失败';
+                } finally {
+                    loading.value = false;
+                }
+            }
+
+            function applyWorkHours(hours) {
+                groups.value.forEach(item => {
+                    item.work_hours = Number(hours);
+                    item.dirty = true;
+                });
+                saveAllMessage.value = '已修改全部分组草稿，请保存后提交。';
+            }
+
+            function markDraft(item) {
+                item.dirty = true;
+                saveAllMessage.value = '';
+            }
+
+            function draftIsValid(item) {
+                const target = item.group_target;
+                const hours = item.work_hours;
+                if (target === '' || target === null || target === undefined) return false;
+                const targetNumber = Number(target);
+                const hoursNumber = Number(hours);
+                return Number.isInteger(targetNumber)
+                    && targetNumber >= 0
+                    && Number.isFinite(hoursNumber)
+                    && hoursNumber >= minWorkHours.value
+                    && hoursNumber <= maxWorkHours.value;
+            }
+
+            function statusText(item) {
+                if (item.dirty) return '草稿待保存';
+                return {
+                    pending: '待填写',
+                    fulfilled: '按时完成',
+                    overdue: '已逾期待填',
+                    fulfilled_late: '逾期已补填',
+                    waived: '已免除',
+                }[item.status] || '状态未知';
+            }
+
+            function statusClass(item) {
+                if (item.dirty) return 'border-blue-700 bg-blue-950 text-blue-200';
+                return {
+                    pending: 'border-amber-700 bg-amber-950 text-amber-200',
+                    fulfilled: 'border-emerald-700 bg-emerald-950 text-emerald-200',
+                    overdue: 'border-red-700 bg-red-950 text-red-200',
+                    fulfilled_late: 'border-orange-700 bg-orange-950 text-orange-200',
+                    waived: 'border-slate-600 bg-slate-800 text-slate-300',
+                }[item.status] || 'border-slate-600 bg-slate-800 text-slate-300';
+            }
+
+            async function saveGroup(item) {
+                if (!draftIsValid(item)) {
+                    errorByFlow[item.flow] = '请填写非负整数目标和有效工作时间。';
+                    item.error = errorByFlow[item.flow];
+                    return false;
+                }
+                item.saving = true;
+                item.error = '';
+                delete errorByFlow[item.flow];
+                try {
+                    const response = await fetch(`${basePath}api/dashboard/set-targets/`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': getCookie('csrftoken'),
+                        },
+                        body: JSON.stringify({
+                            flow: item.flow,
+                            group_target: Number(item.group_target),
+                            work_hours: Number(item.work_hours),
+                            target_date: businessDate.value,
+                        }),
+                    });
+                    const payload = await responsePayload(response);
+                    item.group_target = Number(payload.group_target);
+                    item.work_hours = Number(payload.work_hours);
+                    item.target_set = true;
+                    item.work_hours_set = true;
+                    item.complete = true;
+                    item.status = payload.is_late ? 'fulfilled_late' : 'fulfilled';
+                    item.dirty = false;
+                    saveAllMessage.value = `${item.flow} 已保存。`;
+                    return true;
+                } catch (error) {
+                    item.error = error.message || '保存本组失败';
+                    errorByFlow[item.flow] = item.error;
+                    return false;
+                } finally {
+                    item.saving = false;
+                }
+            }
+
+            async function saveSingleAndRefresh(item) {
+                const success = await saveGroup(item);
+                if (!success) return;
+                await loadTargets({ preserveDirtyDrafts: true });
+                maybeReturnAfterComplete();
+            }
+
+            async function saveAll() {
+                savingAll.value = true;
+                saveAllMessage.value = '';
+                try {
+                    // 故意逐组等待；某一组失败时保留错误并继续保存后续分组。
+                    for (const item of groups.value) {
+                        await saveGroup(item);
+                    }
+                    await loadTargets({ preserveDirtyDrafts: true });
+                    if (summary.value.all_complete) {
+                        saveAllMessage.value = '全部分组已完成。';
+                    } else {
+                        saveAllMessage.value = '部分分组保存成功，请处理仍显示为待填写的分组。';
+                    }
+                    maybeReturnAfterComplete();
+                } finally {
+                    savingAll.value = false;
+                }
+            }
+
+            function maybeReturnAfterComplete() {
+                const localDraftsComplete = groups.value.length > 0
+                    && groups.value.every(item => item.complete && !item.dirty && !item.error);
+                if (returnTo && summary.value.all_complete && localDraftsComplete) {
+                    window.location.assign(returnTo);
+                }
+            }
+
+            onMounted(async () => {
+                await loadTargets();
+                maybeReturnAfterComplete();
+            });
+
+            return {
+                basePath, currentView, groups, businessDate, deadlineAt, defaultWorkHours,
+                minWorkHours, maxWorkHours,
+                loading, loadError, savingAll, saveAllMessage,
+                completedCount, incompleteCount, totalCount,
+                formatDeadline, formatDateTime, loadTargets, applyWorkHours, markDraft,
+                draftIsValid, statusText, statusClass, saveGroup: saveSingleAndRefresh, saveAll,
+            };
+        },
+    }).mount('#app');
+</script>
+</body>
+</html>

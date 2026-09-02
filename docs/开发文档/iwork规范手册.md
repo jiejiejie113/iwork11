@@ -1,7 +1,7 @@
 # 车间工效看板（iwork）— 开发规范手册
 
 > 本手册是项目的活文档，每次修改必须同步更新对应章节。
-> 最后更新：2026-08-26
+> 最后更新：2026-09-02
 
 ---
 
@@ -84,6 +84,11 @@ Uvicorn ASGI (4 workers)
 | `VISIBLE_FLOWS` | 实际可见分组 = 白名单 - 隐藏 | `settings.VISIBLE_FLOWS` |
 | `QUERY_TIMEOUT` | 数据库查询超时（秒） | `settings.QUERY_TIMEOUT` |
 | `MONTHLY_CACHE_TTL` | 月度缓存 TTL（秒） | `settings.MONTHLY_CACHE_TTL` |
+| `IWORK_BUSINESS_TIME_ZONE` | 业务日期和目标责任状态使用的 IANA 时区 | `settings.IWORK_BUSINESS_TIME_ZONE` |
+| `IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE` | 未配置策略时的目标提交截止时间 | `settings.IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE` |
+| `IWORK_TARGET_DEFAULT_WORK_HOURS` | 无历史工时时的页面默认工作小时数 | `settings.IWORK_TARGET_DEFAULT_WORK_HOURS` |
+| `IWORK_TARGET_MAX_WORK_HOURS` | 目标提交允许的最大工作小时数 | `settings.IWORK_TARGET_MAX_WORK_HOURS` |
+| `IWORK_TARGET_MIN_WORK_MINUTES` | 目标提交允许的最小工作分钟数 | `settings.IWORK_TARGET_MIN_WORK_MINUTES` |
 | `PRODUCTION_ORDERS_SQLITE_PATH` | 生产订单 SQLite 快照路径 | `import_production_orders` 管理命令 |
 | `PRODUCTION_ORDERS_IMPORT_BATCH_SIZE` | 生产订单批量写入大小 | `import_production_orders` 管理命令 |
 | `PRODUCTION_ORDERS_PROGRESS_INTERVAL` | 生产订单导入进度间隔 | `import_production_orders` 管理命令 |
@@ -257,9 +262,10 @@ Flow 详情保存在当前版本的 `detail` 视图中。缓存不保存实时�
 
 整组目标按业务日期和 Flow 保存到本地 `group_target_production` 表，并缓存为
 `group_target:{date}:{flow}`；计划工作时长换算成分钟保存到 `planned_work_minutes`，并
-缓存为 `group_work_minutes:{date}:{flow}`。`work_hours` 必须大于 0 且不超过 24，允许
-小数，保存时按四舍五入换算为整数分钟，且换算结果必须至少为 1 分钟；请求未提供时
-沿用已有计划工作时长。
+缓存为 `group_work_minutes:{date}:{flow}`。`work_hours` 必须大于 0 且不超过配置上限，允许
+小数，保存时按四舍五入换算为整数分钟，且换算结果必须至少为配置的最小分钟数；新的整组
+目标提交必须显式提供工作时间。旧记录仍允许 `planned_work_minutes=NULL`，但读取时不得
+自动回填，缺少工时的目标按未完成处理。
 
 当前时段目标按有效工作分钟计算：
 
@@ -726,7 +732,8 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **时区变更**：修改 `toLocaleTimeString` → 更新本手册第 5 节
 - [ ] **Flow 语义**：按生产线继续应用白名单；按产品名称返回完整 Flow，并在浏览器本地切换普通线
 - [ ] **累计产量**：完整工单匹配、排除空 RegDate、单 SQL 聚合、同事务水位、完整产品 Flow 和历史日期限制保持一致
-- [ ] **目标规则**：整组目标、计划工作时长、整点取整、员工工序合并展示同时覆盖测试
+- [ ] **目标规则**：整组目标、计划工作时长、完整性门禁、逾期补填、整点取整、员工工序合并
+  展示同时覆盖测试
 - [ ] **明细表列设置**：展开/收起配置隔离、显隐、顺序、宽度、默认不换行和旧配置兼容同时覆盖测试
 - [ ] **初版款号**：`pywrkord` 批量只读、同事务水位、工序70卡片口径、今日/历史字段、
   产品备选维度、普通线初版款号概览/详情、分组筛选、完整分组口径只读目标、独立列配置
@@ -812,6 +819,16 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
   当天重新分配后恢复为待提交或逾期，保证分配立即生效且历史责任关系可审计。
 - 组长只能写当前业务日且属于自己的Flow；历史修正和旧目标格式只允许管理员。
 - 0目标属于有效提交，不得用“大于0”判断是否填写。
+- 目标只有在 `target_qty` 明确存在（`0` 也有效）且 `planned_work_minutes` 非空时才算完整；
+  `pending`、`overdue` 都必须填写，逾期提交后状态为 `fulfilled_late`。
+- `TargetSubmissionGateMiddleware` 位于可信身份解析之后：当前有效组长存在未完成目标时，
+  普通页面跳转到 `/iwork/targets/today/` 并携带站内返回地址，业务 API 返回 403 和
+  `target_submission_required`；本地责任库异常返回 503。静态文件、今日目标页、目标查询/保存、
+  个人通知和健康检查放行；管理员由当前代理声明的管理员组免拦截。
+- `GET /api/account/today-targets/` 返回当前业务日、截止时间、默认/边界工时、完成汇总和
+  每个可编辑 Flow 的目标、工时、完整性、状态及提交信息；普通组长仅返回有效负责 Flow，
+  管理员返回 `VISIBLE_FLOWS` 全部 Flow。今日目标页用 8/10 小时快捷值只修改草稿，保存全部
+  时按 Flow 顺序复用现有逐组写入接口，部分失败不回滚已成功分组。
 - 目标、责任状态和审计日志必须使用`iwork_local`同一事务保存。
 - Flow负责人写入必须通过Portal轻量账号接口实时复验目标subject和`/apps/iwork`；
   不能只依赖Portal页面按钮或代理层校验。复验必须携带当前管理员会话、使用固定
