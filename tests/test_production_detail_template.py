@@ -439,8 +439,21 @@ def test_flow_table_separates_target_rate_and_employee_efficiency():
     assert "{ key: 'target_rate', label: '目标达成率'" in TEMPLATE
     assert "{ key: 'employee_efficiency', label: '员工效率'" in TEMPLATE
     assert 'row.emp.employee_efficiency' in TEMPLATE
-    assert '· 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}' in TEMPLATE
+    assert '· 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}' not in TEMPLATE
     assert '· 产值 {[ fmtNum(detailSummary.targeted_qty) ]}' not in TEMPLATE
+
+
+def test_production_detail_summary_removes_requested_icons_and_fields():
+    """生产详情摘要应移除表情符号及不再展示的摘要字段。"""
+    assert '👤' not in TEMPLATE
+    assert '📦' not in TEMPLATE
+    assert '🎯' not in TEMPLATE
+    assert 'detailSummary.worker_count' not in TEMPLATE
+    assert 'detailSummary.cumulative_qty' not in TEMPLATE
+    assert 'detailSummary.targeted_count' not in TEMPLATE
+    assert 'detailSummary.targeted_qty' not in TEMPLATE
+    assert "'达标 ✓'" not in TEMPLATE
+    assert "'不达标 ✗'" not in TEMPLATE
 
 
 def test_flow_target_uses_one_group_input_and_read_only_allocations():
@@ -496,9 +509,8 @@ def test_expanded_flow_table_uses_requested_column_order():
     assert positions == sorted(positions)
 
 
-def test_flow_detail_displays_cumulative_quantity_summary_and_rows():
-    """累计产量应在 Flow 顶部、展开行和收起员工行中展示。"""
-    assert '· 累计产量 {[ fmtNum(detailSummary.cumulative_qty) ]}' in TEMPLATE
+def test_flow_detail_displays_cumulative_quantity_in_rows():
+    """顶部摘要移除累计产量后，展开行和收起员工行仍应展示累计产量。"""
     assert 'fmtNum(row._step.cumulative_qty)' in TEMPLATE
     assert 'fmtNum(emp.cumulative_qty)' in TEMPLATE
 

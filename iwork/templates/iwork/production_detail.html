@@ -335,10 +335,10 @@
                         <div class="flex-1 min-w-0">
                             <h3 class="font-bold text-lg">
                                 {[ card.flow ]}
-                                <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
+                                <span class="text-xs text-slate-500 font-normal ml-1">{[ card.total_workers || 0 ]}人</span>
                             </h3>
                             <p class="text-sm text-slate-400 mt-1">
-                                📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
+                                {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
                             </p>
                             <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
                                 <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
@@ -366,7 +366,7 @@
                     <div v-if="card.target_total > 0" class="mt-2 text-xs">
                         <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
                         <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
+                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '达标' : '不达标' ]}
                         </span>
                     </div>
                 </div>
@@ -386,10 +386,10 @@
                         <div class="flex-1 min-w-0">
                             <h3 class="font-bold text-lg">
                                 {[ card.flow ]}
-                                <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.total_workers || 0 ]}人</span>
+                                <span class="text-xs text-slate-500 font-normal ml-1">{[ card.total_workers || 0 ]}人</span>
                             </h3>
                             <p class="text-sm text-slate-400 mt-1">
-                                📦 {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
+                                {[ fmtNum(card.output_qty) ]}件 · {[ card.initial_styles.length ]}个初版款号
                             </p>
                             <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
                                 <span v-for="style in card.initial_styles" :key="style.initial_style_no || '__empty__'" class="whitespace-nowrap inline-flex items-center gap-1.5">
@@ -417,7 +417,7 @@
                     <div v-if="card.target_total > 0" class="mt-2 text-xs">
                         <span class="text-slate-400">目标: {[ fmtNum(card.target_total) ]} · </span>
                         <span :class="card.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '✓' : '✗' ]}
+                            效率 {[ card.efficiency.toFixed(1) ]}% {[ card.efficiency >= 100 ? '达标' : '不达标' ]}
                         </span>
                     </div>
                 </div>
@@ -441,10 +441,10 @@
                     <div class="flex-1 min-w-0">
                         <h3 class="font-bold text-lg">
                             {[ card.label ]}
-                            <span class="text-xs text-slate-500 font-normal ml-1">👤{[ card.worker_count || 0 ]}人</span>
+                            <span class="text-xs text-slate-500 font-normal ml-1">{[ card.worker_count || 0 ]}人</span>
                         </h3>
                         <p class="text-sm text-slate-400 mt-1">
-                            📦 {[ fmtNum(card.total_qty) ]}件 · {[ card.workorder_count ]}个本厂款号
+                            {[ fmtNum(card.total_qty) ]}件 · {[ card.workorder_count ]}个本厂款号
                         </p>
                         <div class="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
                             <span v-for="flow in card.flows" :key="flow.flow"
@@ -630,30 +630,25 @@
             <a :href="overviewUrl" class="text-blue-400 hover:underline">生产详情</a>
             <span class="text-slate-600">/</span>
             <span class="font-semibold">{[ detailTitle ]}</span>
-            <span class="iwork-detail-summary text-slate-400">
-                👤 {[ detailSummary.worker_count ]}人
-                · 累计产量 {[ fmtNum(detailSummary.cumulative_qty) ]}
-                <span v-if="detailType === 'flow' && (detailSummary.group_target !== null || detailSummary.target_total > 0)">
-                    · 已设目标 {[ detailSummary.targeted_count ]}/{[ detailSummary.worker_count ]}人
-                    <template v-if="detailSummary.group_target !== null">
-                        · 🎯 总目标 {[ fmtNum(detailSummary.group_target) ]}
-                        <template v-if="detailSummary.current_group_target !== null">
-                            · 当前时段目标 {[ fmtNum(detailSummary.current_group_target) ]}
-                        </template>
-                        <template v-if="detailSummary.work_hours !== null">
-                            · 工作时间 {[ detailSummary.work_hours ]}小时
-                        </template>
+            <span v-if="detailType === 'flow' && (detailSummary.group_target !== null || detailSummary.target_total > 0)"
+                  class="iwork-detail-summary text-slate-400">
+                <template v-if="detailSummary.group_target !== null">
+                    · 总目标 {[ fmtNum(detailSummary.group_target) ]}
+                    <template v-if="detailSummary.current_group_target !== null">
+                        · 当前时段目标 {[ fmtNum(detailSummary.current_group_target) ]}
                     </template>
-                    <template v-else>
-                        · 旧员工目标合计 {[ fmtNum(detailSummary.target_total) ]}
+                    <template v-if="detailSummary.work_hours !== null">
+                        · 工作时间 {[ detailSummary.work_hours ]}小时
                     </template>
-                    · 已设目标产量 {[ fmtNum(detailSummary.targeted_qty) ]}
-                    · <span v-if="detailSummary.efficiency !== null"
-                        :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
-                        目标达成率 {[ detailSummary.efficiency.toFixed(1) ]}% {[ detailSummary.efficiency >= 100 ? '达标 ✓' : '不达标 ✗' ]}
-                    </span>
-                    <span v-else class="text-slate-500">目标达成率 --</span>
+                </template>
+                <template v-else>
+                    · 旧员工目标合计 {[ fmtNum(detailSummary.target_total) ]}
+                </template>
+                · <span v-if="detailSummary.efficiency !== null"
+                    :class="detailSummary.efficiency >= 100 ? 'text-emerald-400' : 'text-red-400'">
+                    目标达成率 {[ detailSummary.efficiency.toFixed(1) ]}% {[ detailSummary.efficiency >= 100 ? '达标' : '不达标' ]}
                 </span>
+                <span v-else class="text-slate-500">目标达成率 --</span>
             </span>
             <span v-if="detailType === 'flow' && targetObligation"
                   class="px-2 py-1 rounded border text-xs"
@@ -943,7 +938,7 @@
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
                                 <template v-if="detailType === 'flow'">
                                     <template v-if="emp.target > 0">
-                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">达标 {[ emp.efficiency.toFixed(1) ]}%</span>
                                         <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
                                     </template>
                                     <span v-else class="text-slate-600 ml-1">未设目标</span>
@@ -975,7 +970,7 @@
                                 <span class="text-amber-300 ml-1">累计{[ fmtNum(emp.cumulative_qty) ]}件</span>
                                 <template v-if="detailType === 'flow'">
                                     <template v-if="emp.target > 0">
-                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">✓ {[ emp.efficiency.toFixed(1) ]}%</span>
+                                        <span v-if="emp.qty >= emp.target" class="text-emerald-400 ml-1">达标 {[ emp.efficiency.toFixed(1) ]}%</span>
                                         <span v-else class="text-red-400 ml-1">差{[ emp.target - emp.qty ]}件 {[ emp.efficiency.toFixed(1) ]}%</span>
                                     </template>
                                     <span v-else class="text-slate-600 ml-1">未设目标</span>
