@@ -233,11 +233,11 @@ jobs:
           function Get-RemoteDigest {
               <#
               .SYNOPSIS
-              读取 GHCR 标签的 Manifest Digest，并区分“明确不存在”和查询故障。
+              使用已登录的 Docker Registry 客户端读取 GHCR 标签的 Manifest Digest。
 
               .DESCRIPTION
-              只有 HTTP 404 才返回空值。认证、限流、网络、TLS、超时和 5xx
-              均直接失败，禁止把它们误判成可创建的新标签。
+              只有 Registry 明确返回 Manifest 不存在时返回空值。认证、限流、网络、
+              TLS、超时和其他查询故障均直接失败，禁止把它们误判成可创建的新标签。
               #>
               param(
                   [Parameter(Mandatory = $true)][string] $ImageReference,
@@ -248,45 +248,32 @@ jobs:
               if ($ImageReference -notmatch '^ghcr\.io/(?<path>[A-Za-z0-9._/-]+):(?<tag>[A-Za-z0-9._-]+)$') {
                   throw "GHCR镜像引用格式无效：$ImageReference"
               }
-              $basic = [Convert]::ToBase64String(
-                  [Text.Encoding]::ASCII.GetBytes("$env:GITHUB_ACTOR`:$env:GITHUB_TOKEN")
-              )
-              $headers = @{
-                  Authorization = "Basic $basic"
-                  Accept = (
-                      'application/vnd.oci.image.index.v1+json, ' +
-                      'application/vnd.oci.image.manifest.v1+json, ' +
-                      'application/vnd.docker.distribution.manifest.list.v2+json, ' +
-                      'application/vnd.docker.distribution.manifest.v2+json'
-                  )
-              }
-              $uri = "https://ghcr.io/v2/$($Matches['path'])/manifests/$($Matches['tag'])"
               for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
-                  try {
-                      $response = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $uri -Headers $headers -TimeoutSec 30
-                      $digest = ([string]$response.Headers['Docker-Content-Digest']).Trim()
+                  $digestOutput = @(docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}' 2>&1)
+                  $exitCode = $LASTEXITCODE
+                  if ($exitCode -eq 0) {
+                      $digest = ([string]$digestOutput[-1]).Trim().Trim('"')
                       if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
                           throw "GHCR返回了无效Digest：$digest"
                       }
                       return $digest
                   }
-                  catch {
-                      $statusCode = $null
-                      if ($null -ne $_.Exception.Response) {
-                          try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
+                  $errorText = ($digestOutput | ForEach-Object { [string]$_ }) -join "`n"
+                  if ($errorText -match '(?i)(manifest unknown|name unknown|no such manifest|not found|404)') {
+                      if ($attempt -lt $Attempts) {
+                          Start-Sleep -Seconds $DelaySeconds
+                          continue
                       }
-                      if ($statusCode -eq 404) {
-                          if ($attempt -lt $Attempts) {
-                              Start-Sleep -Seconds $DelaySeconds
-                              continue
-                          }
-                          return $null
-                      }
-                      if ($statusCode -in @(401, 403, 429) -or ($null -ne $statusCode -and $statusCode -ge 500)) {
-                          throw "GHCR查询失败（HTTP $statusCode），不会将错误当作标签不存在。"
-                      }
-                      throw "GHCR查询失败（网络、TLS、超时或未知错误），不会将错误当作标签不存在：$($_.Exception.Message)"
+                      return $null
                   }
+                  if ($errorText -match '(?i)(unauthorized|authentication required|denied|forbidden|401|403)') {
+                      throw "GHCR查询失败（认证或权限，退出码 $exitCode），不会将错误当作标签不存在。"
+                  }
+                  if ($attempt -lt $Attempts) {
+                      Start-Sleep -Seconds $DelaySeconds
+                      continue
+                  }
+                  throw "GHCR查询失败（Docker Registry查询退出码 $exitCode），不会将错误当作标签不存在：$errorText"
               }
               return $null
           }

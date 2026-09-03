@@ -258,10 +258,10 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "contents: read" in content
     assert "ghcr.io/guchenkano/iwork" in lowered
     assert "org.opencontainers.image.revision" in content
-    assert "Invoke-WebRequest -UseBasicParsing -Method Head" in content
-    assert "Docker-Content-Digest" in content
-    assert "statusCode -eq 404" in content
-    assert "statusCode -in @(401, 403, 429)" in content
+    assert "docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}'" in content
+    assert "manifest unknown" in content
+    assert "authentication required" in content
+    assert "不会将错误当作标签不存在" in content
     assert "per_page=$perPage&page=$page" in content
     assert "[DateTimeOffset]::UtcNow" in content
     assert "duration_seconds" in content
@@ -326,15 +326,16 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
         assert forbidden not in lowered
 
 
-def test_release_ghcr_head_accepts_index_and_single_manifest_media_types() -> None:
-    """GHCR HEAD 查询必须兼容索引和两种单镜像 Manifest。"""
+def test_release_ghcr_digest_query_uses_authenticated_docker_registry_client() -> None:
+    """GHCR Digest 查询必须复用 Docker 登录会话，并区分缺失与认证失败。"""
     content = _read_release_workflow()
     head_block = content[content.index("function Get-RemoteDigest"):content.index("function Invoke-LocalImageSmoke")]
 
-    assert "application/vnd.oci.image.index.v1+json" in head_block
-    assert "application/vnd.docker.distribution.manifest.list.v2+json" in head_block
-    assert "application/vnd.oci.image.manifest.v1+json" in head_block
-    assert "application/vnd.docker.distribution.manifest.v2+json" in head_block
+    assert "docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}'" in head_block
+    assert "manifest unknown" in head_block
+    assert "authentication required" in head_block
+    assert "不会将错误当作标签不存在" in head_block
+    assert "Invoke-WebRequest" not in head_block
 
 
 def test_release_reused_image_requires_repository_source_label() -> None:
