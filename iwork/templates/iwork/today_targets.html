@@ -392,14 +392,7 @@
             }
 
             function statusText(item) {
-                if (item.dirty) return '草稿待保存';
-                return {
-                    pending: '待填写',
-                    fulfilled: '按时完成',
-                    overdue: '已逾期待填',
-                    fulfilled_late: '逾期已补填',
-                    waived: '已免除',
-                }[item.status] || '状态未知';
+                return item.complete && !item.dirty ? '已完成' : '待填写';
             }
 
             function statusClass(item) {

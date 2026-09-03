@@ -551,6 +551,16 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
     assert '已提交，可修改' in template
     assert 'v-if="item.work_hours_set"' in template
     assert "正在保存..." in template
+    assert "return item.complete && !item.dirty ? '已完成' : '待填写';" in template
+    for detailed_status_copy in (
+        '草稿待保存',
+        '按时完成',
+        '已逾期待填',
+        '逾期已补填',
+        '已免除',
+        '状态未知',
+    ):
+        assert detailed_status_copy not in template
     for removed_copy in (
         '只修改当前页面草稿，点击保存后才会提交。',
         '可填写 0，空白不算完成。',
