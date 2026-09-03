@@ -350,13 +350,15 @@ def test_worker_card_touch_uses_long_press_without_blocking_scroll_or_click():
     """触摸卡片应长按后排序，普通滑动和点击不得启动拖拽。"""
     assert '.card-wrapper .card.grab { cursor:grab; touch-action:pan-y; }' in TEMPLATE
     assert 'const CARD_LONG_PRESS_DELAY = 500;' in TEMPLATE
-    assert 'const CARD_DRAG_MOVE_THRESHOLD = 8;' in TEMPLATE
+    assert 'CARD_DRAG_MOVE_THRESHOLD' not in TEMPLATE
     assert 'function startCardDrag(' in TEMPLATE
     assert "if (e.pointerType === 'touch') {" in TEMPLATE
     assert "if (e.pointerType === 'touch') return;" not in TEMPLATE
     assert 'cardLongPressTimer = window.setTimeout(' in TEMPLATE
     assert 'CARD_LONG_PRESS_DELAY,' in TEMPLATE
-    assert 'Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD' in TEMPLATE
+    assert 'Math.hypot(dx, dy)' not in TEMPLATE
+    assert 'function onPendingCardPointerMove' not in TEMPLATE
+    assert "window.addEventListener('pointermove', onPendingCardPointerMove)" not in TEMPLATE
     assert 'function cancelPendingCardDrag' in TEMPLATE
     assert '.card-wrapper .card.dragging' in TEMPLATE
     assert 'touch-action: none;' in TEMPLATE
@@ -367,6 +369,11 @@ def test_worker_card_touch_uses_long_press_without_blocking_scroll_or_click():
     assert "window.removeEventListener('pointercancel', cancelPendingCardDrag);" in TEMPLATE
     assert 'cancelPendingCardDrag();' in TEMPLATE
     assert 'if (activeDrag.value) onPointerUp();' in TEMPLATE
+
+    pending_lifecycle = TEMPLATE.split(
+        'function removePendingCardDragListeners()', 1
+    )[1].split('function activatePendingCardDrag()', 1)[0]
+    assert 'preventDefault' not in pending_lifecycle
 
 
 def test_flow_table_uses_composite_key_step_rows():

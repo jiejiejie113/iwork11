@@ -1001,7 +1001,6 @@ createApp({
         // ======
         // 员工卡片拖拽配置
         const CARD_LONG_PRESS_DELAY = 500;
-        const CARD_DRAG_MOVE_THRESHOLD = 8;
 
         const basePath = window.basePath;
         const appEl = document.getElementById('app');
@@ -2986,7 +2985,6 @@ createApp({
         }
 
         function removePendingCardDragListeners() {
-            window.removeEventListener('pointermove', onPendingCardPointerMove);
             window.removeEventListener('pointerup', cancelPendingCardDrag);
             window.removeEventListener('pointercancel', cancelPendingCardDrag);
         }
@@ -3000,16 +2998,6 @@ createApp({
             clearCardLongPressTimer();
             removePendingCardDragListeners();
             pendingCardDrag = null;
-        }
-
-        function onPendingCardPointerMove(e) {
-            if (!pendingCardDrag || e.pointerId !== pendingCardDrag.pointerId) return;
-            const dx = e.clientX - pendingCardDrag.startX;
-            const dy = e.clientY - pendingCardDrag.startY;
-            if (Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD) {
-                // 长按前发生位移时交还给浏览器，保持页面原生滚动。
-                cancelPendingCardDrag(e);
-            }
         }
 
         function activatePendingCardDrag() {
@@ -3070,7 +3058,6 @@ createApp({
                     activatePendingCardDrag,
                     CARD_LONG_PRESS_DELAY,
                 );
-                window.addEventListener('pointermove', onPendingCardPointerMove);
                 window.addEventListener('pointerup', cancelPendingCardDrag);
                 window.addEventListener('pointercancel', cancelPendingCardDrag);
                 return;

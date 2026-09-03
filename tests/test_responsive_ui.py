@@ -86,7 +86,9 @@ def test_detail_cards_allow_mobile_vertical_scroll_and_long_press_drag():
     assert "touch-action: pan-y" in PRODUCTION_DETAIL_TEMPLATE
     assert "if (e.pointerType === 'touch') return;" not in PRODUCTION_DETAIL_TEMPLATE
     assert 'const CARD_LONG_PRESS_DELAY = 500;' in PRODUCTION_DETAIL_TEMPLATE
-    assert 'Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD' in PRODUCTION_DETAIL_TEMPLATE
+    assert 'CARD_DRAG_MOVE_THRESHOLD' not in PRODUCTION_DETAIL_TEMPLATE
+    assert 'Math.hypot(dx, dy)' not in PRODUCTION_DETAIL_TEMPLATE
+    assert 'function onPendingCardPointerMove' not in PRODUCTION_DETAIL_TEMPLATE
     assert 'if (e.cancelable) e.preventDefault();' in PRODUCTION_DETAIL_TEMPLATE
     assert 'style="touch-action:none;"' not in PRODUCTION_DETAIL_TEMPLATE
 
