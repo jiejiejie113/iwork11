@@ -34,7 +34,10 @@
         /* 占位符 */
         .card-wrapper .card.placeholder { background:transparent; border:2px dashed #475569; opacity:.5; }
         /* 正在拖拽 */
-        .card-wrapper .card.dragging { position:fixed; z-index:1000; pointer-events:none; cursor:grabbing; opacity:.9; transform:scale(1.06); box-shadow:0 15px 40px rgba(0,0,0,.6); }
+        .card-wrapper .card.dragging {
+            position:fixed; z-index:1000; pointer-events:none; cursor:grabbing; opacity:.9;
+            transform:scale(1.06); box-shadow:0 15px 40px rgba(0,0,0,.6); touch-action: none;
+        }
         /* FLIP */
         .flip-move { transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
         /* 拖拽：维度标签 */
@@ -995,6 +998,11 @@ const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextT
 createApp({
     delimiters: ['{[', ']}'],
     setup() {
+        // ======
+        // 员工卡片拖拽配置
+        const CARD_LONG_PRESS_DELAY = 500;
+        const CARD_DRAG_MOVE_THRESHOLD = 8;
+
         const basePath = window.basePath;
         const appEl = document.getElementById('app');
         const initialView = appEl?.dataset.initialView || 'overview';
@@ -2965,31 +2973,114 @@ createApp({
         let dragOriginLeft = 0, dragOriginTop = 0;
         let dragCardW = 0, dragCardH = 0;
         let dragCurrentIdx = -1;
+        let cardLongPressTimer = null;
+        let pendingCardDrag = null;
+        let dragPointerId = null;
+        let dragPointerTarget = null;
 
-        function onPointerDown(e, idx) {
-            if (e.button !== undefined && e.button !== 0) return;
-            // 触摸设备保留原生纵向滚动，卡片排序仅由鼠标/触控板执行。
-            if (e.pointerType === 'touch') return;
-            const el = e.currentTarget;
+        function clearCardLongPressTimer() {
+            if (cardLongPressTimer !== null) {
+                window.clearTimeout(cardLongPressTimer);
+                cardLongPressTimer = null;
+            }
+        }
+
+        function removePendingCardDragListeners() {
+            window.removeEventListener('pointermove', onPendingCardPointerMove);
+            window.removeEventListener('pointerup', cancelPendingCardDrag);
+            window.removeEventListener('pointercancel', cancelPendingCardDrag);
+        }
+
+        function cancelPendingCardDrag(e) {
+            if (
+                pendingCardDrag
+                && e?.pointerId !== undefined
+                && e.pointerId !== pendingCardDrag.pointerId
+            ) return;
+            clearCardLongPressTimer();
+            removePendingCardDragListeners();
+            pendingCardDrag = null;
+        }
+
+        function onPendingCardPointerMove(e) {
+            if (!pendingCardDrag || e.pointerId !== pendingCardDrag.pointerId) return;
+            const dx = e.clientX - pendingCardDrag.startX;
+            const dy = e.clientY - pendingCardDrag.startY;
+            if (Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD) {
+                // 长按前发生位移时交还给浏览器，保持页面原生滚动。
+                cancelPendingCardDrag(e);
+            }
+        }
+
+        function activatePendingCardDrag() {
+            const pending = pendingCardDrag;
+            if (!pending) return;
+            pendingCardDrag = null;
+            clearCardLongPressTimer();
+            removePendingCardDragListeners();
+            if (!pending.element?.isConnected) return;
+            startCardDrag(
+                pending.element,
+                pending.index,
+                pending.pointerId,
+                pending.startX,
+                pending.startY,
+            );
+        }
+
+        function startCardDrag(el, idx, pointerId, startX, startY) {
+            if (activeDrag.value || !el) return;
             const rect = el.getBoundingClientRect();
             dragIndex.value = idx;
             dragCurrentIdx = idx;
+            dragPointerId = pointerId;
+            dragPointerTarget = el;
             activeDrag.value = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
+            dragStartX = startX;
+            dragStartY = startY;
             dragOriginLeft = rect.left;
             dragOriginTop = rect.top;
             dragCardW = rect.width;
             dragCardH = rect.height;
+            el.style.touchAction = 'none';
             Object.assign(dragStyle, { left: `${dragOriginLeft}px`, top: `${dragOriginTop}px`, width: `${dragCardW}px`, height: `${dragCardH}px` });
-            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointermove', onPointerMove, { passive: false });
             window.addEventListener('pointerup', onPointerUp);
             window.addEventListener('pointercancel', onPointerUp);
-            el.setPointerCapture(e.pointerId);
+            try {
+                el.setPointerCapture?.(pointerId);
+            } catch (error) {
+                // 指针已被浏览器取消时，窗口级事件监听仍负责清理状态。
+            }
+        }
+
+        function onPointerDown(e, idx) {
+            if (e.button !== undefined && e.button !== 0) return;
+            if (e.isPrimary === false || activeDrag.value || pendingCardDrag) return;
+            const el = e.currentTarget;
+            if (e.pointerType === 'touch') {
+                pendingCardDrag = {
+                    element: el,
+                    index: idx,
+                    pointerId: e.pointerId,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                };
+                cardLongPressTimer = window.setTimeout(
+                    activatePendingCardDrag,
+                    CARD_LONG_PRESS_DELAY,
+                );
+                window.addEventListener('pointermove', onPendingCardPointerMove);
+                window.addEventListener('pointerup', cancelPendingCardDrag);
+                window.addEventListener('pointercancel', cancelPendingCardDrag);
+                return;
+            }
+            startCardDrag(el, idx, e.pointerId, e.clientX, e.clientY);
         }
 
         function onPointerMove(e) {
-            if (!activeDrag.value) return;
+            if (!activeDrag.value || e.pointerId !== dragPointerId) return;
+            if (e.cancelable) e.preventDefault();
             const dx = e.clientX - dragStartX;
             const dy = e.clientY - dragStartY;
             dragStyle.left = `${dragOriginLeft + dx}px`;
@@ -3015,13 +3106,29 @@ createApp({
         }
 
         function onPointerUp(e) {
+            if (
+                dragPointerId !== null
+                && e?.pointerId !== undefined
+                && e.pointerId !== dragPointerId
+            ) return;
+            const wasActive = activeDrag.value;
+            if (dragPointerTarget && dragPointerId !== null) {
+                try {
+                    dragPointerTarget.releasePointerCapture?.(dragPointerId);
+                } catch (error) {
+                    // 指针捕获可能已经由浏览器释放。
+                }
+                dragPointerTarget.style.removeProperty('touch-action');
+            }
             activeDrag.value = false;
             dragIndex.value = -1;
             dragCurrentIdx = -1;
+            dragPointerId = null;
+            dragPointerTarget = null;
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
             window.removeEventListener('pointercancel', onPointerUp);
-            if (cardOrder.value.length > 0) saveCardOrder(cardOrder.value);
+            if (wasActive && cardOrder.value.length > 0) saveCardOrder(cardOrder.value);
         }
 
         // ---- localStorage 持久化 ----
@@ -3727,6 +3834,7 @@ createApp({
             stopDetailColumnResize();
             document.removeEventListener('pointerdown', onDetailColumnOutsidePointerDown);
             if (activeTagDrag.value) onTagPointerCancel();
+            cancelPendingCardDrag();
             if (activeDrag.value) onPointerUp();
             disconnectProductionDetailSSE();
         });

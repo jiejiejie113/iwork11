@@ -346,12 +346,26 @@ def test_product_dimension_drag_is_frame_throttled_and_composited():
     assert 'if (activeTagDrag.value) onTagPointerCancel();' in TEMPLATE
 
 
-def test_worker_card_touch_scroll_is_preserved_and_mouse_drag_handles_cancel():
-    """触摸卡片应保留纵向滚动，鼠标排序仍应处理取消事件。"""
+def test_worker_card_touch_uses_long_press_without_blocking_scroll_or_click():
+    """触摸卡片应长按后排序，普通滑动和点击不得启动拖拽。"""
     assert '.card-wrapper .card.grab { cursor:grab; touch-action:pan-y; }' in TEMPLATE
-    assert "if (e.pointerType === 'touch') return;" in TEMPLATE
+    assert 'const CARD_LONG_PRESS_DELAY = 500;' in TEMPLATE
+    assert 'const CARD_DRAG_MOVE_THRESHOLD = 8;' in TEMPLATE
+    assert 'function startCardDrag(' in TEMPLATE
+    assert "if (e.pointerType === 'touch') {" in TEMPLATE
+    assert "if (e.pointerType === 'touch') return;" not in TEMPLATE
+    assert 'cardLongPressTimer = window.setTimeout(' in TEMPLATE
+    assert 'CARD_LONG_PRESS_DELAY,' in TEMPLATE
+    assert 'Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD' in TEMPLATE
+    assert 'function cancelPendingCardDrag' in TEMPLATE
+    assert '.card-wrapper .card.dragging' in TEMPLATE
+    assert 'touch-action: none;' in TEMPLATE
+    assert 'if (e.cancelable) e.preventDefault();' in TEMPLATE
     assert "window.addEventListener('pointercancel', onPointerUp);" in TEMPLATE
     assert "window.removeEventListener('pointercancel', onPointerUp);" in TEMPLATE
+    assert "window.addEventListener('pointercancel', cancelPendingCardDrag);" in TEMPLATE
+    assert "window.removeEventListener('pointercancel', cancelPendingCardDrag);" in TEMPLATE
+    assert 'cancelPendingCardDrag();' in TEMPLATE
     assert 'if (activeDrag.value) onPointerUp();' in TEMPLATE
 
 

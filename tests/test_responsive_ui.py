@@ -80,11 +80,14 @@ def test_responsive_tailwind_config_restores_default_mobile_font_sizes():
     assert "_iworkIsMobile ? _iworkMobileFontSize : _iworkDesktopFontSize" in config
 
 
-def test_detail_cards_allow_mobile_vertical_scroll_without_touch_capture():
-    """生产详情卡片必须保留纵向滚动，触摸不能被排序拖拽抢走。"""
+def test_detail_cards_allow_mobile_vertical_scroll_and_long_press_drag():
+    """生产详情卡片应保留普通纵向滚动，并允许长按后排序。"""
     assert 'class="iwork-card-view flex-1 min-h-0 overflow-y-auto' in PRODUCTION_DETAIL_TEMPLATE
     assert "touch-action: pan-y" in PRODUCTION_DETAIL_TEMPLATE
-    assert "if (e.pointerType === 'touch') return;" in PRODUCTION_DETAIL_TEMPLATE
+    assert "if (e.pointerType === 'touch') return;" not in PRODUCTION_DETAIL_TEMPLATE
+    assert 'const CARD_LONG_PRESS_DELAY = 500;' in PRODUCTION_DETAIL_TEMPLATE
+    assert 'Math.hypot(dx, dy) > CARD_DRAG_MOVE_THRESHOLD' in PRODUCTION_DETAIL_TEMPLATE
+    assert 'if (e.cancelable) e.preventDefault();' in PRODUCTION_DETAIL_TEMPLATE
     assert 'style="touch-action:none;"' not in PRODUCTION_DETAIL_TEMPLATE
 
 
