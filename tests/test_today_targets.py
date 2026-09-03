@@ -262,6 +262,112 @@ def test_today_targets_api_returns_all_visible_flows_to_admin(fixed_business_clo
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
+    fixed_business_clock,
+):
+    """管理员今日目标摘要应覆盖全部 Flow，并保留责任负责人信息。"""
+    from iwork.local_models import GroupTargetProduction
+
+    _create_assignment('summary-leader', 'SO3-L3A')
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='SO3-L3A',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_by_subject='summary-leader',
+        submitted_by_username='summary-leader',
+        submitted_at=EARLY_TIME,
+    )
+
+    response = Client().get(
+        '/api/account/today-targets/',
+        **_identity_headers(subject='summary-admin', username='summary-admin', groups='/admin'),
+    )
+
+    assert response.status_code == 200
+    summary = response.json()['responsibility_summary']
+    assert [item['flow_name'] for item in summary['items']] == ['SO3-L3A', 'SO3-L3B']
+    assert summary['status_counts']['fulfilled'] == 1
+    assert summary['status_counts']['pending'] == 1
+    assert summary['items'][0]['leaders'] == [
+        {'subject': 'summary-leader', 'username': 'summary-leader'},
+    ]
+    assert summary['items'][0]['complete'] is True
+    assert summary['items'][1]['complete'] is False
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_today_targets_entry_only_renders_for_leader_or_admin(fixed_business_clock):
+    """今日目标入口只对当前有效组长或管理员渲染。"""
+    _create_assignment('navigation-leader', 'SO3-L3A')
+    client = Client()
+
+    leader_response = client.get(
+        '/targets/today/',
+        **_identity_headers(subject='navigation-leader', username='navigation-leader'),
+    )
+    user_response = client.get(
+        '/targets/today/',
+        **_identity_headers(subject='ordinary-user', username='ordinary-user'),
+    )
+    admin_response = client.get(
+        '/targets/today/',
+        **_identity_headers(subject='navigation-admin', username='navigation-admin', groups='/admin'),
+    )
+
+    marker = b"basePath + 'targets/today/'"
+    assert marker in leader_response.content
+    assert marker not in user_response.content
+    assert marker in admin_response.content
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_deleted_principal_cleanup_removes_assignments_but_keeps_history_snapshot(
+    fixed_business_clock,
+):
+    """删除账号清理职能时保留历史责任快照，避免破坏审计关联。"""
+    from iwork.local_models import (
+        DailyTargetObligation,
+        DailyTargetObligationLeader,
+        IworkPrincipal,
+        ManagedFlowAssignment,
+    )
+
+    retained = _create_assignment('deleted-with-history', 'SO3-L3A')
+    removed = _create_assignment('deleted-without-history', 'SO3-L3B')
+    obligation = DailyTargetObligation.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='SO3-L3A',
+        deadline_at=datetime(2026, 9, 2, 9, 0, tzinfo=BUSINESS_ZONE),
+    )
+    DailyTargetObligationLeader.objects.using('iwork_local').create(
+        obligation=obligation,
+        principal=retained,
+        subject=retained.subject,
+        username=retained.username,
+    )
+
+    response = Client().post(
+        '/api/account-admin/principals/cleanup-deleted/',
+        data=json.dumps({'subjects': [retained.subject, removed.subject]}),
+        content_type='application/json',
+        **_identity_headers(subject='cleanup-admin', username='cleanup-admin', groups='/admin'),
+    )
+
+    assert response.status_code == 200
+    assert response.json()['removed_assignment_count'] == 2
+    assert not ManagedFlowAssignment.objects.using('iwork_local').filter(
+        principal_id__in=[retained.pk, removed.pk],
+    ).exists()
+    assert IworkPrincipal.objects.using('iwork_local').filter(pk=retained.pk).exists()
+    assert not IworkPrincipal.objects.using('iwork_local').filter(pk=removed.pk).exists()
+    assert DailyTargetObligationLeader.objects.using('iwork_local').filter(
+        principal=retained,
+    ).exists()
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_set_targets_requires_work_hours_and_csrf_is_still_enforced(fixed_business_clock):
     """现有逐组接口要求工作时间，真实 HTTP POST 仍受 CSRF 保护。"""
     from rest_framework.test import APIRequestFactory
@@ -438,6 +544,21 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
     assert 'for (const item of groups.value)' in template
     assert 'await saveGroup(item)' in template
     assert "window.location.assign(returnTo)" in template
+    assert 'responsibility_summary' in template
+    assert 'today_targets_is_admin' in template
+    assert '请完成填写今日目标产量' in template
+    assert '快捷设置工时：' in template
+    assert '已提交，可修改' in template
+    assert 'v-if="item.work_hours_set"' in template
+    assert "正在保存..." in template
+    for removed_copy in (
+        '只修改当前页面草稿，点击保存后才会提交。',
+        '可填写 0，空白不算完成。',
+        '默认 {[ defaultWorkHours ]} 小时草稿',
+        '保存后才算已填写。',
+        '请填写非负整数目标和 {[ minWorkHours ]}～{[ maxWorkHours ]} 小时内的工作时间。',
+    ):
+        assert removed_copy not in template
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

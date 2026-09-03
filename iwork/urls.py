@@ -92,6 +92,11 @@ urlpatterns = [
         name="account-admin-flow-assignment-detail",
     ),
     path(
+        "api/account-admin/principals/cleanup-deleted/",
+        api_views_account.cleanup_deleted_principals,
+        name="account-admin-cleanup-deleted-principals",
+    ),
+    path(
         "api/account-admin/target-obligations/",
         api_views_account.target_obligations,
         name="account-admin-target-obligations",

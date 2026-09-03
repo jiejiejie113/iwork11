@@ -546,6 +546,89 @@ def waive_unfinished_obligations(
     return waived_count
 
 
+def cleanup_deleted_principal_assignments(
+    *,
+    subjects: set[str] | list[str],
+    identity: IworkIdentity,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """清理已从可信账号目录删除的身份职能残留。
+
+    只删除目标身份的 Flow 分配；如果身份没有历史每日责任快照，连同无用的
+    本地身份快照一并删除。已有责任快照的身份必须保留，以维护历史审计关联。
+
+    Args:
+        subjects (set[str] | list[str]): 已确认从账号目录删除的 subject 集合。
+        identity (IworkIdentity): 执行清理的当前管理员身份。
+        now (datetime | None): 可注入的当前时刻，用于刷新责任状态。
+
+    Returns:
+        dict[str, object]: 清理的 subject、分配数和身份快照数。
+
+    Raises:
+        TargetResponsibilityError: 当前身份不是管理员时抛出。
+    """
+    identity = require_admin(identity)
+    normalized_subjects = {
+        subject.strip()
+        for subject in subjects
+        if isinstance(subject, str) and subject.strip()
+    }
+    if not normalized_subjects:
+        return {
+            'subjects': [],
+            'removed_assignment_count': 0,
+            'pruned_principal_count': 0,
+            'pruned_subjects': [],
+        }
+
+    instant = _now_instant(now)
+    with transaction.atomic(using=LOCAL_DB_ALIAS):
+        principals = list(
+            IworkPrincipal.objects.using(LOCAL_DB_ALIAS)
+            .select_for_update()
+            .filter(subject__in=normalized_subjects)
+        )
+        assignments = list(
+            ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS)
+            .select_for_update()
+            .filter(principal__subject__in=normalized_subjects)
+        )
+        flow_names = sorted({assignment.flow_name for assignment in assignments})
+        assignment_ids = [assignment.pk for assignment in assignments]
+        if assignment_ids:
+            ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
+                pk__in=assignment_ids,
+            ).delete()
+
+        for flow_name in flow_names:
+            waive_unfinished_obligations(
+                flow_name=flow_name,
+                identity=identity,
+                now=instant,
+            )
+
+        pruned_subjects = []
+        for principal in principals:
+            has_assignments = ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
+                principal_id=principal.pk,
+            ).exists()
+            has_history = DailyTargetObligationLeader.objects.using(LOCAL_DB_ALIAS).filter(
+                principal_id=principal.pk,
+            ).exists()
+            if has_assignments or has_history:
+                continue
+            principal.delete(using=LOCAL_DB_ALIAS)
+            pruned_subjects.append(principal.subject)
+
+    return {
+        'subjects': sorted(normalized_subjects),
+        'removed_assignment_count': len(assignments),
+        'pruned_principal_count': len(pruned_subjects),
+        'pruned_subjects': sorted(pruned_subjects),
+    }
+
+
 def save_group_target(
     *,
     identity: IworkIdentity,

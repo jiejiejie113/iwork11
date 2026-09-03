@@ -2,14 +2,17 @@ import json
 import re
 from urllib.parse import urlsplit
 
+from django.conf import settings
 from django.shortcuts import redirect, render
 from django.core.serializers.json import DjangoJSONEncoder
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.vary import vary_on_headers
 from loguru import logger
 
+from iwork.local_models import ManagedFlowAssignment
 from iwork.read_model.errors import ReadModelNotReadyError
-from iwork.statistics import get_realtime_stats
+from iwork.statistics import get_business_date, get_realtime_stats
+from iwork.target_responsibility import LOCAL_DB_ALIAS, active_assignment_query
 
 
 MOBILE_USER_AGENT_RE = re.compile(
@@ -55,6 +58,40 @@ def _device_context(request):
     }
 
 
+def _today_target_navigation_context(request):
+    """判断当前身份是否可以看到今日目标入口。
+
+    Args:
+        request: Django HTTP 请求对象。
+
+    Returns:
+        dict: 今日目标入口和管理员页面状态的模板上下文。
+    """
+    identity = getattr(request, 'iwork_identity', None)
+    is_admin = bool(identity and identity.subject and identity.is_admin)
+    can_manage = is_admin
+    if identity and identity.subject and not is_admin:
+        try:
+            business_date = get_business_date()
+            can_manage = ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
+                active_assignment_query(business_date),
+                principal__subject=identity.subject,
+                flow_name__in=settings.VISIBLE_FLOWS,
+            ).exists()
+        except Exception as exc:
+            # 导航判断失败时隐藏入口，不能把故障误判为有职责权限。
+            logger.warning(
+                '判断今日目标入口权限失败: subject={} error={}',
+                identity.subject,
+                exc,
+            )
+            can_manage = False
+    return {
+        'can_manage_today_targets': can_manage,
+        'today_targets_is_admin': is_admin,
+    }
+
+
 def _with_device_context(request, context):
     """把 User-Agent 设备标记合并到页面上下文。
 
@@ -65,7 +102,11 @@ def _with_device_context(request, context):
     Returns:
         dict: 包含设备标记的模板上下文副本。
     """
-    return {**context, **_device_context(request)}
+    return {
+        **context,
+        **_device_context(request),
+        **_today_target_navigation_context(request),
+    }
 
 
 @vary_on_headers('User-Agent')
@@ -192,7 +233,7 @@ def production_detail_initial_style(request):
 @require_http_methods(['GET'])
 def kanban_page(request):
     """产量看板页面"""
-    context = {
+    context = _with_device_context(request, {
         'page_title': 'Eastex生产看板 - 产量看板',
-    }
+    })
     return render(request, 'iwork/kanban.html', context)

@@ -27,6 +27,7 @@ from iwork.target_responsibility import (
     LOCAL_DB_ALIAS,
     TargetResponsibilityError,
     active_assignment_query,
+    cleanup_deleted_principal_assignments,
     deadline_for_date,
     ensure_daily_target_obligations,
     is_group_target_complete,
@@ -218,6 +219,71 @@ def _obligation_payload(obligation: DailyTargetObligation) -> dict[str, object]:
     }
 
 
+def _today_responsibility_summary(
+    groups: list[dict[str, object]],
+    obligations: dict[str, DailyTargetObligation],
+    *,
+    target_date: date,
+) -> dict[str, object]:
+    """汇总今日目标页面可见分组的责任状态和填写状态。
+
+    Args:
+        groups (list[dict[str, object]]): 今日目标页面的分组数据。
+        obligations (dict[str, DailyTargetObligation]): 按 Flow 索引的责任记录。
+        target_date (date): 当前业务日期。
+
+    Returns:
+        dict[str, object]: 与账号职能页兼容的责任摘要，同时包含目标填写字段。
+    """
+    status_counts = {
+        status_name: 0
+        for status_name in (
+            DailyTargetObligation.Status.PENDING,
+            DailyTargetObligation.Status.OVERDUE,
+            DailyTargetObligation.Status.FULFILLED,
+            DailyTargetObligation.Status.FULFILLED_LATE,
+            DailyTargetObligation.Status.WAIVED,
+        )
+    }
+    items = []
+    for group in groups:
+        flow_name = str(group['flow'])
+        status_name = str(group['status'])
+        if status_name in status_counts:
+            status_counts[status_name] += 1
+        obligation = obligations.get(flow_name)
+        leaders = []
+        if obligation is not None:
+            leaders = [
+                {'subject': leader.subject, 'username': leader.username}
+                for leader in obligation.leader_links.all()
+            ]
+        items.append({
+            'target_date': target_date.isoformat(),
+            'flow_name': flow_name,
+            'status': status_name,
+            'deadline_at': group['deadline_at'],
+            'submitted_by_username': (
+                obligation.submitted_by_username
+                if obligation is not None
+                else ''
+            ),
+            'submitted_at': group['submitted_at'],
+            'leaders': leaders,
+            'group_target': group['group_target'],
+            'work_hours': group['work_hours'],
+            'target_set': group['target_set'],
+            'work_hours_set': group['work_hours_set'],
+            'complete': group['complete'],
+        })
+    return {
+        'pending_count': status_counts[DailyTargetObligation.Status.PENDING],
+        'overdue_count': status_counts[DailyTargetObligation.Status.OVERDUE],
+        'status_counts': status_counts,
+        'items': items,
+    }
+
+
 @api_view(['GET'])
 def me(request):
     """返回当前可信身份和当日有效 Flow 分配。
@@ -372,7 +438,7 @@ def today_targets(request):
             for item in DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).filter(
                 target_date=business_date,
                 flow_name__in=flow_names,
-            )
+            ).prefetch_related('leader_links')
         }
         historical_work_minutes: dict[str, int] = {}
         if flow_names:
@@ -409,6 +475,11 @@ def today_targets(request):
             'total_count': total_count,
             'all_complete': completed_count == total_count,
         }
+        responsibility_summary = _today_responsibility_summary(
+            groups,
+            obligations,
+            target_date=business_date,
+        )
         return Response({
             'business_date': business_date.isoformat(),
             'deadline_at': deadline_for_date(business_date).isoformat(),
@@ -421,6 +492,8 @@ def today_targets(request):
             'total_count': total_count,
             'all_complete': summary['all_complete'],
             'groups': groups,
+            'is_admin': identity.is_admin,
+            'responsibility_summary': responsibility_summary,
         })
     except Exception as exc:
         logger.exception('读取今日目标失败: subject={} error={}', identity.subject, exc)
@@ -591,6 +664,53 @@ def flow_assignment_detail(request, assignment_id: int):
         assignment.delete(using=LOCAL_DB_ALIAS)
         waive_unfinished_obligations(flow_name=flow_name, identity=identity)
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+def cleanup_deleted_principals(request):
+    """清理已从Portal账号全量快照中消失的iwork身份职能。
+
+    Args:
+        request (Request): 管理员请求，JSON体包含非空 ``subjects`` 字符串数组。
+
+    Returns:
+        Response: 清理数量和保留/删除的本地身份快照。
+    """
+    identity, error = _identity_or_response(request, admin=True)
+    if error:
+        return error
+    subjects = request.data.get('subjects')
+    if (
+        not isinstance(subjects, list)
+        or not subjects
+        or any(not isinstance(subject, str) or not subject.strip() for subject in subjects)
+    ):
+        return Response(
+            {
+                'error': 'subjects必须是非空字符串数组',
+                'code': 'subjects_required',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(subjects) > 1000:
+        return Response(
+            {
+                'error': 'subjects一次最多只能提交1000个账号',
+                'code': 'subjects_too_many',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        payload = cleanup_deleted_principal_assignments(
+            subjects=subjects,
+            identity=identity,
+        )
+    except TargetResponsibilityError as exc:
+        return Response(
+            {'error': exc.message, 'code': exc.code},
+            status=exc.http_status,
+        )
+    return Response(payload)
 
 
 @api_view(['GET'])

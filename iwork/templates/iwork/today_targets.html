@@ -60,7 +60,7 @@
                     </p>
                 </div>
                 <div class="text-sm text-blue-100">
-                    <span class="font-semibold">必须完成今日目标产量和工作时间</span>
+                    <span class="font-semibold">请完成填写今日目标产量</span>
                     <span class="ml-2 text-blue-300">逾期仍可补填，提交后立即解除阻断</span>
                 </div>
             </div>
@@ -86,7 +86,7 @@
         </section>
 
         <section class="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-4">
-            <span class="mr-2 text-sm font-medium text-slate-200">快捷设置全部草稿工时：</span>
+            <span class="mr-2 text-sm font-medium text-slate-200">快捷设置工时：</span>
             <button type="button" @click="applyWorkHours(8)"
                     class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
                 全部 8 小时
@@ -95,8 +95,50 @@
                     class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
                 全部 10 小时
             </button>
-            <span class="text-xs text-slate-400">只修改当前页面草稿，点击保存后才会提交。</span>
         </section>
+
+        {% if today_targets_is_admin %}
+        <section class="mb-4 rounded-xl border border-purple-800 bg-purple-950/40 p-4" id="today-target-responsibility-summary">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h2 class="text-lg font-semibold text-purple-100">未填 / 逾期责任摘要</h2>
+                <div class="flex items-center gap-3 text-sm">
+                    <span class="text-amber-300">未填 {[ responsibilityPendingCount ]}</span>
+                    <span class="text-red-300">逾期 {[ responsibilityOverdueCount ]}</span>
+                </div>
+            </div>
+            <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-purple-800 text-xs text-purple-200">
+                        <tr>
+                            <th class="px-3 py-2">分组</th>
+                            <th class="px-3 py-2">目标产量</th>
+                            <th class="px-3 py-2">工作时间</th>
+                            <th class="px-3 py-2">状态</th>
+                            <th class="px-3 py-2">截止</th>
+                            <th class="px-3 py-2">负责人</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-purple-900">
+                        <tr v-if="loading">
+                            <td colspan="6" class="px-3 py-3 text-center text-slate-400">正在读取今日目标…</td>
+                        </tr>
+                        <tr v-else v-for="item in responsibilitySummaryItems" :key="`summary-${item.flow_name}`">
+                            <td class="px-3 py-2 font-medium text-slate-100">{[ item.flow_name ]}</td>
+                            <td class="px-3 py-2 tabular-nums">{[ item.target_set ? item.group_target : '--' ]}</td>
+                            <td class="px-3 py-2 tabular-nums">{[ item.work_hours_set ? `${item.work_hours} 小时` : '--' ]}</td>
+                            <td class="px-3 py-2">
+                                <span class="rounded-full border px-2 py-1 text-xs" :class="statusClass(item)">
+                                    {[ statusText(item) ]}
+                                </span>
+                            </td>
+                            <td class="px-3 py-2 text-slate-300">{[ formatDeadline(item.deadline_at) ]}</td>
+                            <td class="px-3 py-2 text-slate-300">{[ leaderNames(item) ]}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% endif %}
 
         <div v-if="loading" class="rounded-xl border border-slate-700 bg-slate-800 p-8 text-center text-slate-300">
             正在读取今日目标…
@@ -132,18 +174,16 @@
                                type="number" min="0" step="1" inputmode="numeric"
                                placeholder="请输入目标产量"
                                class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <span class="mt-1 block text-xs text-slate-500">可填写 0，空白不算完成。</span>
                     </label>
                     <label class="block">
                         <span class="mb-1 block text-sm text-slate-300">计划工作时间（小时）</span>
                         <input v-model.number="item.work_hours" @input="markDraft(item)"
                                type="number" :min="minWorkHours" :max="maxWorkHours" step="0.5" inputmode="decimal"
                                class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <span v-if="!item.work_hours_set" class="mt-1 block text-xs text-amber-300">
-                            <template v-if="item.work_hours_source === 'history'">沿用最近历史工时草稿</template>
-                            <template v-else>默认 {[ defaultWorkHours ]} 小时草稿</template>，保存后才算已填写。
+                        <span v-if="!item.work_hours_set && item.work_hours_source === 'history'" class="mt-1 block text-xs text-amber-300">
+                            沿用最近历史工时草稿
                         </span>
-                        <span v-else class="mt-1 block text-xs text-emerald-300">已提交工作时间，可按需覆盖。</span>
+                        <span v-if="item.work_hours_set" class="mt-1 block text-xs text-emerald-300">已提交，可修改</span>
                     </label>
                 </div>
 
@@ -154,10 +194,7 @@
                     {[ item.error ]}
                 </div>
                 <div class="mt-4 flex items-center justify-between gap-3">
-                    <span v-if="!draftIsValid(item)" class="text-xs text-amber-300">
-                        请填写非负整数目标和 {[ minWorkHours ]}～{[ maxWorkHours ]} 小时内的工作时间。
-                    </span>
-                    <span v-else class="text-xs text-slate-500">保存本组不会影响其他分组。</span>
+                    <span class="text-xs text-slate-500">保存本组不会影响其他分组。</span>
                     <button type="button" @click="saveGroup(item)" :disabled="item.saving || savingAll || !draftIsValid(item)"
                             class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
                         {[ item.saving ? '保存中…' : '保存本组' ]}
@@ -170,7 +207,7 @@
             <span v-if="saveAllMessage" class="text-sm text-slate-300">{[ saveAllMessage ]}</span>
             <button type="button" @click="saveAll" :disabled="savingAll || loading"
                     class="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
-                {[ savingAll ? '正在逐组保存…' : '保存全部' ]}
+                {[ savingAll ? '正在保存...' : '保存全部' ]}
             </button>
         </div>
     </main>
@@ -225,6 +262,12 @@
             const minWorkHours = ref(0);
             const maxWorkHours = ref(0);
             const summary = ref({ completed_count: 0, incomplete_count: 0, total_count: 0, all_complete: false });
+            const responsibilitySummary = ref({
+                pending_count: 0,
+                overdue_count: 0,
+                status_counts: {},
+                items: [],
+            });
             const loading = ref(true);
             const loadError = ref('');
             const savingAll = ref(false);
@@ -234,6 +277,15 @@
             const completedCount = computed(() => summary.value.completed_count || 0);
             const incompleteCount = computed(() => summary.value.incomplete_count || 0);
             const totalCount = computed(() => summary.value.total_count || 0);
+            const responsibilityPendingCount = computed(
+                () => responsibilitySummary.value.pending_count || 0,
+            );
+            const responsibilityOverdueCount = computed(
+                () => responsibilitySummary.value.overdue_count || 0,
+            );
+            const responsibilitySummaryItems = computed(
+                () => responsibilitySummary.value.items || [],
+            );
 
             function formatDeadline(value) {
                 if (!value) return '--';
@@ -271,6 +323,12 @@
                     incomplete_count: payload.incomplete_count || 0,
                     total_count: payload.total_count || 0,
                     all_complete: Boolean(payload.all_complete),
+                };
+                responsibilitySummary.value = payload.responsibility_summary || {
+                    pending_count: 0,
+                    overdue_count: 0,
+                    status_counts: {},
+                    items: [],
                 };
                 groups.value = (payload.groups || []).map(item => {
                     const serverItem = {
@@ -353,6 +411,13 @@
                     fulfilled_late: 'border-orange-700 bg-orange-950 text-orange-200',
                     waived: 'border-slate-600 bg-slate-800 text-slate-300',
                 }[item.status] || 'border-slate-600 bg-slate-800 text-slate-300';
+            }
+
+            function leaderNames(item) {
+                return (item.leaders || [])
+                    .map(leader => leader.username || leader.subject || '')
+                    .filter(Boolean)
+                    .join('、') || '--';
             }
 
             async function saveGroup(item) {
@@ -442,8 +507,11 @@
                 minWorkHours, maxWorkHours,
                 loading, loadError, savingAll, saveAllMessage,
                 completedCount, incompleteCount, totalCount,
+                responsibilityPendingCount, responsibilityOverdueCount,
+                responsibilitySummaryItems,
                 formatDeadline, formatDateTime, loadTargets, applyWorkHours, markDraft,
-                draftIsValid, statusText, statusClass, saveGroup: saveSingleAndRefresh, saveAll,
+                draftIsValid, statusText, statusClass, leaderNames,
+                saveGroup: saveSingleAndRefresh, saveAll,
             };
         },
     }).mount('#app');
