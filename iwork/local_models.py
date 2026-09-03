@@ -352,6 +352,7 @@ class HistoricalProductionFact(models.Model):
     flow = models.CharField('生产线', max_length=40, blank=True, default='')
     station_id = models.CharField('工位ID', max_length=3, blank=True, default='')
     employee_id = models.IntegerField('员工系统ID', default=0)
+    employee_remark = models.TextField('员工新ID', blank=True, default='')
     wrk_order = models.CharField('本厂款号', max_length=14, blank=True, default='')
     step_no = models.IntegerField('工序号', default=0)
     qty = models.BigIntegerField('聚合产量', default=0)

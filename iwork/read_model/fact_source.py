@@ -1,10 +1,12 @@
 """从单次采集的不可变基础事实生成实时读模型查询结果。"""
 
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import date, timedelta
 
 from django.conf import settings
 
+from iwork.employee_id_mapping import map_employee_rows
 from iwork.queries import _build_flow_employees
 
 
@@ -33,6 +35,12 @@ class ReadModelFactSource:
 
         with source.read_model_consistent_snapshot():
             facts = source.get_read_model_fact_rows(business_date)
+            employee_remark_loader = getattr(source, "get_employee_remark_map", None)
+            detail_employee_remark_map = None
+            if callable(employee_remark_loader):
+                candidate_map = employee_remark_loader()
+                if isinstance(candidate_map, Mapping):
+                    detail_employee_remark_map = dict(candidate_map)
             wrk_orders = sorted({
                 str(item.get("wrk_order") or "")
                 for item in facts
@@ -57,6 +65,7 @@ class ReadModelFactSource:
             products=products,
             step_metadata=step_metadata,
             history_source=source,
+            detail_employee_remark_map=detail_employee_remark_map,
         )
 
     def __init__(
@@ -67,6 +76,7 @@ class ReadModelFactSource:
         products: dict | None = None,
         step_metadata: dict | None = None,
         history_source=None,
+        detail_employee_remark_map: Mapping[object, object] | None = None,
     ) -> None:
         """初始化单次采集事实源。
 
@@ -77,10 +87,30 @@ class ReadModelFactSource:
             products: 按完整工单号组织的本地产品信息。
             step_metadata: 按工单和工序组织的描述与标准工时。
             history_source: 只用于读取业务日期之前月度数据的查询适配器。
+            detail_employee_remark_map: 生产详情使用的员工系统 ID 到 Remark 映射；
+                ``None`` 表示兼容未启用映射的内存事实源。
         """
         self.business_date = business_date
         self.facts = tuple(dict(item) for item in facts)
         self.cumulative_facts = tuple(dict(item) for item in cumulative_facts or [])
+        self.detail_employee_remark_map = (
+            dict(detail_employee_remark_map)
+            if detail_employee_remark_map is not None
+            else None
+        )
+        self.detail_facts = tuple(
+            map_employee_rows(self.facts, self.detail_employee_remark_map)
+            if self.detail_employee_remark_map is not None
+            else self.facts
+        )
+        self.detail_cumulative_facts = tuple(
+            map_employee_rows(
+                self.cumulative_facts,
+                self.detail_employee_remark_map,
+            )
+            if self.detail_employee_remark_map is not None
+            else self.cumulative_facts
+        )
         self.cumulative_qty = {
             (
                 str(item.get("flow") or ""),
@@ -88,7 +118,7 @@ class ReadModelFactSource:
                 int(item.get("stepno") or 0),
                 str(item.get("wrk_order") or ""),
             ): int(item.get("cumulative_qty") or 0)
-            for item in self.cumulative_facts
+            for item in self.detail_cumulative_facts
         }
         self.products = dict(products or {})
         self.step_metadata = dict(step_metadata or {})
@@ -113,14 +143,16 @@ class ReadModelFactSource:
         Returns:
             list[dict]: 生产详情白名单内的事实行。
         """
-        return [item for item in self.facts if self._flow(item) in ALLOWED_FLOWS]
+        return [item for item in self.detail_facts if self._flow(item) in ALLOWED_FLOWS]
 
     def _product_facts(self) -> list[dict]:
         """返回产品视图使用的全部 Flow 事实。
 
         Returns:
-            list[dict]: 未应用普通线白名单的产品生产事实。
+            list[dict]: 未应用普通线白名单、但会沿用员工 ID 映射规则的事实。
         """
+        if self.detail_employee_remark_map is not None:
+            return list(self.detail_facts)
         return list(self.facts)
 
     @staticmethod

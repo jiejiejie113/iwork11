@@ -62,6 +62,29 @@ class Pytckreg3(models.Model):
         return self.TicketNo
 
 
+class Pyperson(models.Model):
+    """
+    人员主数据模型（只读）。
+
+    ``SysID`` 用于匹配生产记录中的 ``RegPerSysID``；生产详情仅使用
+    ``Remark`` 作为新的员工 ID，空值和重复值由映射规则过滤。
+    """
+
+    SysID = models.IntegerField('人员系统ID', primary_key=True)
+    Remark = models.TextField('员工ID', null=True, blank=True)
+
+    class Meta:
+        app_label = 'iwork'
+        db_table = 'pyperson'
+        managed = False
+        verbose_name = '人员'
+        verbose_name_plural = '人员'
+
+    def __str__(self) -> str:
+        """返回人员系统 ID。"""
+        return str(self.SysID)
+
+
 class Pywrkord(models.Model):
     """
     工单扩展信息模型（只读）。

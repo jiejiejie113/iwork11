@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from django.conf import settings
 from django.utils import timezone
 from django.db import connections, transaction
-from django.db.models import Count, Min, Sum
+from django.db.models import Count, Min, Subquery, Sum
 from loguru import logger
 
 from iwork.local_models import IGarmentProductionOrder, ProductionOrder
@@ -46,6 +46,32 @@ def get_records_queryset(target: date) -> object:
     from iwork.models import Pytckreg3
     start, end = get_date_range(target)
     return Pytckreg3.objects.using('iwork').filter(RegDate__gte=start, RegDate__lt=end)
+
+
+def get_employee_remark_map() -> dict[str, str]:
+    """批量读取生产员工的唯一非空 Remark 映射。
+
+    生产员工集合通过 ``pytckreg3.RegPerSysID`` 子查询确定，随后使用
+    ``pyperson.SysID`` 主键批量查找；重复 Remark 和空 Remark 不返回。
+
+    Returns:
+        dict[str, str]: 员工系统 ID 到新员工 ID 的映射。
+    """
+    from iwork.employee_id_mapping import build_unique_remark_map
+    from iwork.models import Pyperson, Pytckreg3
+
+    source_employee_ids = (
+        Pytckreg3.objects.using('iwork')
+        .filter(RegPerSysID__isnull=False)
+        .values('RegPerSysID')
+        .distinct()
+    )
+    rows = (
+        Pyperson.objects.using('iwork')
+        .filter(SysID__in=Subquery(source_employee_ids))
+        .values('SysID', 'Remark')
+    )
+    return build_unique_remark_map(rows)
 
 
 def get_initial_style_numbers(wrk_orders: list[str]) -> dict[str, str]:

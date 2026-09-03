@@ -16,6 +16,7 @@ from iwork.local_models import (
 )
 from iwork.history_store import (
     HistorySnapshotPayload,
+    RemoteHistorySource,
     SnapshotBuildInProgressError,
     SnapshotBuildLeaseLostError,
     snapshot_history_date,
@@ -110,6 +111,103 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
     assert payload['employees'][0]['employee_efficiency'] is None
     assert payload['employees'][0]['target'] == 200
     assert payload['employees'][0]['wo_targets'] == {'BU1208A': 150}
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_historical_flow_detail_prefers_saved_remark_employee_id(client):
+    """历史快照存在 Remark 时，详情应返回新的员工 ID。"""
+    target_date = date(2026, 7, 16)
+    registered_at = timezone.make_aware(datetime(2026, 7, 16, 10))
+    HistoricalProductionFact.objects.using('iwork_local').create(
+        production_date=target_date,
+        event_hour=10,
+        registered_date=registered_at,
+        registered_time=registered_at,
+        flow='SO5-L5C',
+        station_id='L5C',
+        employee_id=1942,
+        employee_remark='EMP-A',
+        wrk_order='BU1208A',
+        step_no=38,
+        qty=183,
+        source_record_count=3,
+    )
+    HistoricalStepSnapshot.objects.using('iwork_local').create(
+        snapshot_date=target_date,
+        wrk_order='BU1208A',
+        step_no=38,
+        description='翻猪肠绑绳',
+        step_time=0.131,
+    )
+    HistoricalSyncState.objects.using('iwork_local').create(
+        snapshot_date=target_date,
+        status=HistoricalSyncState.Status.SUCCESS,
+        fact_row_count=1,
+        metadata_row_count=1,
+    )
+
+    response = client.get(
+        '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-16'
+    )
+
+    assert response.status_code == 200
+    assert response.json()['employees'][0]['reg_per_sys_id'] == 'EMP-A'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@patch('iwork.history_store.RemoteHistorySource._load_metadata', return_value=[])
+@patch('iwork.history_store.get_employee_remark_map', return_value={'1001': 'EMP-A'})
+@patch('iwork.history_store.read_model_consistent_snapshot')
+@patch('iwork.history_store.Pytckreg3')
+def test_remote_history_source_keeps_only_mapped_employee_facts(
+    mock_model,
+    mock_snapshot,
+    _mock_remark_map,
+    _mock_metadata,
+):
+    """历史远程采集应剔除无有效 Remark 的员工并保存新员工 ID。"""
+    from contextlib import nullcontext
+
+    mock_snapshot.side_effect = nullcontext
+    queryset = mock_model.objects.using.return_value.filter.return_value
+    queryset.annotate.return_value.values.return_value.annotate.return_value.order_by.return_value = [
+        {
+            'event_hour': 10,
+            'Flow': 'SO5-L5C',
+            'StationID': 'L5C',
+            'RegPerSysID': 1001,
+            'WrkOrder': 'BU1208A',
+            'StepNo': 38,
+            'qty': 183,
+            'source_record_count': 3,
+        },
+        {
+            'event_hour': 11,
+            'Flow': 'SO5-L5C',
+            'StationID': 'L5C',
+            'RegPerSysID': 1002,
+            'WrkOrder': 'BU1208A',
+            'StepNo': 38,
+            'qty': 50,
+            'source_record_count': 1,
+        },
+    ]
+
+    payload = RemoteHistorySource().load(date(2026, 7, 16))
+
+    assert payload.facts == [{
+        'event_hour': 10,
+        'flow': 'SO5-L5C',
+        'station_id': 'L5C',
+        'employee_id': 1001,
+        'employee_remark': 'EMP-A',
+        'wrk_order': 'BU1208A',
+        'step_no': 38,
+        'qty': 183,
+        'source_record_count': 3,
+    }]
+    assert payload.source_row_count == 3
+    assert payload.source_total_qty == 183
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

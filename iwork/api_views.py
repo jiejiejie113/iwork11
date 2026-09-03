@@ -831,7 +831,7 @@ def _allocate_step_target(step_workers, target):
     """
     allocations = {}
     for stepno in sorted(step_workers, key=lambda value: int(value)):
-        employee_ids = sorted(step_workers[stepno], key=lambda value: int(value))
+        employee_ids = sorted(step_workers[stepno], key=_natural_sort_key)
         base_target, remainder = divmod(target, len(employee_ids))
         allocations[stepno] = {
             employee_id: base_target + (index < remainder)
@@ -849,7 +849,7 @@ def _distribute_group_target(
     """
     将整组目标分配到每道工序及工序内员工。
 
-    每道工序都获得完整的整组目标。工序目标按员工 ID 稳定排序后进行整数分配，
+    每道工序都获得完整的整组目标。工序目标按员工 ID 自然排序后进行整数分配，
     不能整除的余数依次补给排序靠前的员工，确保个人目标之和等于工序目标。
 
     Args:

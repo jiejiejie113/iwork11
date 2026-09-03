@@ -1,5 +1,5 @@
 from datetime import datetime
-from iwork.models import Pydefstp, Pywrkord, Pywrkstp, Pytckreg3
+from iwork.models import Pyperson, Pydefstp, Pywrkord, Pywrkstp, Pytckreg3
 
 
 class TestPytckreg3Model:
@@ -107,6 +107,22 @@ class TestPytckreg3Model:
         """测试字符串表示"""
         record = Pytckreg3(TicketNo='TK123456789AB', SeqNo=1, SysSource='SYS')
         assert str(record) == 'TK123456789AB'
+
+
+class TestPypersonModel:
+    """pyperson 远程人员模型测试。"""
+
+    def test_remote_model_is_read_only_and_uses_sysid_primary_key(self):
+        """人员模型应映射远程表且通过 SysID 主键查找。"""
+        assert Pyperson._meta.db_table == 'pyperson'
+        assert Pyperson._meta.managed is False
+        assert Pyperson._meta.get_field('SysID').primary_key is True
+
+    def test_remark_is_text_field(self):
+        """Remark 必须支持字母和中文员工 ID。"""
+        from django.db.models import TextField
+
+        assert isinstance(Pyperson._meta.get_field('Remark'), TextField)
 
 
 class TestPywrkstpModel:

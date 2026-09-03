@@ -326,8 +326,9 @@ ALLOWED_FLOWS = [
     'SO14-L14A', 'SO14-L14B', 'SO14-L14C', 'SO14-L14D',
     'SO3-L3A', 'SO3-L3B', 'SO3-L3C', 'SO3-L3D', 'SO3-L3E', 'SO3-L3F',
     'SO5-L5B', 'SO5-L5C', 'SO5-L5D', 'SO5-L5E',
+    'SO6-L6H',
     'SO8-L8A', 'SO8-L8B', 'SO8-L8C', 'SO8-L8D', 'SO8-L8E', 'SO8-L8F',
-    'SO9-L9A', 'SO9-L9B', 'SO9-L9C', 'SO9-L9D',
+    'SO9-L9A', 'SO9-L9B', 'SO9-L9C', 'SO9-L9D', 'SO9-L9E',
 ]
 
 # 隐藏分组 — 不查询、不显示（配置具体 Flow 名称）

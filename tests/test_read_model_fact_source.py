@@ -14,6 +14,60 @@ BUSINESS_DATE = date(2026, 8, 3)
 NOW = datetime(2026, 8, 3, 11, 0, tzinfo=ZoneInfo("Asia/Bangkok"))
 
 
+def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():
+    """生产详情各聚合视图统一使用 Remark，并排除无有效映射的员工。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    source = ReadModelFactSource(
+        business_date=BUSINESS_DATE,
+        facts=[
+            {
+                "reg_per_sys_id": 1001,
+                "stepno": 70,
+                "wrk_order": "BU1211-01",
+                "flow": "SO3-L3A",
+                "event_hour": 8,
+                "qty": 60,
+            },
+            {
+                "reg_per_sys_id": 1002,
+                "stepno": 70,
+                "wrk_order": "BU1211-01",
+                "flow": "SO3-L3A",
+                "event_hour": 8,
+                "qty": 40,
+            },
+            {
+                "reg_per_sys_id": 1003,
+                "stepno": 69,
+                "wrk_order": "BU1211-01",
+                "flow": "SO3-L3A",
+                "event_hour": 9,
+                "qty": 20,
+            },
+        ],
+        detail_employee_remark_map={
+            "1001": "EMP-A",
+            "1003": "EMP-C",
+        },
+    )
+
+    overview = source.get_batch_flow_overview(BUSINESS_DATE)["SO3-L3A"]
+    employees = source.get_batch_flow_employees(BUSINESS_DATE)["SO3-L3A"]
+    stepno_employees = source.get_batch_stepno_employees(BUSINESS_DATE)
+
+    assert overview["stepnos"] == {
+        "69": {"qty": 20, "workers": 1},
+        "70": {"qty": 60, "workers": 1},
+    }
+    assert overview["total_workers"] == 2
+    assert [item["reg_per_sys_id"] for item in employees] == ["EMP-A", "EMP-C"]
+    assert [item["reg_per_sys_id"] for item in stepno_employees[70]] == ["EMP-A"]
+    assert [item["reg_per_sys_id"] for item in stepno_employees[69]] == ["EMP-C"]
+    product_overview = source.get_batch_product_overview(BUSINESS_DATE)
+    assert product_overview["products"][0]["total_qty"] == 80
+
+
 def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
     """同一批事实必须同时生成一致的实时、详情和看板视图。"""
     from iwork.read_model.fact_source import ReadModelFactSource
@@ -330,6 +384,51 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
     remote.get_igarment_creation_dates.assert_not_called()
     remote.get_read_model_cumulative_rows.assert_called_once_with(["BU1211"])
     remote.get_initial_style_numbers.assert_called_once_with(["BU1211"])
+
+
+def test_collector_loads_remark_mapping_inside_consistent_snapshot():
+    """实时采集应加载一次 Remark 映射并交给生产详情聚合。"""
+    from iwork.read_model.fact_source import ReadModelFactSource
+
+    state = {"active": False}
+    remote = Mock()
+
+    @contextmanager
+    def consistent_snapshot():
+        state["active"] = True
+        try:
+            yield
+        finally:
+            state["active"] = False
+
+    def checked(value):
+        def query(*_args):
+            assert state["active"] is True
+            return value
+
+        return query
+
+    remote.read_model_consistent_snapshot.side_effect = consistent_snapshot
+    remote.get_read_model_fact_rows.side_effect = checked([{
+        "reg_per_sys_id": 1001,
+        "stepno": 70,
+        "wrk_order": "BU1211",
+        "flow": "SO3-L3B",
+        "qty": 80,
+        "record_count": 2,
+    }])
+    remote.get_employee_remark_map.side_effect = checked({"1001": "EMP-A"})
+    remote.get_read_model_cumulative_rows.side_effect = checked([])
+    remote.get_read_model_products.return_value = {}
+    remote.get_initial_style_numbers.side_effect = checked({})
+    remote.get_batch_step_metadata.side_effect = checked({})
+
+    source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
+
+    assert source.detail_employee_remark_map == {"1001": "EMP-A"}
+    employees = source.get_batch_flow_employees(BUSINESS_DATE)["SO3-L3B"]
+    assert employees[0]["reg_per_sys_id"] == "EMP-A"
+    remote.get_employee_remark_map.assert_called_once_with()
 
 
 @patch("iwork.read_model.builder.ReadModelFactSource.collect")

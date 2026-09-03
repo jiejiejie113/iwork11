@@ -55,14 +55,14 @@ def get_batch_flow_employees(target_date: date) -> dict:
         _facts(target_date)
         .exclude(flow='')
         .filter(flow__in=settings.ALLOWED_FLOWS)
-        .values('flow', 'employee_id', 'step_no', 'wrk_order')
+        .values('flow', 'employee_id', 'employee_remark', 'step_no', 'wrk_order')
         .annotate(qty=Sum('qty'))
         .order_by('flow')
     )
     normalized_rows = [
         {
             'Flow': row['flow'],
-            'RegPerSysID': row['employee_id'],
+            'RegPerSysID': row['employee_remark'] or row['employee_id'],
             'StepNo': row['step_no'],
             'WrkOrder': row['wrk_order'],
             'qty': row['qty'],
@@ -185,15 +185,16 @@ def get_batch_stepno_employees(target_date: date) -> dict:
         _facts(target_date)
         .exclude(flow='')
         .filter(flow__in=settings.ALLOWED_FLOWS)
-        .values('step_no', 'employee_id', 'flow')
+        .values('step_no', 'employee_id', 'employee_remark', 'flow')
         .annotate(qty=Sum('qty'))
         .order_by('step_no')
     )
     result = {}
     for row in rows:
         step_employees = result.setdefault(row['step_no'], {})
+        employee_id = row['employee_remark'] or row['employee_id']
         employee = step_employees.setdefault(
-            row['employee_id'],
+            employee_id,
             {'qty': 0, 'flows': []},
         )
         employee['qty'] += row['qty'] or 0

@@ -21,8 +21,11 @@ from iwork.models import Pytckreg3
 from iwork.queries import (
     get_batch_step_metadata,
     get_date_range,
+    get_employee_remark_map,
     get_initial_style_numbers,
+    read_model_consistent_snapshot,
 )
+from iwork.employee_id_mapping import normalize_source_employee_id
 from iwork.statistics import get_business_date
 
 
@@ -61,30 +64,39 @@ class RemoteHistorySource:
             经过聚合的生产事实、工序元数据和源数据计数。
         """
         start, end = get_date_range(target_date)
-        rows = list(
-            Pytckreg3.objects.using('iwork')
-            .filter(RegDate__gte=start, RegDate__lt=end)
-            .annotate(event_hour=ExtractHour('RegTime'))
-            .values(
-                'event_hour', 'Flow', 'StationID', 'RegPerSysID',
-                'WrkOrder', 'StepNo',
+        with read_model_consistent_snapshot():
+            rows = list(
+                Pytckreg3.objects.using('iwork')
+                .filter(RegDate__gte=start, RegDate__lt=end)
+                .annotate(event_hour=ExtractHour('RegTime'))
+                .values(
+                    'event_hour', 'Flow', 'StationID', 'RegPerSysID',
+                    'WrkOrder', 'StepNo',
+                )
+                .annotate(qty=Sum('Qty'), source_record_count=Count('*'))
+                .order_by()
             )
-            .annotate(qty=Sum('Qty'), source_record_count=Count('*'))
-            .order_by()
-        )
-        facts = [
-            {
+            employee_remark_map = get_employee_remark_map()
+
+        facts = []
+        for row in rows:
+            employee_id = row['RegPerSysID'] or 0
+            employee_remark = employee_remark_map.get(
+                normalize_source_employee_id(employee_id),
+            )
+            if not employee_remark:
+                continue
+            facts.append({
                 'event_hour': row['event_hour'] if row['event_hour'] is not None else -1,
                 'flow': row['Flow'] or '',
                 'station_id': row['StationID'] or '',
-                'employee_id': row['RegPerSysID'] or 0,
+                'employee_id': employee_id,
+                'employee_remark': employee_remark,
                 'wrk_order': row['WrkOrder'] or '',
                 'step_no': row['StepNo'] or 0,
                 'qty': row['qty'] or 0,
                 'source_record_count': row['source_record_count'] or 0,
-            }
-            for row in rows
-        ]
+            })
         metadata = self._load_metadata(facts)
         return HistorySnapshotPayload(
             facts=facts,
