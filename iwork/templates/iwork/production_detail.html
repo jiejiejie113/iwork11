@@ -29,7 +29,8 @@
             display:flex; align-items:center; width:100%; height:100%;
             transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, opacity .2s ease;
         }
-        .card-wrapper .card.grab { cursor:grab; touch-action:pan-y; }
+        /* 卡片手势由 Pointer 状态机接管：待长按阶段手动保持纵向滚动，避免浏览器滚动触发 pointercancel。 */
+        .card-wrapper .card.grab { cursor:grab; touch-action:none; }
         .card-wrapper .card.grab:active { cursor:grabbing; }
         /* 占位符 */
         .card-wrapper .card.placeholder { background:transparent; border:2px dashed #475569; opacity:.5; }
@@ -915,9 +916,9 @@
         </div>
 
         <!-- ===== 版面2：卡片视图（Pointer拖拽 + FLIP避让） ===== -->
-        <div v-if="detailType !== 'initial_style' && detailLayout === 'cards'" class="iwork-card-view flex-1 min-h-0 overflow-y-auto">
+        <div v-if="detailType !== 'initial_style' && detailLayout === 'cards'" ref="cardViewRef" class="iwork-card-view flex-1 min-h-0 overflow-y-auto">
         <TransitionGroup name="flip" tag="div" class="iwork-card-grid grid grid-cols-2 gap-3 pb-4">
-            <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" class="card-wrapper">
+            <div v-for="(emp, idx) in orderedEmployees" :key="emp.reg_per_sys_id" :data-employee-id="emp.reg_per_sys_id" class="card-wrapper">
                 <!-- 占位符：原位置显示虚线框 -->
                 <div v-if="activeDrag && dragIndex === idx" class="card placeholder"></div>
                 <!-- 真实卡片 -->
@@ -1001,6 +1002,9 @@ createApp({
         // ======
         // 员工卡片拖拽配置
         const CARD_LONG_PRESS_DELAY = 500;
+        const CARD_AUTO_SCROLL_EDGE = 72;
+        const CARD_AUTO_SCROLL_MIN_SPEED = 2;
+        const CARD_AUTO_SCROLL_MAX_SPEED = 14;
 
         const basePath = window.basePath;
         const appEl = document.getElementById('app');
@@ -1193,6 +1197,7 @@ createApp({
         const sortKey = ref('stepno');
         const sortAsc = ref(true);
         const detailTableScrollRef = ref(null);
+        const cardViewRef = ref(null);
         const detailTableIsDragging = ref(false);
         let detailTableEl = null;
         let detailTableStartX = 0;
@@ -2972,10 +2977,15 @@ createApp({
         let dragOriginLeft = 0, dragOriginTop = 0;
         let dragCardW = 0, dragCardH = 0;
         let dragCurrentIdx = -1;
+        let dragEmployeeId = null;
         let cardLongPressTimer = null;
         let pendingCardDrag = null;
         let dragPointerId = null;
         let dragPointerTarget = null;
+        let cardAutoScrollFrame = null;
+        let cardAutoScrollSpeed = 0;
+        let cardAutoScrollPointerX = 0;
+        let cardAutoScrollPointerY = 0;
 
         function clearCardLongPressTimer() {
             if (cardLongPressTimer !== null) {
@@ -2985,6 +2995,7 @@ createApp({
         }
 
         function removePendingCardDragListeners() {
+            window.removeEventListener('pointermove', onPendingCardPointerMove);
             window.removeEventListener('pointerup', cancelPendingCardDrag);
             window.removeEventListener('pointercancel', cancelPendingCardDrag);
         }
@@ -3000,6 +3011,24 @@ createApp({
             pendingCardDrag = null;
         }
 
+        function scrollCardViewBy(deltaY) {
+            const el = cardViewRef.value;
+            if (!el || !deltaY) return;
+            const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            el.scrollTop = Math.min(
+                maxScrollTop,
+                Math.max(0, el.scrollTop - deltaY),
+            );
+        }
+
+        function onPendingCardPointerMove(e) {
+            if (!pendingCardDrag || e.pointerId !== pendingCardDrag.pointerId) return;
+            const deltaY = e.clientY - pendingCardDrag.lastY;
+            scrollCardViewBy(deltaY);
+            pendingCardDrag.lastX = e.clientX;
+            pendingCardDrag.lastY = e.clientY;
+        }
+
         function activatePendingCardDrag() {
             const pending = pendingCardDrag;
             if (!pending) return;
@@ -3009,18 +3038,23 @@ createApp({
             if (!pending.element?.isConnected) return;
             startCardDrag(
                 pending.element,
-                pending.index,
+                pending.employeeId,
                 pending.pointerId,
-                pending.startX,
-                pending.startY,
+                pending.lastX,
+                pending.lastY,
             );
         }
 
-        function startCardDrag(el, idx, pointerId, startX, startY) {
-            if (activeDrag.value || !el) return;
+        function startCardDrag(el, employeeId, pointerId, startX, startY) {
+            if (activeDrag.value || !el || employeeId === null || employeeId === undefined) return;
+            const idx = orderedEmployees.value.findIndex(emp => (
+                String(emp.reg_per_sys_id) === String(employeeId)
+            ));
+            if (idx === -1) return;
             const rect = el.getBoundingClientRect();
             dragIndex.value = idx;
             dragCurrentIdx = idx;
+            dragEmployeeId = employeeId;
             dragPointerId = pointerId;
             dragPointerTarget = el;
             activeDrag.value = true;
@@ -3040,29 +3074,138 @@ createApp({
             } catch (error) {
                 // 指针已被浏览器取消时，窗口级事件监听仍负责清理状态。
             }
+            updateCardAutoScroll(startX, startY);
         }
 
         function onPointerDown(e, idx) {
             if (e.button !== undefined && e.button !== 0) return;
             if (e.isPrimary === false || activeDrag.value || pendingCardDrag) return;
             const el = e.currentTarget;
+            const employee = orderedEmployees.value[idx];
+            if (!employee) return;
+            const employeeId = employee.reg_per_sys_id;
             if (e.pointerType === 'touch') {
                 pendingCardDrag = {
                     element: el,
-                    index: idx,
+                    employeeId,
                     pointerId: e.pointerId,
-                    startX: e.clientX,
-                    startY: e.clientY,
+                    lastX: e.clientX,
+                    lastY: e.clientY,
                 };
                 cardLongPressTimer = window.setTimeout(
                     activatePendingCardDrag,
                     CARD_LONG_PRESS_DELAY,
                 );
+                window.addEventListener('pointermove', onPendingCardPointerMove);
                 window.addEventListener('pointerup', cancelPendingCardDrag);
                 window.addEventListener('pointercancel', cancelPendingCardDrag);
                 return;
             }
-            startCardDrag(el, idx, e.pointerId, e.clientX, e.clientY);
+            startCardDrag(el, employeeId, e.pointerId, e.clientX, e.clientY);
+        }
+
+        function getCardAutoScrollSpeed(clientY) {
+            const el = cardViewRef.value;
+            if (!el) return 0;
+            const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            if (maxScrollTop <= 0) return 0;
+            const rect = el.getBoundingClientRect();
+            if (clientY <= rect.top + CARD_AUTO_SCROLL_EDGE && el.scrollTop > 0) {
+                const intensity = Math.min(
+                    1,
+                    Math.max(0, (rect.top + CARD_AUTO_SCROLL_EDGE - clientY) / CARD_AUTO_SCROLL_EDGE),
+                );
+                return -Math.max(
+                    CARD_AUTO_SCROLL_MIN_SPEED,
+                    Math.round(CARD_AUTO_SCROLL_MAX_SPEED * intensity),
+                );
+            }
+            if (clientY >= rect.bottom - CARD_AUTO_SCROLL_EDGE && el.scrollTop < maxScrollTop) {
+                const intensity = Math.min(
+                    1,
+                    Math.max(0, (clientY - (rect.bottom - CARD_AUTO_SCROLL_EDGE)) / CARD_AUTO_SCROLL_EDGE),
+                );
+                return Math.max(
+                    CARD_AUTO_SCROLL_MIN_SPEED,
+                    Math.round(CARD_AUTO_SCROLL_MAX_SPEED * intensity),
+                );
+            }
+            return 0;
+        }
+
+        function stopCardAutoScroll() {
+            if (cardAutoScrollFrame !== null) {
+                window.cancelAnimationFrame(cardAutoScrollFrame);
+                cardAutoScrollFrame = null;
+            }
+            cardAutoScrollSpeed = 0;
+        }
+
+        function runCardAutoScroll() {
+            cardAutoScrollFrame = null;
+            if (!activeDrag.value || dragPointerId === null) {
+                cardAutoScrollSpeed = 0;
+                return;
+            }
+            const el = cardViewRef.value;
+            if (!el || !cardAutoScrollSpeed) return;
+            const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            const previousScrollTop = el.scrollTop;
+            el.scrollTop = Math.min(
+                maxScrollTop,
+                Math.max(0, previousScrollTop + cardAutoScrollSpeed),
+            );
+            if (el.scrollTop !== previousScrollTop) {
+                updateCardDropTarget(cardAutoScrollPointerX, cardAutoScrollPointerY);
+            }
+            cardAutoScrollSpeed = getCardAutoScrollSpeed(cardAutoScrollPointerY);
+            if (cardAutoScrollSpeed) {
+                cardAutoScrollFrame = window.requestAnimationFrame(runCardAutoScroll);
+            }
+        }
+
+        function updateCardAutoScroll(clientX, clientY) {
+            cardAutoScrollPointerX = clientX;
+            cardAutoScrollPointerY = clientY;
+            cardAutoScrollSpeed = getCardAutoScrollSpeed(clientY);
+            if (!cardAutoScrollSpeed) {
+                stopCardAutoScroll();
+                return;
+            }
+            if (cardAutoScrollFrame === null) {
+                cardAutoScrollFrame = window.requestAnimationFrame(runCardAutoScroll);
+            }
+        }
+
+        function updateCardDropTarget(clientX, clientY) {
+            const cardView = cardViewRef.value;
+            if (!cardView) return;
+            // 碰撞检测：隐藏拖拽卡片后获取下方元素。
+            const draggingEl = document.querySelector('.card.dragging');
+            if (draggingEl) draggingEl.style.display = 'none';
+            const elemBelow = document.elementFromPoint(clientX, clientY);
+            if (draggingEl) draggingEl.style.display = '';
+            const wrapper = elemBelow?.closest('.card-wrapper');
+            if (!wrapper || (cardView.contains && !cardView.contains(wrapper))) return;
+            const targetEmployeeId = wrapper.dataset?.employeeId;
+            const wrappers = [...cardView.querySelectorAll('.card-wrapper')];
+            const targetIdx = targetEmployeeId === undefined
+                ? wrappers.indexOf(wrapper)
+                : orderedEmployees.value.findIndex(emp => (
+                    String(emp.reg_per_sys_id) === String(targetEmployeeId)
+                ));
+            const arr = [...orderedEmployees.value.map(emp => emp.reg_per_sys_id)];
+            const sourceIdx = arr.findIndex(id => String(id) === String(dragEmployeeId));
+            if (
+                sourceIdx === -1
+                || targetIdx === -1
+                || targetIdx === sourceIdx
+            ) return;
+            const [moved] = arr.splice(sourceIdx, 1);
+            arr.splice(targetIdx, 0, moved);
+            cardOrder.value = arr;
+            dragIndex.value = targetIdx;
+            dragCurrentIdx = targetIdx;
         }
 
         function onPointerMove(e) {
@@ -3072,24 +3215,8 @@ createApp({
             const dy = e.clientY - dragStartY;
             dragStyle.left = `${dragOriginLeft + dx}px`;
             dragStyle.top = `${dragOriginTop + dy}px`;
-
-            // 碰撞检测：隐藏拖拽卡片后获取下方元素
-            const draggingEl = document.querySelector('.card.dragging');
-            if (draggingEl) draggingEl.style.display = 'none';
-            const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
-            if (draggingEl) draggingEl.style.display = '';
-            const wrapper = elemBelow?.closest('.card-wrapper');
-            if (!wrapper) return;
-            const wrappers = [...document.querySelectorAll('.card-wrapper')];
-            const targetIdx = wrappers.indexOf(wrapper);
-            if (targetIdx !== -1 && targetIdx !== dragCurrentIdx) {
-                const arr = [...orderedEmployees.value.map(e => e.reg_per_sys_id)];
-                const [moved] = arr.splice(dragCurrentIdx, 1);
-                arr.splice(targetIdx, 0, moved);
-                cardOrder.value = arr;
-                dragIndex.value = targetIdx;
-                dragCurrentIdx = targetIdx;
-            }
+            updateCardAutoScroll(e.clientX, e.clientY);
+            updateCardDropTarget(e.clientX, e.clientY);
         }
 
         function onPointerUp(e) {
@@ -3110,8 +3237,10 @@ createApp({
             activeDrag.value = false;
             dragIndex.value = -1;
             dragCurrentIdx = -1;
+            dragEmployeeId = null;
             dragPointerId = null;
             dragPointerTarget = null;
+            stopCardAutoScroll();
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
             window.removeEventListener('pointercancel', onPointerUp);
@@ -3823,6 +3952,7 @@ createApp({
             if (activeTagDrag.value) onTagPointerCancel();
             cancelPendingCardDrag();
             if (activeDrag.value) onPointerUp();
+            stopCardAutoScroll();
             disconnectProductionDetailSSE();
         });
 
@@ -3836,7 +3966,7 @@ createApp({
             onPointerDown,
             tableSearch, initialStyleFilter, initialStyleOptions, flowFilter, flowOptions,
             selectedStep, stepQuantityMode, collapsed,
-            detailTableScrollRef, detailTableIsDragging, onDetailTablePointerDown,
+            detailTableScrollRef, cardViewRef, detailTableIsDragging, onDetailTablePointerDown,
             detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
             visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
             draggingDetailColumnKey, detailColumnHoverKey,

@@ -6,7 +6,7 @@ import subprocess
 
 
 def test_card_drag_pointer_lifecycle_preserves_pending_scroll_and_supports_long_press():
-    """卡片应允许长按前移动，滚动取消时清理，长按后才交换。"""
+    """卡片应保留长按状态，支持滚动和边缘自动滚动，长按后才交换。"""
     node_executable = shutil.which("node")
     assert node_executable is not None
     result = subprocess.run(  # noqa: S603 - 仅执行PATH解析出的本机Node和仓库内固定测试脚本
@@ -19,7 +19,8 @@ def test_card_drag_pointer_lifecycle_preserves_pending_scroll_and_supports_long_
     assert result.returncode == 0, result.stderr or result.stdout
     assert json.loads(result.stdout) == {
         "long_press_after_move": True,
-        "pending_scroll_not_prevented": True,
+        "pending_scroll_preserves_state": True,
         "tap_does_not_activate": True,
-        "pointercancel_cleans_pending": True,
+        "edge_scroll_preserves_drag": True,
+        "pointercancel_cleans_interrupted_pending": True,
     }

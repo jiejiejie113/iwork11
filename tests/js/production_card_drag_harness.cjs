@@ -22,7 +22,9 @@ assert(pointerEnd > pointerStart, '未找到卡片拖拽代码结束位置');
 function createWindow() {
     const listeners = new Map();
     const timers = new Map();
+    const animationFrames = new Map();
     let nextTimerId = 1;
+    let nextAnimationFrameId = 1;
 
     return {
         addEventListener(type, listener) {
@@ -43,6 +45,15 @@ function createWindow() {
         clearTimeout(timerId) {
             timers.delete(timerId);
         },
+        requestAnimationFrame(callback) {
+            const frameId = nextAnimationFrameId;
+            nextAnimationFrameId += 1;
+            animationFrames.set(frameId, callback);
+            return frameId;
+        },
+        cancelAnimationFrame(frameId) {
+            animationFrames.delete(frameId);
+        },
         dispatch(type, event) {
             for (const listener of [...(listeners.get(type) || [])]) {
                 listener(event);
@@ -52,6 +63,11 @@ function createWindow() {
             const callbacks = [...timers.values()];
             timers.clear();
             for (const callback of callbacks) callback();
+        },
+        runAnimationFrames() {
+            const callbacks = [...animationFrames.values()];
+            animationFrames.clear();
+            for (const callback of callbacks) callback(16);
         },
     };
 }
@@ -92,9 +108,26 @@ function createHarness() {
     };
     const cardOrder = { value: [] };
     const savedOrders = [];
-    const targetWrapper = {
-        closest() {
-            return this;
+    const wrappers = [
+        { dataset: { employeeId: 'employee-a' } },
+        { dataset: { employeeId: 'employee-b' } },
+    ];
+    for (const wrapper of wrappers) {
+        wrapper.closest = () => wrapper;
+    }
+    const targetWrapper = wrappers[1];
+    const cardView = {
+        scrollTop: 100,
+        scrollHeight: 1000,
+        clientHeight: 400,
+        getBoundingClientRect() {
+            return { top: 0, bottom: 400 };
+        },
+        contains(node) {
+            return wrappers.includes(node);
+        },
+        querySelectorAll() {
+            return wrappers;
         },
     };
     const document = {
@@ -104,10 +137,8 @@ function createHarness() {
         elementFromPoint() {
             return targetWrapper;
         },
-        querySelectorAll() {
-            return [{}, targetWrapper];
-        },
     };
+    const cardViewRef = { value: cardView };
     const runCardCode = new Function(
         'activeDrag',
         'dragIndex',
@@ -117,8 +148,11 @@ function createHarness() {
         'saveCardOrder',
         'window',
         'document',
+        'cardViewRef',
         `const CARD_LONG_PRESS_DELAY = 500;
-         const CARD_DRAG_MOVE_THRESHOLD = 8;
+         const CARD_AUTO_SCROLL_EDGE = 72;
+         const CARD_AUTO_SCROLL_MIN_SPEED = 2;
+         const CARD_AUTO_SCROLL_MAX_SPEED = 14;
          ${template.slice(pointerStart, pointerEnd)}
          return { onPointerDown, onPointerUp, onPointerMove };`,
     );
@@ -131,6 +165,7 @@ function createHarness() {
         (order) => savedOrders.push([...order]),
         window,
         document,
+        cardViewRef,
     );
     return {
         ...handlers,
@@ -138,6 +173,7 @@ function createHarness() {
         activeDrag,
         dragIndex,
         cardOrder,
+        cardView,
         savedOrders,
     };
 }
@@ -163,7 +199,7 @@ let preventedBeforeLongPress = false;
 harness.window.dispatch('pointermove', {
     pointerId: 7,
     clientX: 112,
-    clientY: 101,
+    clientY: 140,
     cancelable: true,
     preventDefault() {
         preventedBeforeLongPress = true;
@@ -171,6 +207,7 @@ harness.window.dispatch('pointermove', {
 });
 assert.equal(harness.activeDrag.value, false, '长按前应继续等待');
 assert.equal(preventedBeforeLongPress, false, '长按前不得阻止浏览器默认滚动');
+assert.equal(harness.cardView.scrollTop, 60, '长按前移动应由卡片滚动容器承接纵向滚动');
 
 harness.window.runTimers();
 assert.equal(harness.activeDrag.value, true, '长按到时应进入卡片交换');
@@ -180,7 +217,7 @@ let preventedDuringDrag = false;
 harness.window.dispatch('pointermove', {
     pointerId: 7,
     clientX: 220,
-    clientY: 100,
+    clientY: 380,
     cancelable: true,
     preventDefault() {
         preventedDuringDrag = true;
@@ -192,6 +229,10 @@ assert.deepEqual(
     ['employee-b', 'employee-a'],
     '交换期间应更新卡片顺序',
 );
+const scrollTopBeforeEdgeFrame = harness.cardView.scrollTop;
+harness.window.runAnimationFrames();
+assert.equal(harness.activeDrag.value, true, '边缘滚动期间不得清理交换状态');
+assert(harness.cardView.scrollTop > scrollTopBeforeEdgeFrame, '接触下沿时应自动滚动卡片容器');
 
 harness.onPointerUp({ pointerId: 7 });
 assert.equal(harness.activeDrag.value, false, '抬起后应结束交换');
@@ -211,12 +252,31 @@ const cancelledCard = createCard();
 cancelledHarness.onPointerDown(touchEvent(cancelledCard, 8, 100, 100), 0);
 cancelledHarness.window.dispatch('pointercancel', { pointerId: 8 });
 cancelledHarness.window.runTimers();
-assert.equal(cancelledHarness.activeDrag.value, false, '滚动触发 pointercancel 后不得进入交换');
+assert.equal(cancelledHarness.activeDrag.value, false, '真实 pointercancel 中断后不得进入交换');
 assert.equal(cancelledCard.capturedPointerId, null, 'pointercancel 后不得捕获指针');
+
+const topEdgeHarness = createHarness();
+topEdgeHarness.cardView.scrollTop = 200;
+const topEdgeCard = createCard();
+topEdgeHarness.onPointerDown(touchEvent(topEdgeCard, 10, 100, 100), 0);
+topEdgeHarness.window.runTimers();
+topEdgeHarness.window.dispatch('pointermove', {
+    pointerId: 10,
+    clientX: 100,
+    clientY: 10,
+    cancelable: true,
+    preventDefault() {},
+});
+const scrollTopBeforeTopEdgeFrame = topEdgeHarness.cardView.scrollTop;
+topEdgeHarness.window.runAnimationFrames();
+assert.equal(topEdgeHarness.activeDrag.value, true, '上沿滚动期间不得清理交换状态');
+assert(topEdgeHarness.cardView.scrollTop < scrollTopBeforeTopEdgeFrame, '接触上沿时应自动滚动卡片容器');
+topEdgeHarness.onPointerUp({ pointerId: 10 });
 
 process.stdout.write(JSON.stringify({
     long_press_after_move: true,
-    pending_scroll_not_prevented: true,
+    pending_scroll_preserves_state: true,
     tap_does_not_activate: true,
-    pointercancel_cleans_pending: true,
+    edge_scroll_preserves_drag: true,
+    pointercancel_cleans_interrupted_pending: true,
 }));
