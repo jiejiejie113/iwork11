@@ -77,6 +77,13 @@ def test_pinned_vendor_assets_are_served_by_the_application(client):
         assert hashlib.sha256(body).hexdigest() == EXPECTED_VENDOR_SHA256[name]
 
 
+def test_frontend_runtime_assets_are_pinned_to_lf_line_endings():
+    """Windows 生产 checkout 不能改变静态脚本的字节内容。"""
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "static/iwork/runtime_guard.js text eol=lf" in attributes
+    assert "static/iwork/vendor/*.js text eol=lf" in attributes
+
+
 def test_kanban_page_renders_local_runtime_assets(client):
     """产量看板模板也必须能渲染固定的本地运行时地址。"""
     response = client.get("/kanban/")
