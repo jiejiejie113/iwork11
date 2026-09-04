@@ -113,7 +113,6 @@
                 {[ isPaused ? '恢复更新' : '暂停更新' ]}
             </button>
             <span v-if="currentView === 'realtime'" class="iwork-last-update text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
-        </div>
     </header>
 
     <div v-if="currentView === 'history' && historySnapshotMessage"
