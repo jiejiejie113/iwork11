@@ -567,6 +567,9 @@ def test_step_sidebar_can_switch_between_today_and_cumulative_quantity():
 def test_step_sidebar_supports_per_detail_drag_order_and_browser_storage():
     """左侧工序列表应使用独立手柄按详情排序并保存到浏览器。"""
     assert "const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';" in TEMPLATE
+    assert 'const stepOrderDragEnabled = ref(false);' in TEMPLATE
+    assert 'v-model="stepOrderDragEnabled"' in TEMPLATE
+    assert 'v-if="stepOrderDragEnabled"' in TEMPLATE
     assert 'ref="stepOrderListRef"' in TEMPLATE
     assert 'v-for="s in orderedStepSummary"' in TEMPLATE
     assert 'data-step-order-stepno' in TEMPLATE
@@ -591,6 +594,12 @@ def test_step_sidebar_keeps_scrolling_and_auto_scroll_during_handle_drag():
     assert 'function runStepOrderAutoScroll()' in TEMPLATE
     assert 'updateStepOrderDropTarget(' in TEMPLATE
     assert 'stopStepOrderDrag({ pointerId: stepOrderPointerId, type: \'pointercancel\' });' in TEMPLATE
+    assert 'delay: 300' in TEMPLATE
+    assert 'delayOnTouchOnly: true' in TEMPLATE
+    assert 'function onPendingStepOrderDragMove(event)' in TEMPLATE
+    assert 'function activatePendingStepOrderDrag()' in TEMPLATE
+    assert 'scrollStepOrderListBy(deltaY);' in TEMPLATE
+    assert 'event.cancelable' in TEMPLATE
 
 
 def test_step_order_is_used_by_detail_rows_without_changing_card_drag_state():

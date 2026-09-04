@@ -750,11 +750,24 @@
             <!-- 左侧边栏：工序列表 -->
             <div class="w-[220px] max-lg:w-full max-lg:h-[220px] flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
                 <div class="px-3 py-2 border-b border-slate-700 flex-shrink-0">
-                    <button @click="selectedStep = null"
-                            :class="selectedStep === null ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors">
-                        全部工序
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button @click="selectedStep = null"
+                                :class="selectedStep === null ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'"
+                                class="flex-1 min-w-0 text-left px-3 py-2 rounded text-sm font-medium transition-colors">
+                            全部工序
+                        </button>
+                        <label class="flex flex-shrink-0 items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none"
+                               title="开启后显示工序拖拽手柄">
+                            <input type="checkbox"
+                                   role="switch"
+                                   v-model="stepOrderDragEnabled"
+                                   :aria-checked="stepOrderDragEnabled"
+                                   aria-label="启用工序拖拽手柄"
+                                   @change="onStepOrderDragEnabledChange"
+                                   class="accent-blue-500">
+                            <span>拖拽手柄</span>
+                        </label>
+                    </div>
                 </div>
                 <div ref="stepOrderListRef" class="overflow-y-auto flex-1 hide-scrollbar step-order-list">
                     <transition-group name="step-order" tag="div">
@@ -776,7 +789,8 @@
                                     <span class="text-slate-500">{[ s.workorder_count ]}单</span>
                                 </span>
                             </button>
-                            <button type="button"
+                            <button v-if="stepOrderDragEnabled"
+                                    type="button"
                                     class="step-order-drag-handle flex-shrink-0 px-2 py-3 text-slate-500 hover:text-white hover:bg-slate-700/70"
                                     title="拖拽调整工序顺序"
                                     :aria-label="'拖拽调整工序' + s.stepno + '顺序'"
@@ -1059,6 +1073,10 @@ createApp({
         const CARD_AUTO_SCROLL_EDGE = 72;
         const CARD_AUTO_SCROLL_MIN_SPEED = 2;
         const CARD_AUTO_SCROLL_MAX_SPEED = 14;
+        const STEP_ORDER_DRAG_OPTIONS = {
+            delay: 300,
+            delayOnTouchOnly: true,
+        };
 
         const basePath = window.basePath;
         const appEl = document.getElementById('app');
@@ -1073,6 +1091,7 @@ createApp({
         const detailLayout = ref('table');   // 'table' | 'cards'
         const cardOrder = ref([]);           // 用户自定义工人排序
         const stepOrder = ref([]);            // 当前详情的用户自定义工序排序
+        const stepOrderDragEnabled = ref(false);  // 是否显示并启用工序拖拽手柄
         const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';
         const dragIndex = ref(-1);           // 当前拖拽中的索引
         const activeDrag = ref(false);       // 是否正在拖拽
@@ -2580,9 +2599,12 @@ createApp({
 
         let stepOrderPointerId = null;
         let stepOrderPointerTarget = null;
+        let stepOrderLongPressTimer = null;
+        let pendingStepOrderDrag = null;
         let stepOrderDragType = null;
         let stepOrderDragKey = null;
         let stepOrderDragOriginal = [];
+        let stepOrderDragChanged = false;
         let stepOrderAutoScrollFrame = null;
         let stepOrderAutoScrollSpeed = 0;
         let stepOrderAutoScrollPointerX = 0;
@@ -2695,7 +2717,77 @@ createApp({
             }
             const rect = target.getBoundingClientRect();
             stepOrderHoverStepNo.value = targetKey;
-            moveVisibleStep(sourceKey, targetKey, clientY > rect.top + rect.height / 2);
+            if (moveVisibleStep(sourceKey, targetKey, clientY > rect.top + rect.height / 2)) {
+                stepOrderDragChanged = true;
+            }
+        }
+
+        function clearStepOrderLongPressTimer() {
+            if (stepOrderLongPressTimer !== null) {
+                window.clearTimeout(stepOrderLongPressTimer);
+                stepOrderLongPressTimer = null;
+            }
+        }
+
+        function removePendingStepOrderDragListeners() {
+            window.removeEventListener('pointermove', onPendingStepOrderDragMove);
+            window.removeEventListener('pointerup', cancelPendingStepOrderDrag);
+            window.removeEventListener('pointercancel', cancelPendingStepOrderDrag);
+        }
+
+        function cancelPendingStepOrderDrag(event) {
+            if (
+                pendingStepOrderDrag
+                && event?.pointerId !== undefined
+                && event.pointerId !== pendingStepOrderDrag.pointerId
+            ) return;
+            clearStepOrderLongPressTimer();
+            removePendingStepOrderDragListeners();
+            pendingStepOrderDrag = null;
+        }
+
+        function scrollStepOrderListBy(deltaY) {
+            const list = stepOrderListRef.value;
+            if (!list || !deltaY) return;
+            const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+            list.scrollTop = Math.min(
+                maxScrollTop,
+                Math.max(0, list.scrollTop - deltaY),
+            );
+        }
+
+        function onPendingStepOrderDragMove(event) {
+            if (!pendingStepOrderDrag || event.pointerId !== pendingStepOrderDrag.pointerId) return;
+            const deltaY = event.clientY - pendingStepOrderDrag.lastY;
+            scrollStepOrderListBy(deltaY);
+            pendingStepOrderDrag.lastX = event.clientX;
+            pendingStepOrderDrag.lastY = event.clientY;
+        }
+
+        function activatePendingStepOrderDrag() {
+            const pending = pendingStepOrderDrag;
+            if (!pending) return;
+            pendingStepOrderDrag = null;
+            clearStepOrderLongPressTimer();
+            removePendingStepOrderDragListeners();
+            if (
+                !stepOrderDragEnabled.value
+                || pending.detailType !== detailType.value
+                || pending.detailKey !== detailKey.value
+                || !pending.element?.isConnected
+            ) return;
+            beginStepOrderDrag(
+                {
+                    button: 0,
+                    pointerId: pending.pointerId,
+                    pointerType: 'touch',
+                    clientX: pending.lastX,
+                    clientY: pending.lastY,
+                    currentTarget: pending.element,
+                    cancelable: false,
+                },
+                pending.stepno,
+            );
         }
 
         function stopStepOrderDrag(event) {
@@ -2708,6 +2800,8 @@ createApp({
             const cancelled = event?.type === 'pointercancel';
             const savedType = stepOrderDragType;
             const savedKey = stepOrderDragKey;
+            const changed = stepOrderDragChanged
+                && stepOrder.value.join(',') !== stepOrderDragOriginal.join(',');
             if (cancelled) stepOrder.value = [...stepOrderDragOriginal];
             if (stepOrderPointerTarget && stepOrderPointerId !== null) {
                 try {
@@ -2727,7 +2821,7 @@ createApp({
             window.removeEventListener('pointermove', onStepOrderDragMove);
             window.removeEventListener('pointerup', stopStepOrderDrag);
             window.removeEventListener('pointercancel', stopStepOrderDrag);
-            if (!cancelled) saveStepOrder(stepOrder.value, savedType, savedKey);
+            if (!cancelled && changed) saveStepOrder(stepOrder.value, savedType, savedKey);
         }
 
         function onStepOrderDragMove(event) {
@@ -2740,9 +2834,10 @@ createApp({
             updateStepOrderDropTarget(event.clientX, event.clientY);
         }
 
-        function startStepOrderDrag(event, stepno) {
+        function beginStepOrderDrag(event, stepno) {
             if (
                 (event.button !== undefined && event.button !== 0)
+                || !stepOrderDragEnabled.value
                 || draggingStepOrderNo.value !== null
             ) return;
             const sourceKey = stepOrderKey(stepno);
@@ -2758,12 +2853,61 @@ createApp({
             stepOrderPointerTarget = event.currentTarget;
             draggingStepOrderNo.value = sourceKey;
             stepOrderHoverStepNo.value = null;
+            stepOrderDragChanged = false;
             stepOrderPointerTarget?.setPointerCapture?.(stepOrderPointerId);
             window.addEventListener('pointermove', onStepOrderDragMove, { passive: false });
             window.addEventListener('pointerup', stopStepOrderDrag);
             window.addEventListener('pointercancel', stopStepOrderDrag);
             if (event.cancelable) event.preventDefault();
             updateStepOrderAutoScroll(event.clientX, event.clientY);
+        }
+
+        function startStepOrderDrag(event, stepno) {
+            if (
+                (event.button !== undefined && event.button !== 0)
+                || event.isPrimary === false
+                || !stepOrderDragEnabled.value
+                || draggingStepOrderNo.value !== null
+                || pendingStepOrderDrag !== null
+            ) return;
+            const sourceKey = stepOrderKey(stepno);
+            if (sourceKey === null) return;
+            const exists = orderedStepSummary.value.some(
+                step => stepOrderKey(step.stepno) === sourceKey,
+            );
+            if (!exists) return;
+
+            const shouldDelay = STEP_ORDER_DRAG_OPTIONS.delay > 0
+                && (!STEP_ORDER_DRAG_OPTIONS.delayOnTouchOnly || event.pointerType === 'touch');
+            if (!shouldDelay) {
+                beginStepOrderDrag(event, sourceKey);
+                return;
+            }
+
+            pendingStepOrderDrag = {
+                element: event.currentTarget,
+                stepno: sourceKey,
+                pointerId: event.pointerId,
+                detailType: detailType.value,
+                detailKey: detailKey.value,
+                lastX: event.clientX,
+                lastY: event.clientY,
+            };
+            stepOrderLongPressTimer = window.setTimeout(
+                activatePendingStepOrderDrag,
+                STEP_ORDER_DRAG_OPTIONS.delay,
+            );
+            window.addEventListener('pointermove', onPendingStepOrderDragMove);
+            window.addEventListener('pointerup', cancelPendingStepOrderDrag);
+            window.addEventListener('pointercancel', cancelPendingStepOrderDrag);
+        }
+
+        function onStepOrderDragEnabledChange() {
+            if (stepOrderDragEnabled.value) return;
+            cancelPendingStepOrderDrag();
+            if (draggingStepOrderNo.value !== null) {
+                stopStepOrderDrag({ pointerId: stepOrderPointerId, type: 'pointercancel' });
+            }
         }
 
         // 工序热力图范围（红=瓶颈低值，绿=高值）
@@ -4341,6 +4485,7 @@ createApp({
             stopDetailTableDrag();
             stopDetailColumnDrag();
             stopDetailColumnResize();
+            cancelPendingStepOrderDrag();
             if (draggingStepOrderNo.value !== null) {
                 stopStepOrderDrag({ pointerId: stepOrderPointerId, type: 'pointercancel' });
             }
@@ -4365,8 +4510,8 @@ createApp({
             tableSearch, initialStyleFilter, initialStyleOptions, flowFilter, flowOptions,
             selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, cardViewRef, detailTableIsDragging, onDetailTablePointerDown,
-            stepOrderListRef, draggingStepOrderNo, stepOrderHoverStepNo, orderedStepSummary,
-            startStepOrderDrag,
+            stepOrderListRef, stepOrderDragEnabled, draggingStepOrderNo, stepOrderHoverStepNo,
+            orderedStepSummary, startStepOrderDrag, onStepOrderDragEnabledChange,
             detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
             visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
             draggingDetailColumnKey, detailColumnHoverKey,

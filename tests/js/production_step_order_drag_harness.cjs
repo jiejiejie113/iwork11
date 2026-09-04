@@ -21,7 +21,9 @@ assert(codeEnd > codeStart, '未找到工序顺序代码结束位置');
 
 function createWindow() {
     const listeners = new Map();
+    const timers = new Map();
     const animationFrames = new Map();
+    let nextTimerId = 1;
     let nextAnimationFrameId = 1;
 
     return {
@@ -33,6 +35,15 @@ function createWindow() {
         removeEventListener(type, listener) {
             const callbacks = listeners.get(type) || [];
             listeners.set(type, callbacks.filter((callback) => callback !== listener));
+        },
+        setTimeout(callback) {
+            const timerId = nextTimerId;
+            nextTimerId += 1;
+            timers.set(timerId, callback);
+            return timerId;
+        },
+        clearTimeout(timerId) {
+            timers.delete(timerId);
         },
         requestAnimationFrame(callback) {
             const frameId = nextAnimationFrameId;
@@ -47,6 +58,11 @@ function createWindow() {
             for (const listener of [...(listeners.get(type) || [])]) {
                 listener(event);
             }
+        },
+        runTimers() {
+            const callbacks = [...timers.values()];
+            timers.clear();
+            for (const callback of callbacks) callback();
         },
         runAnimationFrames() {
             const callbacks = [...animationFrames.values()];
@@ -85,6 +101,7 @@ function createRow(stepno, top) {
 
 function createHandle() {
     return {
+        isConnected: true,
         capturedPointerId: null,
         releasedPointerId: null,
         setPointerCapture(pointerId) {
@@ -96,13 +113,14 @@ function createHandle() {
     };
 }
 
-function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 10], scrollable = false, storage = null } = {}) {
+function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 10], scrollable = false, storage = null, stepOrderDragEnabled = true } = {}) {
     const window = createWindow();
     const localStorage = storage || createStorage();
     const detailTypeRef = { value: detailType };
     const detailKeyRef = { value: detailKey };
     const stepSummary = { value: steps.map((stepno) => ({ stepno })) };
     const stepOrderListRef = { value: null };
+    const stepOrderDragEnabledRef = { value: stepOrderDragEnabled };
     const draggingStepOrderNo = { value: null };
     const stepOrderHoverStepNo = { value: null };
     const rows = steps.map((stepno, index) => createRow(stepno, index * 40));
@@ -144,13 +162,15 @@ function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 
         'naturalCompare',
         'stepSummary',
         'detailType',
-        'detailKey',
-        'stepOrderListRef',
-        'draggingStepOrderNo',
-        'stepOrderHoverStepNo',
-        `const stepOrder = ref([]);
-         const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';
-         ${template.slice(codeStart, codeEnd)}
+         'detailKey',
+         'stepOrderListRef',
+         'stepOrderDragEnabled',
+         'draggingStepOrderNo',
+         'stepOrderHoverStepNo',
+         `const stepOrder = ref([]);
+          const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';
+          const STEP_ORDER_DRAG_OPTIONS = { delay: 300, delayOnTouchOnly: true };
+          ${template.slice(codeStart, codeEnd)}
          return {
              stepOrder,
              orderStepsByPreference,
@@ -161,6 +181,8 @@ function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 
              stepOrderStorageKey,
              draggingStepOrderNo,
              stepOrderHoverStepNo,
+             stepOrderDragEnabled,
+             onStepOrderDragEnabledChange,
          };`,
     );
     const handlers = runCode(
@@ -174,6 +196,7 @@ function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 
         detailTypeRef,
         detailKeyRef,
         stepOrderListRef,
+        stepOrderDragEnabledRef,
         draggingStepOrderNo,
         stepOrderHoverStepNo,
     );
@@ -193,9 +216,11 @@ function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 
     };
 }
 
-function pointerEvent(pointerId, clientY, type = undefined) {
+function pointerEvent(pointerId, clientY, type = undefined, pointerType = 'mouse') {
     return {
         button: 0,
+        isPrimary: true,
+        pointerType,
         pointerId,
         clientX: 20,
         clientY,
@@ -237,6 +262,72 @@ assert.deepEqual(isolatedHarness.stepOrder.value, [], '不同详情不得读取�
 isolatedHarness.detailKey.value = 'SO1';
 isolatedHarness.loadStepOrder();
 assert.deepEqual(isolatedHarness.stepOrder.value, ['10', '1'], '切换回原详情时应读取原顺序');
+
+const disabledHarness = createHarness({ stepOrderDragEnabled: false });
+const disabledEvent = pointerEvent(6, 20);
+disabledHarness.startStepOrderDrag(disabledEvent, 1);
+disabledHarness.window.runTimers();
+assert.equal(disabledHarness.draggingStepOrderNo.value, null, '关闭开关时不得进入工序拖拽');
+assert.equal(disabledHarness.localStorage.read(disabledHarness.key()), undefined, '关闭开关时不得保存工序顺序');
+
+const touchHarness = createHarness({ scrollable: true });
+touchHarness.setTarget(touchHarness.rows[2]);
+const touchEvent = pointerEvent(11, 20, undefined, 'touch');
+touchHarness.startStepOrderDrag(touchEvent, 1);
+assert.equal(touchHarness.draggingStepOrderNo.value, null, '触摸按下后应等待长按');
+let preventedBeforeTouchLongPress = false;
+touchHarness.window.dispatch('pointermove', {
+    pointerId: 11,
+    clientX: 20,
+    clientY: 80,
+    cancelable: true,
+    preventDefault() {
+        preventedBeforeTouchLongPress = true;
+    },
+});
+assert.equal(touchHarness.draggingStepOrderNo.value, null, '长按前移动不得直接进入拖拽');
+assert.equal(preventedBeforeTouchLongPress, false, '长按前移动不得阻止列表滚动');
+assert.equal(touchHarness.list.scrollTop, 40, '长按前移动应继续滚动工序列表');
+touchHarness.window.runTimers();
+assert.equal(touchHarness.draggingStepOrderNo.value, '1', '触摸按住300毫秒后应进入工序拖拽');
+assert.equal(touchEvent.currentTarget.capturedPointerId, 11, '长按激活后才捕获触摸指针');
+let preventedDuringTouchDrag = false;
+touchHarness.window.dispatch('pointermove', {
+    pointerId: 11,
+    clientX: 20,
+    clientY: 118,
+    cancelable: true,
+    preventDefault() {
+        preventedDuringTouchDrag = true;
+    },
+});
+assert.equal(preventedDuringTouchDrag, true, '触摸拖拽激活后应接管指针移动');
+assert.deepEqual(touchHarness.stepOrder.value, ['2', '10', '1'], '触摸长按后应更新工序顺序');
+touchHarness.window.dispatch('pointerup', { pointerId: 11, type: 'pointerup' });
+
+const tapHarness = createHarness();
+const tapEvent = pointerEvent(12, 20, undefined, 'touch');
+tapHarness.startStepOrderDrag(tapEvent, 1);
+tapHarness.window.dispatch('pointerup', { pointerId: 12, type: 'pointerup' });
+tapHarness.window.runTimers();
+assert.equal(tapHarness.draggingStepOrderNo.value, null, '触摸点击不得进入工序拖拽');
+assert.equal(tapEvent.currentTarget.capturedPointerId, null, '触摸点击不得捕获指针');
+assert.equal(tapHarness.localStorage.read(tapHarness.key()), undefined, '触摸点击不得保存工序顺序');
+
+const mouseTapHarness = createHarness();
+const mouseTapEvent = pointerEvent(15, 20);
+mouseTapHarness.startStepOrderDrag(mouseTapEvent, 1);
+assert.equal(mouseTapHarness.draggingStepOrderNo.value, '1', '鼠标按下应立即进入拖拽');
+mouseTapHarness.window.dispatch('pointerup', { pointerId: 15, type: 'pointerup' });
+assert.equal(mouseTapHarness.localStorage.read(mouseTapHarness.key()), undefined, '鼠标点击未交换顺序时不得保存');
+
+const pendingCancelledHarness = createHarness();
+const pendingCancelledEvent = pointerEvent(13, 20, undefined, 'touch');
+pendingCancelledHarness.startStepOrderDrag(pendingCancelledEvent, 1);
+pendingCancelledHarness.window.dispatch('pointercancel', { pointerId: 13, type: 'pointercancel' });
+pendingCancelledHarness.window.runTimers();
+assert.equal(pendingCancelledHarness.draggingStepOrderNo.value, null, '待长按阶段取消指针后不得进入拖拽');
+assert.equal(pendingCancelledEvent.currentTarget.capturedPointerId, null, '待长按阶段取消后不得捕获指针');
 
 const dragHarness = createHarness({ scrollable: false });
 const dragHandle = pointerEvent(7, 20);
@@ -309,12 +400,35 @@ assert(autoScrollHarness.list.scrollTop > beforeAutoScroll, '触及列表下沿�
 assert.equal(autoScrollHarness.draggingStepOrderNo.value, '1', '自动滚动期间不得清理拖拽状态');
 autoScrollHarness.window.dispatch('pointerup', { pointerId: 10, type: 'pointerup' });
 
+const toggleHarness = createHarness({ scrollable: false });
+toggleHarness.setTarget(toggleHarness.rows[2]);
+const toggleEvent = pointerEvent(14, 20);
+toggleHarness.startStepOrderDrag(toggleEvent, 1);
+toggleHarness.window.dispatch('pointermove', {
+    pointerId: 14,
+    clientX: 20,
+    clientY: 118,
+    cancelable: true,
+    preventDefault() {},
+});
+toggleHarness.stepOrderDragEnabled.value = false;
+toggleHarness.onStepOrderDragEnabledChange();
+assert.equal(toggleHarness.draggingStepOrderNo.value, null, '关闭开关时应取消正在进行的拖拽');
+assert.deepEqual(toggleHarness.stepOrder.value, [], '关闭开关取消拖拽时应恢复原始顺序');
+assert.equal(toggleHarness.localStorage.read(toggleHarness.key()), undefined, '取消拖拽时不得保存顺序');
+
 process.stdout.write(JSON.stringify({
     default_numeric_order: true,
     cache_normalization: true,
     detail_isolation: true,
+    handle_hidden_when_disabled: true,
+    touch_delay_and_pending_scroll: true,
+    touch_tap_does_not_activate: true,
+    mouse_tap_does_not_save: true,
+    pending_pointercancel_cleans_state: true,
     handle_drag_saves_order: true,
     filtered_hidden_steps_preserved: true,
     pointercancel_restores_state: true,
     edge_scroll_preserves_drag: true,
+    toggle_cancels_active_drag: true,
 }));
