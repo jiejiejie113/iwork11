@@ -596,8 +596,14 @@ def test_step_sidebar_keeps_scrolling_and_auto_scroll_during_handle_drag():
 def test_step_order_is_used_by_detail_rows_without_changing_card_drag_state():
     """右侧员工明细应读取工序顺序，员工卡片拖拽状态仍保持独立。"""
     assert 'const orderedStepSummary = computed(() => orderStepsByPreference(stepSummary.value));' in TEMPLATE
+    assert 'function orderedEmployeeSteps(steps)' in TEMPLATE
+    assert TEMPLATE.count('v-for="(s, i) in orderedEmployeeSteps(emp.steps)"') == 2
+    assert 'const orderedStepnos = orderStepsByPreference(' in TEMPLATE
+    assert '_collapsed_stepnos: orderedStepnos' in TEMPLATE
     assert 'const aStepRank = getStepOrderRank(a.stepno);' in TEMPLATE
     assert 'const bStepRank = getStepOrderRank(b.stepno);' in TEMPLATE
+    assert 'const aRank = aFirst ? getStepOrderRank(aFirst.stepno) : undefined;' in TEMPLATE
+    assert 'const bRank = bFirst ? getStepOrderRank(bFirst.stepno) : undefined;' in TEMPLATE
     assert 'worker-card-order:${detailType.value}:${detailKey.value}' in TEMPLATE
 
 

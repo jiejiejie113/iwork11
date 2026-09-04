@@ -153,6 +153,7 @@ function createHarness({ detailType = 'flow', detailKey = 'SO1', steps = [1, 2, 
          ${template.slice(codeStart, codeEnd)}
          return {
              stepOrder,
+             orderStepsByPreference,
              orderedStepSummary,
              loadStepOrder,
              startStepOrderDrag,
@@ -221,6 +222,13 @@ assert.deepEqual(
     defaultHarness.orderedStepSummary.value.map((step) => step.stepno),
     [10, 1, 2],
     '有效缓存应优先于默认工序顺序',
+);
+assert.deepEqual(
+    defaultHarness.orderStepsByPreference(
+        [{ stepno: 1 }, { stepno: 2 }, { stepno: 10 }],
+    ).map((step) => step.stepno),
+    [10, 1, 2],
+    '卡片和收起摘要应使用同一工序顺序',
 );
 
 const isolatedHarness = createHarness({ detailKey: 'SO2', storage: defaultHarness.localStorage });

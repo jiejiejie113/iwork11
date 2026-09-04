@@ -983,7 +983,7 @@
                     @pointerdown="onPointerDown($event, idx)">
                     <template v-if="idx % 2 === 0">
                         <div class="flex-1 text-left mr-3">
-                            <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
+                            <div v-for="(s, i) in orderedEmployeeSteps(emp.steps)" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
                                 <span v-if="detailType === 'initial_style'" class="text-blue-300 ml-1">{[ s.flow || '--' ]}</span>
                                 <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
@@ -1015,7 +1015,7 @@
                             {[ emp.reg_per_sys_id ]}
                         </div>
                         <div class="flex-1 text-left ml-3">
-                            <div v-for="(s, i) in emp.steps" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
+                            <div v-for="(s, i) in orderedEmployeeSteps(emp.steps)" :key="s.stepno + '-' + i" class="text-xs mb-0.5">
                                 <span class="text-slate-500">工序{[ s.stepno ]}</span>
                                 <span v-if="detailType === 'initial_style'" class="text-blue-300 ml-1">{[ s.flow || '--' ]}</span>
                                 <span class="text-cyan-400 ml-1">{[ s.initial_style_no || '未设置初版' ]}</span>
@@ -2247,8 +2247,10 @@ createApp({
                 emps.sort((a, b) => {
                     const aFirst = (a.steps || []).find(s => s.qty > 0);
                     const bFirst = (b.steps || []).find(s => s.qty > 0);
-                    const aIdx = aFirst ? (stepnoOrder[aFirst.stepno] ?? 999) : 999;
-                    const bIdx = bFirst ? (stepnoOrder[bFirst.stepno] ?? 999) : 999;
+                    const aRank = aFirst ? getStepOrderRank(aFirst.stepno) : undefined;
+                    const bRank = bFirst ? getStepOrderRank(bFirst.stepno) : undefined;
+                    const aIdx = aRank ?? (aFirst ? (stepnoOrder[aFirst.stepno] ?? 999) : 999);
+                    const bIdx = bRank ?? (bFirst ? (stepnoOrder[bFirst.stepno] ?? 999) : 999);
                     if (aIdx !== bIdx) return aIdx - bIdx;
                     return (bFirst ? bFirst.qty : 0) - (aFirst ? aFirst.qty : 0);
                 });
@@ -2273,7 +2275,9 @@ createApp({
             employees.value.forEach(emp => {
                 (emp.steps || []).forEach(s => stepnoSet.add(s.stepno));
             });
-            return [...stepnoSet].sort((a, b) => a - b);
+            return orderStepsByPreference(
+                [...stepnoSet].map(stepno => ({ stepno })),
+            ).map(step => step.stepno);
         });
 
         function getStepQty(emp, stepno) {
@@ -2516,6 +2520,10 @@ createApp({
                 }
                 return naturalCompare(String(left.stepno), String(right.stepno));
             });
+        }
+
+        function orderedEmployeeSteps(steps) {
+            return orderStepsByPreference(steps || []);
         }
 
         const orderedStepSummary = computed(() => orderStepsByPreference(stepSummary.value));
@@ -2933,6 +2941,9 @@ createApp({
                 }
             });
             const emps = [...map.values()].map(summary => {
+                const orderedStepnos = orderStepsByPreference(
+                    [...summary.stepnos].map(stepno => ({ stepno })),
+                ).map(step => step.stepno);
                 const targetGroups = [...summary.targetGroups.values()].filter(
                     group => group.target > 0,
                 );
@@ -2955,12 +2966,7 @@ createApp({
                     ...summary.employee,
                     _collapsed_flows: [...summary.flows].sort(naturalCompare),
                     _collapsed_initial_styles: [...summary.initialStyles].sort(naturalCompare),
-                    _collapsed_stepnos: [...summary.stepnos].sort((a, b) => {
-                        const numericDifference = Number(a) - Number(b);
-                        return Number.isNaN(numericDifference)
-                            ? naturalCompare(String(a), String(b))
-                            : numericDifference;
-                    }),
+                    _collapsed_stepnos: orderedStepnos,
                     _displayed_target: displayedTarget,
                     _displayed_target_rate: displayedTarget > 0 && targetRateComplete
                         ? displayedActual / displayedTarget * 100
@@ -4356,6 +4362,7 @@ createApp({
             currentView, groupMode, detailType, detailKey, detailLayout,
             cardOrder, dragIndex, activeDrag, dragStyle, orderedEmployees, getStatusColor,
             onPointerDown,
+            orderedEmployeeSteps,
             tableSearch, initialStyleFilter, initialStyleOptions, flowFilter, flowOptions,
             selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, cardViewRef, detailTableIsDragging, onDetailTablePointerDown,
