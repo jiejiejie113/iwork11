@@ -205,6 +205,61 @@
             -webkit-user-select: none;
         }
         .step-order-drag-handle:active { cursor: grabbing; }
+        /* 工序拖拽开关：方形盒边风格，外层与“全部工序”按钮保持同一行高 */
+        .step-order-drag-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: .375rem;
+            height: 36px;
+            flex-shrink: 0;
+            color: #94a3b8;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .step-order-drag-toggle input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            white-space: nowrap;
+        }
+        .step-order-drag-toggle-track {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            box-sizing: border-box;
+            width: 56px;
+            height: 30px;
+            padding: 2px;
+            border: 1px solid #475569;
+            border-radius: 0;
+            background: #172033;
+            transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+        }
+        .step-order-drag-toggle-thumb {
+            display: block;
+            width: 24px;
+            height: 24px;
+            border-radius: 2px;
+            background: #64748b;
+            transition: background-color .16s ease, transform .16s ease;
+        }
+        .step-order-drag-toggle input:checked + .step-order-drag-toggle-track {
+            justify-content: flex-end;
+            border-color: #22d3ee;
+            background: #164e63;
+        }
+        .step-order-drag-toggle input:checked + .step-order-drag-toggle-track .step-order-drag-toggle-thumb {
+            background: #67e8f9;
+        }
+        .step-order-drag-toggle input:focus-visible + .step-order-drag-toggle-track {
+            outline: 2px solid #60a5fa;
+            outline-offset: 3px;
+        }
         .step-order-move { transition: transform 0.24s cubic-bezier(.2,.8,.2,1); }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
         .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
@@ -763,16 +818,18 @@
                                 class="flex-1 min-w-0 text-left px-3 py-2 rounded text-sm font-medium transition-colors">
                             全部工序
                         </button>
-                        <label class="flex flex-shrink-0 items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none"
+                        <label class="step-order-drag-toggle"
                                title="开启后显示工序拖拽手柄">
                             <input type="checkbox"
                                    role="switch"
                                    v-model="stepOrderDragEnabled"
                                    :aria-checked="stepOrderDragEnabled"
                                    aria-label="启用工序拖拽手柄"
-                                   @change="onStepOrderDragEnabledChange"
-                                   class="accent-blue-500">
-                            <span>拖拽手柄</span>
+                                   @change="onStepOrderDragEnabledChange">
+                            <span class="step-order-drag-toggle-track" aria-hidden="true">
+                                <span class="step-order-drag-toggle-thumb"></span>
+                            </span>
+                            <span class="text-xs whitespace-nowrap">拖拽手柄</span>
                         </label>
                     </div>
                 </div>

@@ -602,6 +602,20 @@ def test_step_sidebar_keeps_scrolling_and_auto_scroll_during_handle_drag():
     assert 'event.cancelable' in TEMPLATE
 
 
+def test_step_drag_toggle_uses_square_theme_and_matches_all_steps_row_height():
+    """工序拖拽开关应使用方形主题样式，并与“全部工序”按钮保持同一行高。"""
+    assert '.step-order-drag-toggle {' in TEMPLATE
+    assert 'height: 36px;' in TEMPLATE
+    assert '.step-order-drag-toggle-track {' in TEMPLATE
+    assert 'width: 56px;' in TEMPLATE
+    assert 'height: 30px;' in TEMPLATE
+    assert 'border-radius: 0;' in TEMPLATE
+    assert 'background: #164e63;' in TEMPLATE
+    assert 'class="step-order-drag-toggle"' in TEMPLATE
+    assert 'class="step-order-drag-toggle-track"' in TEMPLATE
+    assert 'class="accent-blue-500"' not in TEMPLATE
+
+
 def test_step_order_is_used_by_detail_rows_without_changing_card_drag_state():
     """右侧员工明细应读取工序顺序，员工卡片拖拽状态仍保持独立。"""
     assert 'const orderedStepSummary = computed(() => orderStepsByPreference(stepSummary.value));' in TEMPLATE
