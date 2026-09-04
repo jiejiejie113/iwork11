@@ -102,5 +102,6 @@ def test_mobile_detail_header_uses_compact_layout_classes():
     assert 'class="iwork-detail-toolbar ' in PRODUCTION_DETAIL_TEMPLATE
     assert "body[data-device=\"mobile\"] .iwork-page-header" in PRODUCTION_DETAIL_TEMPLATE
     assert "body[data-device=\"mobile\"] .iwork-detail-toolbar" in PRODUCTION_DETAIL_TEMPLATE
-    assert "body[data-device=\"mobile\"] .iwork-last-update { display: none; }" in PRODUCTION_DETAIL_TEMPLATE
+    assert "body[data-device=\"mobile\"] .iwork-last-update { display: none; }" not in PRODUCTION_DETAIL_TEMPLATE
+    assert "body[data-device=\"mobile\"] .iwork-last-update { display: none; }" not in DASHBOARD_TEMPLATE
     assert 'class="iwork-detail-summary text-slate-400"' in PRODUCTION_DETAIL_TEMPLATE
