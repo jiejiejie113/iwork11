@@ -564,6 +564,43 @@ def test_step_sidebar_can_switch_between_today_and_cumulative_quantity():
     assert 'map[s.stepno].total += quantity;' in TEMPLATE
 
 
+def test_step_sidebar_supports_per_detail_drag_order_and_browser_storage():
+    """左侧工序列表应使用独立手柄按详情排序并保存到浏览器。"""
+    assert "const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';" in TEMPLATE
+    assert 'ref="stepOrderListRef"' in TEMPLATE
+    assert 'v-for="s in orderedStepSummary"' in TEMPLATE
+    assert 'data-step-order-stepno' in TEMPLATE
+    assert 'class="step-order-drag-handle' in TEMPLATE
+    assert '@pointerdown.stop="startStepOrderDrag($event, s.stepno)"' in TEMPLATE
+    assert '@click="selectedStep = s.stepno"' in TEMPLATE
+    assert 'function loadStepOrder(type = detailType.value, key = detailKey.value)' in TEMPLATE
+    assert 'function saveStepOrder(order, type = detailType.value, key = detailKey.value)' in TEMPLATE
+    assert 'function normalizeStepOrder(values)' in TEMPLATE
+    assert 'loadStepOrder(type, key);' in TEMPLATE
+    assert 'stepOrder.value = [...stepOrderDragOriginal];' in TEMPLATE
+    assert 'saveStepOrder(stepOrder.value, savedType, savedKey);' in TEMPLATE
+
+
+def test_step_sidebar_keeps_scrolling_and_auto_scroll_during_handle_drag():
+    """工序列表普通触控应继续纵向滚动，手柄拖动支持上下沿自动滚动。"""
+    assert '.step-order-list {' in TEMPLATE
+    assert 'touch-action: pan-y;' in TEMPLATE
+    assert '.step-order-drag-handle {' in TEMPLATE
+    assert 'touch-action: none;' in TEMPLATE
+    assert 'const STEP_ORDER_AUTO_SCROLL_EDGE = 64;' in TEMPLATE
+    assert 'function runStepOrderAutoScroll()' in TEMPLATE
+    assert 'updateStepOrderDropTarget(' in TEMPLATE
+    assert 'stopStepOrderDrag({ pointerId: stepOrderPointerId, type: \'pointercancel\' });' in TEMPLATE
+
+
+def test_step_order_is_used_by_detail_rows_without_changing_card_drag_state():
+    """右侧员工明细应读取工序顺序，员工卡片拖拽状态仍保持独立。"""
+    assert 'const orderedStepSummary = computed(() => orderStepsByPreference(stepSummary.value));' in TEMPLATE
+    assert 'const aStepRank = getStepOrderRank(a.stepno);' in TEMPLATE
+    assert 'const bStepRank = getStepOrderRank(b.stepno);' in TEMPLATE
+    assert 'worker-card-order:${detailType.value}:${detailKey.value}' in TEMPLATE
+
+
 def test_detail_default_date_uses_business_timezone():
     """详情默认日期应使用业务时区。"""
     assert 'function businessDateString()' in TEMPLATE

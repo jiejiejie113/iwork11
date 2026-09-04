@@ -169,6 +169,43 @@
         .detail-column-move {
             transition: transform 0.24s cubic-bezier(.2,.8,.2,1);
         }
+        /* 工序列表排序：列表主体保持纵向滚动，只有手柄接管触控拖拽 */
+        .step-order-list {
+            touch-action: pan-y;
+            overscroll-behavior: contain;
+        }
+        .step-order-item {
+            transition:
+                border-color 0.18s ease,
+                background-color 0.18s ease,
+                box-shadow 0.18s ease,
+                opacity 0.18s ease,
+                transform 0.24s cubic-bezier(.2,.8,.2,1);
+            will-change: transform;
+        }
+        .step-order-item:hover {
+            background: #334155;
+            box-shadow: 0 6px 16px rgb(15 23 42 / 35%);
+        }
+        .step-order-item.is-dragging {
+            border-color: #60a5fa;
+            background: #1e3a5f;
+            box-shadow: 0 10px 24px rgb(37 99 235 / 30%);
+            opacity: 0.68;
+        }
+        .step-order-item.is-drop-target {
+            border-color: #22d3ee;
+            background: #164e63;
+            box-shadow: 0 0 0 2px rgb(34 211 238 / 24%) inset;
+        }
+        .step-order-drag-handle {
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .step-order-drag-handle:active { cursor: grabbing; }
+        .step-order-move { transition: transform 0.24s cubic-bezier(.2,.8,.2,1); }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
         .tree-wrap { position: relative; overflow: hidden; transition: height 0.32s cubic-bezier(.4,0,.2,1); }
         .tree-body { position: relative; }
@@ -720,18 +757,36 @@
                         全部工序
                     </button>
                 </div>
-                <div class="overflow-y-auto flex-1 hide-scrollbar">
-                    <button v-for="s in stepSummary" :key="'side-' + s.stepno"
-                            @click="selectedStep = s.stepno"
-                            :class="selectedStep === s.stepno ? 'bg-slate-700 ring-1 ring-inset ring-blue-500/30' : 'hover:bg-slate-700/50'"
-                            :style="{ borderLeftColor: getHeatColor(s.total) }"
-                            class="w-full text-left px-4 py-3 text-sm flex items-center justify-between transition-colors border-b border-slate-700/50 border-l-[16px]">
-                        <span class="text-slate-300">工序{[ s.stepno ]}</span>
-                        <span class="text-xs flex items-center gap-1.5">
-                            <span class="font-mono font-bold" :style="{ color: getHeatColor(s.total) }">{[ fmtNum(s.total) ]}</span>
-                            <span class="text-slate-500">{[ s.workorder_count ]}单</span>
-                        </span>
-                    </button>
+                <div ref="stepOrderListRef" class="overflow-y-auto flex-1 hide-scrollbar step-order-list">
+                    <transition-group name="step-order" tag="div">
+                        <div v-for="s in orderedStepSummary" :key="'side-' + s.stepno"
+                             :data-step-order-stepno="s.stepno"
+                             :class="{
+                                 'is-dragging': draggingStepOrderNo === String(s.stepno),
+                                 'is-drop-target': stepOrderHoverStepNo === String(s.stepno),
+                             }"
+                             :style="{ borderLeftColor: getHeatColor(s.total) }"
+                             class="step-order-item w-full flex items-stretch border-b border-slate-700/50 border-l-[16px]">
+                            <button type="button"
+                                    @click="selectedStep = s.stepno"
+                                    :class="selectedStep === s.stepno ? 'bg-slate-700 ring-1 ring-inset ring-blue-500/30' : 'hover:bg-slate-700/50'"
+                                    class="min-w-0 flex-1 text-left px-4 py-3 text-sm flex items-center justify-between transition-colors">
+                                <span class="text-slate-300">工序{[ s.stepno ]}</span>
+                                <span class="text-xs flex items-center gap-1.5">
+                                    <span class="font-mono font-bold" :style="{ color: getHeatColor(s.total) }">{[ fmtNum(s.total) ]}</span>
+                                    <span class="text-slate-500">{[ s.workorder_count ]}单</span>
+                                </span>
+                            </button>
+                            <button type="button"
+                                    class="step-order-drag-handle flex-shrink-0 px-2 py-3 text-slate-500 hover:text-white hover:bg-slate-700/70"
+                                    title="拖拽调整工序顺序"
+                                    :aria-label="'拖拽调整工序' + s.stepno + '顺序'"
+                                    @pointerdown.stop="startStepOrderDrag($event, s.stepno)"
+                                    @click.stop>
+                                <span aria-hidden="true">⋮⋮</span>
+                            </button>
+                        </div>
+                    </transition-group>
                     <div v-if="stepSummary.length === 0" class="py-8 text-slate-500 text-center text-sm">
                         暂无数据
                     </div>
@@ -1018,6 +1073,8 @@ createApp({
         const detailKey = ref(initialDetailKey);
         const detailLayout = ref('table');   // 'table' | 'cards'
         const cardOrder = ref([]);           // 用户自定义工人排序
+        const stepOrder = ref([]);            // 当前详情的用户自定义工序排序
+        const STEP_ORDER_STORAGE_PREFIX = 'iwork:production-detail:step-order:v1:';
         const dragIndex = ref(-1);           // 当前拖拽中的索引
         const activeDrag = ref(false);       // 是否正在拖拽
         const dragStyle = reactive({ left:'0px', top:'0px', width:'0px', height:'0px' });
@@ -1198,6 +1255,9 @@ createApp({
         const sortAsc = ref(true);
         const detailTableScrollRef = ref(null);
         const cardViewRef = ref(null);
+        const stepOrderListRef = ref(null);
+        const draggingStepOrderNo = ref(null);
+        const stepOrderHoverStepNo = ref(null);
         const detailTableIsDragging = ref(false);
         let detailTableEl = null;
         let detailTableStartX = 0;
@@ -2379,6 +2439,326 @@ createApp({
                 .sort((a, b) => a.stepno - b.stepno);
         });
 
+        // ---- 当前详情的工序顺序与拖拽 ----
+        function stepOrderStorageKey(type = detailType.value, key = detailKey.value) {
+            return `${STEP_ORDER_STORAGE_PREFIX}${type}:${encodeURIComponent(String(key ?? ''))}`;
+        }
+
+        function normalizeStepOrder(values) {
+            if (!Array.isArray(values)) return [];
+            const seen = new Set();
+            return values.reduce((result, value) => {
+                const rawValue = String(value ?? '').trim();
+                const numericValue = Number(rawValue);
+                if (
+                    !rawValue
+                    || !Number.isInteger(numericValue)
+                    || numericValue < 0
+                ) return result;
+                const normalized = String(numericValue);
+                if (seen.has(normalized)) return result;
+                seen.add(normalized);
+                result.push(normalized);
+                return result;
+            }, []);
+        }
+
+        function loadStepOrder(type = detailType.value, key = detailKey.value) {
+            stepOrder.value = [];
+            try {
+                const raw = localStorage.getItem(stepOrderStorageKey(type, key));
+                if (raw) stepOrder.value = normalizeStepOrder(JSON.parse(raw));
+            } catch (error) {
+                // 浏览器存储不可用或缓存损坏时使用默认工序顺序。
+            }
+        }
+
+        function saveStepOrder(order, type = detailType.value, key = detailKey.value) {
+            try {
+                localStorage.setItem(
+                    stepOrderStorageKey(type, key),
+                    JSON.stringify(normalizeStepOrder(order)),
+                );
+            } catch (error) {
+                // 浏览器存储不可用时仅保留当前页面状态。
+            }
+        }
+
+        function stepOrderKey(stepno) {
+            const rawValue = String(stepno ?? '').trim();
+            const numericValue = Number(rawValue);
+            if (!rawValue || !Number.isInteger(numericValue) || numericValue < 0) return null;
+            return String(numericValue);
+        }
+
+        const stepOrderRanks = computed(() => (
+            new Map(stepOrder.value.map((stepno, index) => [stepno, index]))
+        ));
+
+        function getStepOrderRank(stepno) {
+            const key = stepOrderKey(stepno);
+            return key === null ? undefined : stepOrderRanks.value.get(key);
+        }
+
+        function orderStepsByPreference(steps) {
+            return [...steps].sort((left, right) => {
+                const leftRank = getStepOrderRank(left.stepno);
+                const rightRank = getStepOrderRank(right.stepno);
+                if (leftRank !== undefined || rightRank !== undefined) {
+                    if (leftRank === undefined) return 1;
+                    if (rightRank === undefined) return -1;
+                    if (leftRank !== rightRank) return leftRank - rightRank;
+                }
+                const leftStepno = Number(left.stepno);
+                const rightStepno = Number(right.stepno);
+                if (Number.isFinite(leftStepno) && Number.isFinite(rightStepno)) {
+                    return leftStepno - rightStepno;
+                }
+                return naturalCompare(String(left.stepno), String(right.stepno));
+            });
+        }
+
+        const orderedStepSummary = computed(() => orderStepsByPreference(stepSummary.value));
+
+        function mergeVisibleStepOrder(visibleStepNos, reorderedVisibleStepNos) {
+            const normalizedVisible = normalizeStepOrder(visibleStepNos);
+            const normalizedReordered = normalizeStepOrder(reorderedVisibleStepNos);
+            if (normalizedVisible.length !== normalizedReordered.length) return stepOrder.value;
+
+            const mergedOrder = normalizeStepOrder(stepOrder.value);
+            const known = new Set(mergedOrder);
+            normalizedVisible.forEach(stepno => {
+                if (!known.has(stepno)) {
+                    known.add(stepno);
+                    mergedOrder.push(stepno);
+                }
+            });
+
+            const visibleSet = new Set(normalizedVisible);
+            let reorderedIndex = 0;
+            return normalizeStepOrder(mergedOrder.map(stepno => (
+                visibleSet.has(stepno)
+                    ? normalizedReordered[reorderedIndex++]
+                    : stepno
+            )));
+        }
+
+        function moveVisibleStep(sourceStepno, targetStepno, placeAfter) {
+            const sourceKey = stepOrderKey(sourceStepno);
+            const targetKey = stepOrderKey(targetStepno);
+            const visibleStepNos = orderedStepSummary.value
+                .map(step => stepOrderKey(step.stepno))
+                .filter(Boolean);
+            const sourceIndex = visibleStepNos.indexOf(sourceKey);
+            const targetIndex = visibleStepNos.indexOf(targetKey);
+            if (
+                sourceKey === null
+                || targetKey === null
+                || sourceIndex < 0
+                || targetIndex < 0
+                || sourceKey === targetKey
+            ) return false;
+
+            const reorderedVisible = [...visibleStepNos];
+            const [moved] = reorderedVisible.splice(sourceIndex, 1);
+            let insertIndex = targetIndex + (placeAfter ? 1 : 0);
+            if (sourceIndex < targetIndex) insertIndex -= 1;
+            reorderedVisible.splice(insertIndex, 0, moved);
+
+            const nextOrder = mergeVisibleStepOrder(visibleStepNos, reorderedVisible);
+            if (nextOrder.join(',') === stepOrder.value.join(',')) return false;
+            stepOrder.value = nextOrder;
+            return true;
+        }
+
+        let stepOrderPointerId = null;
+        let stepOrderPointerTarget = null;
+        let stepOrderDragType = null;
+        let stepOrderDragKey = null;
+        let stepOrderDragOriginal = [];
+        let stepOrderAutoScrollFrame = null;
+        let stepOrderAutoScrollSpeed = 0;
+        let stepOrderAutoScrollPointerX = 0;
+        let stepOrderAutoScrollPointerY = 0;
+        const STEP_ORDER_AUTO_SCROLL_EDGE = 64;
+        const STEP_ORDER_AUTO_SCROLL_MIN_SPEED = 2;
+        const STEP_ORDER_AUTO_SCROLL_MAX_SPEED = 12;
+
+        function getStepOrderAutoScrollSpeed(clientY) {
+            const list = stepOrderListRef.value;
+            if (!list) return 0;
+            const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+            if (maxScrollTop <= 0) return 0;
+            const rect = list.getBoundingClientRect();
+            if (clientY <= rect.top + STEP_ORDER_AUTO_SCROLL_EDGE && list.scrollTop > 0) {
+                const intensity = Math.min(
+                    1,
+                    Math.max(
+                        0,
+                        (rect.top + STEP_ORDER_AUTO_SCROLL_EDGE - clientY)
+                            / STEP_ORDER_AUTO_SCROLL_EDGE,
+                    ),
+                );
+                return -Math.max(
+                    STEP_ORDER_AUTO_SCROLL_MIN_SPEED,
+                    Math.round(STEP_ORDER_AUTO_SCROLL_MAX_SPEED * intensity),
+                );
+            }
+            if (
+                clientY >= rect.bottom - STEP_ORDER_AUTO_SCROLL_EDGE
+                && list.scrollTop < maxScrollTop
+            ) {
+                const intensity = Math.min(
+                    1,
+                    Math.max(
+                        0,
+                        (clientY - (rect.bottom - STEP_ORDER_AUTO_SCROLL_EDGE))
+                            / STEP_ORDER_AUTO_SCROLL_EDGE,
+                    ),
+                );
+                return Math.max(
+                    STEP_ORDER_AUTO_SCROLL_MIN_SPEED,
+                    Math.round(STEP_ORDER_AUTO_SCROLL_MAX_SPEED * intensity),
+                );
+            }
+            return 0;
+        }
+
+        function stopStepOrderAutoScroll() {
+            if (stepOrderAutoScrollFrame !== null) {
+                window.cancelAnimationFrame(stepOrderAutoScrollFrame);
+                stepOrderAutoScrollFrame = null;
+            }
+            stepOrderAutoScrollSpeed = 0;
+        }
+
+        function runStepOrderAutoScroll() {
+            stepOrderAutoScrollFrame = null;
+            if (draggingStepOrderNo.value === null || stepOrderPointerId === null) {
+                stepOrderAutoScrollSpeed = 0;
+                return;
+            }
+            const list = stepOrderListRef.value;
+            if (!list || !stepOrderAutoScrollSpeed) return;
+            const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+            const previousScrollTop = list.scrollTop;
+            list.scrollTop = Math.min(
+                maxScrollTop,
+                Math.max(0, previousScrollTop + stepOrderAutoScrollSpeed),
+            );
+            if (list.scrollTop !== previousScrollTop) {
+                updateStepOrderDropTarget(
+                    stepOrderAutoScrollPointerX,
+                    stepOrderAutoScrollPointerY,
+                );
+            }
+            stepOrderAutoScrollSpeed = getStepOrderAutoScrollSpeed(stepOrderAutoScrollPointerY);
+            if (stepOrderAutoScrollSpeed) {
+                stepOrderAutoScrollFrame = window.requestAnimationFrame(runStepOrderAutoScroll);
+            }
+        }
+
+        function updateStepOrderAutoScroll(clientX, clientY) {
+            stepOrderAutoScrollPointerX = clientX;
+            stepOrderAutoScrollPointerY = clientY;
+            stepOrderAutoScrollSpeed = getStepOrderAutoScrollSpeed(clientY);
+            if (!stepOrderAutoScrollSpeed) {
+                stopStepOrderAutoScroll();
+                return;
+            }
+            if (stepOrderAutoScrollFrame === null) {
+                stepOrderAutoScrollFrame = window.requestAnimationFrame(runStepOrderAutoScroll);
+            }
+        }
+
+        function updateStepOrderDropTarget(clientX, clientY) {
+            const list = stepOrderListRef.value;
+            if (!list) return;
+            const target = document.elementFromPoint(clientX, clientY)
+                ?.closest?.('[data-step-order-stepno]');
+            if (!target || !list.contains(target)) {
+                stepOrderHoverStepNo.value = null;
+                return;
+            }
+            const targetKey = stepOrderKey(target.dataset.stepOrderStepno);
+            const sourceKey = draggingStepOrderNo.value;
+            if (targetKey === null || targetKey === sourceKey) {
+                stepOrderHoverStepNo.value = null;
+                return;
+            }
+            const rect = target.getBoundingClientRect();
+            stepOrderHoverStepNo.value = targetKey;
+            moveVisibleStep(sourceKey, targetKey, clientY > rect.top + rect.height / 2);
+        }
+
+        function stopStepOrderDrag(event) {
+            if (draggingStepOrderNo.value === null) return;
+            if (
+                stepOrderPointerId !== null
+                && event?.pointerId !== undefined
+                && event.pointerId !== stepOrderPointerId
+            ) return;
+            const cancelled = event?.type === 'pointercancel';
+            const savedType = stepOrderDragType;
+            const savedKey = stepOrderDragKey;
+            if (cancelled) stepOrder.value = [...stepOrderDragOriginal];
+            if (stepOrderPointerTarget && stepOrderPointerId !== null) {
+                try {
+                    stepOrderPointerTarget.releasePointerCapture?.(stepOrderPointerId);
+                } catch (error) {
+                    // 指针捕获可能已经由浏览器释放。
+                }
+            }
+            draggingStepOrderNo.value = null;
+            stepOrderHoverStepNo.value = null;
+            stepOrderPointerId = null;
+            stepOrderPointerTarget = null;
+            stepOrderDragType = null;
+            stepOrderDragKey = null;
+            stepOrderDragOriginal = [];
+            stopStepOrderAutoScroll();
+            window.removeEventListener('pointermove', onStepOrderDragMove);
+            window.removeEventListener('pointerup', stopStepOrderDrag);
+            window.removeEventListener('pointercancel', stopStepOrderDrag);
+            if (!cancelled) saveStepOrder(stepOrder.value, savedType, savedKey);
+        }
+
+        function onStepOrderDragMove(event) {
+            if (
+                draggingStepOrderNo.value === null
+                || event.pointerId !== stepOrderPointerId
+            ) return;
+            if (event.cancelable) event.preventDefault();
+            updateStepOrderAutoScroll(event.clientX, event.clientY);
+            updateStepOrderDropTarget(event.clientX, event.clientY);
+        }
+
+        function startStepOrderDrag(event, stepno) {
+            if (
+                (event.button !== undefined && event.button !== 0)
+                || draggingStepOrderNo.value !== null
+            ) return;
+            const sourceKey = stepOrderKey(stepno);
+            if (sourceKey === null) return;
+            const exists = orderedStepSummary.value.some(
+                step => stepOrderKey(step.stepno) === sourceKey,
+            );
+            if (!exists) return;
+            stepOrderDragOriginal = [...stepOrder.value];
+            stepOrderDragType = detailType.value;
+            stepOrderDragKey = detailKey.value;
+            stepOrderPointerId = event.pointerId;
+            stepOrderPointerTarget = event.currentTarget;
+            draggingStepOrderNo.value = sourceKey;
+            stepOrderHoverStepNo.value = null;
+            stepOrderPointerTarget?.setPointerCapture?.(stepOrderPointerId);
+            window.addEventListener('pointermove', onStepOrderDragMove, { passive: false });
+            window.addEventListener('pointerup', stopStepOrderDrag);
+            window.addEventListener('pointercancel', stopStepOrderDrag);
+            if (event.cancelable) event.preventDefault();
+            updateStepOrderAutoScroll(event.clientX, event.clientY);
+        }
+
         // 工序热力图范围（红=瓶颈低值，绿=高值）
         const stepHeatRange = computed(() => {
             if (stepSummary.value.length === 0) return { min: 0, max: 1 };
@@ -2449,6 +2829,13 @@ createApp({
                     if (detailType.value === 'initial_style') {
                         const flowCompare = naturalCompare(a.flow || '', b.flow || '');
                         if (flowCompare !== 0) return flowCompare;
+                    }
+                    const aStepRank = getStepOrderRank(a.stepno);
+                    const bStepRank = getStepOrderRank(b.stepno);
+                    if (aStepRank !== undefined || bStepRank !== undefined) {
+                        if (aStepRank === undefined) return 1;
+                        if (bStepRank === undefined) return -1;
+                        if (aStepRank !== bStepRank) return aStepRank - bStepRank;
                     }
                     const stepCompare = (Number(a.stepno) || 0) - (Number(b.stepno) || 0);
                     if (stepCompare !== 0) return stepCompare;
@@ -3435,6 +3822,7 @@ createApp({
             showLoading();
             detailType.value = type;
             detailKey.value = key;
+            loadStepOrder(type, key);
             if (type === 'initial_style') detailLayout.value = 'table';
             initialStyleFilter.value = '';
             flowFilter.value = '';
@@ -3948,6 +4336,10 @@ createApp({
             stopDetailTableDrag();
             stopDetailColumnDrag();
             stopDetailColumnResize();
+            if (draggingStepOrderNo.value !== null) {
+                stopStepOrderDrag({ pointerId: stepOrderPointerId, type: 'pointercancel' });
+            }
+            stopStepOrderAutoScroll();
             document.removeEventListener('pointerdown', onDetailColumnOutsidePointerDown);
             if (activeTagDrag.value) onTagPointerCancel();
             cancelPendingCardDrag();
@@ -3967,6 +4359,8 @@ createApp({
             tableSearch, initialStyleFilter, initialStyleOptions, flowFilter, flowOptions,
             selectedStep, stepQuantityMode, collapsed,
             detailTableScrollRef, cardViewRef, detailTableIsDragging, onDetailTablePointerDown,
+            stepOrderListRef, draggingStepOrderNo, stepOrderHoverStepNo, orderedStepSummary,
+            startStepOrderDrag,
             detailColumnPanelOpen, detailColumnSearch, currentDetailColumns,
             visibleDetailColumns, filteredDetailColumns, resizingDetailColumnKey,
             draggingDetailColumnKey, detailColumnHoverKey,
