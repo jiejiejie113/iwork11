@@ -3,7 +3,7 @@
 <!-- 用法：在 header 标签内 include，之后再放各页面特有的控件 -->
 <h1 class="iwork-page-title text-xl font-bold text-slate-100">{{ page_title }} <span v-if="stepnoFilter" class="text-slate-400">- {[ stepnoFilter ]}工序</span></h1>
 <div class="iwork-main-nav flex items-center gap-3 flex-wrap">
-    <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+    <div class="iwork-nav-tabs flex bg-slate-800 rounded-lg p-1 border border-slate-700">
         <a :href="basePath"
             :class="currentView === 'realtime' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'"
             class="px-4 py-2 rounded-md text-sm transition-colors font-medium">实时数据</a>
@@ -62,5 +62,6 @@
                 </div>
             </div>
         </div>
+    </div>
     </div>
     <script defer src="{% static 'iwork/notifications.js' %}"></script>

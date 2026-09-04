@@ -9,6 +9,12 @@ from pathlib import Path
 TEMPLATE = Path("iwork/templates/iwork/_header.html").read_text(encoding="utf-8")
 SCRIPT = Path("static/iwork/notifications.js").read_text(encoding="utf-8")
 
+PAGE_TEMPLATES = [
+    Path("iwork/templates/iwork/dashboard.html"),
+    Path("iwork/templates/iwork/production_detail.html"),
+    Path("iwork/templates/iwork/today_targets.html"),
+]
+
 
 def test_shared_header_has_notification_bell_history_and_subscription_settings():
     """所有共用看板页应具备通知铃铛、历史抽屉和订阅设置。"""
@@ -19,6 +25,22 @@ def test_shared_header_has_notification_bell_history_and_subscription_settings()
     assert "notifications.js" in TEMPLATE
     assert "data-notification-modal" in TEMPLATE
     assert "data-notification-modal-panel" in TEMPLATE
+
+
+def test_mobile_notification_center_is_outside_horizontal_tab_scroller():
+    """移动端只滚动导航标签，通知抽屉所在容器必须允许向下展开。"""
+    assert 'class="iwork-nav-tabs flex bg-slate-800' in TEMPLATE
+    assert TEMPLATE.count('class="iwork-main-nav flex items-center gap-3 flex-wrap"') == 1
+    assert TEMPLATE.count('class="relative" data-iwork-notification-center') == 1
+    assert TEMPLATE.rstrip().endswith('</div>\n    <script defer src="{% static \'iwork/notifications.js\' %}"></script>')
+
+    for path in PAGE_TEMPLATES:
+        page = path.read_text(encoding="utf-8")
+        mobile_nav = page.split('body[data-device="mobile"] .iwork-main-nav {', 1)[1].split('}', 1)[0]
+        mobile_tabs = page.split('body[data-device="mobile"] .iwork-nav-tabs {', 1)[1].split('}', 1)[0]
+        assert 'overflow: visible;' in mobile_nav
+        assert 'overflow-x: auto;' in mobile_tabs
+        assert 'body[data-device="mobile"] [data-iwork-notification-center] { flex-shrink: 0; }' in page
 
 
 def test_notification_client_uses_generic_sse_wakeup_then_refetches_content():
