@@ -32,6 +32,7 @@ from iwork.target_responsibility import (
     ensure_daily_target_obligations,
     is_group_target_complete,
     require_admin,
+    require_iwork_admin,
     require_subject,
     set_submission_policy,
     sync_principal,
@@ -133,19 +134,30 @@ def _validate_target_iwork_access(request, *, subject: str, username: str) -> No
         )
 
 
-def _identity_or_response(request, *, admin: bool = False):
+def _identity_or_response(
+    request,
+    *,
+    admin: bool = False,
+    iwork_admin: bool = False,
+):
     """取得可信身份，失败时返回统一错误响应。
 
     Args:
         request (Request): 当前REST请求。
-        admin (bool): 是否要求管理员身份。
+        admin (bool): 是否要求主管理员身份。
+        iwork_admin (bool): 是否要求主管理员或 iwork 专属管理员身份。
 
     Returns:
         tuple[IworkIdentity | None, Response | None]: 身份与错误响应二元组。
     """
     try:
         identity = getattr(request, 'iwork_identity', None)
-        identity = require_admin(identity) if admin else require_subject(identity)
+        if admin:
+            identity = require_admin(identity)
+        elif iwork_admin:
+            identity = require_iwork_admin(identity)
+        else:
+            identity = require_subject(identity)
         return identity, None
     except TargetResponsibilityError as exc:
         return None, Response(
@@ -414,7 +426,7 @@ def today_targets(request):
     try:
         business_date = get_business_date()
         now = timezone.now()
-        if identity.is_admin:
+        if identity.can_manage_all_flows:
             flow_names = list(settings.VISIBLE_FLOWS)
         else:
             assigned_flows = ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
@@ -493,6 +505,7 @@ def today_targets(request):
             'all_complete': summary['all_complete'],
             'groups': groups,
             'is_admin': identity.is_admin,
+            'is_iwork_admin': identity.is_iwork_admin,
             'responsibility_summary': responsibility_summary,
         })
     except Exception as exc:
@@ -516,7 +529,7 @@ def flow_list(request):
     Returns:
         Response: ``{'flows': [...]}`` 或管理员权限错误。
     """
-    identity, error = _identity_or_response(request, admin=True)
+    identity, error = _identity_or_response(request, iwork_admin=True)
     if error:
         return error
     return Response({'flows': list(settings.VISIBLE_FLOWS)})
@@ -535,7 +548,7 @@ def flow_assignments(request):
     Returns:
         Response: 分配列表、保存结果或错误响应。
     """
-    identity, error = _identity_or_response(request, admin=True)
+    identity, error = _identity_or_response(request, iwork_admin=True)
     if error:
         return error
     if request.method == 'GET':
@@ -645,7 +658,7 @@ def flow_assignment_detail(request, assignment_id: int):
     Returns:
         Response: 空成功响应或错误响应。
     """
-    identity, error = _identity_or_response(request, admin=True)
+    identity, error = _identity_or_response(request, iwork_admin=True)
     if error:
         return error
     assignment = (
@@ -676,7 +689,7 @@ def cleanup_deleted_principals(request):
     Returns:
         Response: 清理数量和保留/删除的本地身份快照。
     """
-    identity, error = _identity_or_response(request, admin=True)
+    identity, error = _identity_or_response(request, iwork_admin=True)
     if error:
         return error
     subjects = request.data.get('subjects')
@@ -723,7 +736,7 @@ def target_obligations(request):
     Returns:
         Response: 每日目标责任列表或错误响应。
     """
-    identity, error = _identity_or_response(request, admin=True)
+    identity, error = _identity_or_response(request, iwork_admin=True)
     if error:
         return error
     target_date, date_error = _parse_date(

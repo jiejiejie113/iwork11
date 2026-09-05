@@ -53,6 +53,37 @@ class AlertService:
         self.detectors = dict(detectors or {})
         self.snapshot_loader = snapshot_loader or (lambda _date, _version: ({}, None))
 
+    @staticmethod
+    def _ensure_builtin_role_access(
+        rule: AlertRule,
+        *,
+        allowed_roles: tuple[str, ...] = (),
+        mandatory_roles: tuple[str, ...] = (),
+    ) -> None:
+        """为内置规则补齐新增角色而不覆盖其他规则配置。
+
+        Args:
+            rule (AlertRule): 待维护的内置规则。
+            allowed_roles (tuple[str, ...]): 必须具备的可订阅角色。
+            mandatory_roles (tuple[str, ...]): 必须具备的强制投递角色。
+        """
+        current_allowed = list(rule.allowed_roles or [])
+        current_mandatory = list(rule.mandatory_roles or [])
+        changed = False
+        for role in allowed_roles:
+            if role not in current_allowed:
+                current_allowed.append(role)
+                changed = True
+        for role in mandatory_roles:
+            if role not in current_mandatory:
+                current_mandatory.append(role)
+                changed = True
+        if not changed:
+            return
+        rule.allowed_roles = current_allowed
+        rule.mandatory_roles = current_mandatory
+        rule.save(using=LOCAL_DB_ALIAS, update_fields=["allowed_roles", "mandatory_roles", "updated_at"])
+
     def evaluate_published_snapshot(
         self,
         business_date: date,
@@ -187,9 +218,9 @@ class AlertService:
                 "name": "每日目标逾期未填",
                 "severity": "warning",
                 "detector_type": TARGET_OVERDUE_RULE_CODE,
-                "allowed_roles": ["admin"],
+                "allowed_roles": ["admin", "iwork_admin"],
                 "scope_type": "flow",
-                "mandatory_roles": ["admin"],
+                "mandatory_roles": ["admin", "iwork_admin"],
                 "cooldown_seconds": 300,
                 "enabled": True,
             },
@@ -200,9 +231,9 @@ class AlertService:
                 "name": "每日责任摘要",
                 "severity": "warning",
                 "detector_type": DAILY_SUMMARY_RULE_CODE,
-                "allowed_roles": ["admin"],
+                "allowed_roles": ["admin", "iwork_admin"],
                 "scope_type": "none",
-                "mandatory_roles": ["admin"],
+                "mandatory_roles": ["admin", "iwork_admin"],
                 "cooldown_seconds": 0,
                 "enabled": True,
             },
@@ -218,6 +249,16 @@ class AlertService:
                 "mandatory_roles": [],
                 "enabled": False,
             },
+        )
+        self._ensure_builtin_role_access(
+            target_rule,
+            allowed_roles=("admin", "iwork_admin"),
+            mandatory_roles=("admin", "iwork_admin"),
+        )
+        self._ensure_builtin_role_access(
+            daily_rule,
+            allowed_roles=("admin", "iwork_admin"),
+            mandatory_roles=("admin", "iwork_admin"),
         )
         return {
             target_rule.code: target_rule,
@@ -267,7 +308,7 @@ class AlertService:
                 elif not created:
                     event.occurrence_count += 1
                     event.save(using=LOCAL_DB_ALIAS, update_fields=["occurrence_count", "last_seen_at"])
-                self._ensure_admin_delivery(event)
+                self._ensure_mandatory_deliveries(event)
 
             open_events = AlertEvent.objects.using(LOCAL_DB_ALIAS).select_for_update().filter(
                 rule=rule,
@@ -280,7 +321,7 @@ class AlertService:
                 event.revision += 1
                 event.message = f"生产组 {event.dimension_key} 的目标已完成补填。"
                 event.save(using=LOCAL_DB_ALIAS)
-                self._ensure_admin_delivery(event, reset=True)
+                self._ensure_mandatory_deliveries(event, reset=True)
         return EvaluationResult(
             business_date=business_date,
             snapshot_version="target-obligation",
@@ -360,7 +401,7 @@ class AlertService:
                     event.occurrence_count += 1
                     event.last_seen_at = now
                     event.save(using=LOCAL_DB_ALIAS)
-                self._ensure_admin_delivery(event)
+                self._ensure_mandatory_deliveries(event)
             elif event is not None and event.status == AlertEvent.Status.OPEN:
                 event.status = AlertEvent.Status.RECOVERED
                 event.recovered_at = now
@@ -368,24 +409,31 @@ class AlertService:
                 event.message = "当日目标已全部填写。"
                 event.payload = payload
                 event.save(using=LOCAL_DB_ALIAS)
-                self._ensure_admin_delivery(event, reset=True)
+                self._ensure_mandatory_deliveries(event, reset=True)
         return EvaluationResult(
             business_date=business_date,
             snapshot_version="daily-summary",
             event_count=len(unfilled),
         )
 
-    def _ensure_admin_delivery(self, event: AlertEvent, *, reset: bool = False) -> None:
-        """创建或刷新管理员角色的站内投递。
+    def _ensure_role_delivery(
+        self,
+        event: AlertEvent,
+        role: str,
+        *,
+        reset: bool = False,
+    ) -> None:
+        """创建或刷新指定角色的站内投递。
 
         Args:
             event: 待投递事件。
+            role: 角色受众编码。
             reset: 是否因事件修订而重新进入待投递状态。
         """
         audience, _ = AlertAudience.objects.using(LOCAL_DB_ALIAS).get_or_create(
             event=event,
             audience_type="role",
-            audience_key="admin",
+            audience_key=role,
         )
         delivery, _ = NotificationDelivery.objects.using(LOCAL_DB_ALIAS).get_or_create(
             event=event,
@@ -399,3 +447,22 @@ class AlertService:
             delivery.sent_at = None
             delivery.last_error = ""
             delivery.save(using=LOCAL_DB_ALIAS)
+
+    def _ensure_mandatory_deliveries(
+        self,
+        event: AlertEvent,
+        *,
+        reset: bool = False,
+    ) -> None:
+        """为规则声明的全部强制角色创建或刷新站内投递。
+
+        Args:
+            event (AlertEvent): 待投递警报事件。
+            reset (bool): 是否因事件修订而重新进入待投递状态。
+        """
+        for role in event.rule.mandatory_roles or []:
+            self._ensure_role_delivery(event, str(role), reset=reset)
+
+    def _ensure_admin_delivery(self, event: AlertEvent, *, reset: bool = False) -> None:
+        """兼容旧调用方，确保管理员角色的站内投递。"""
+        self._ensure_role_delivery(event, "admin", reset=reset)

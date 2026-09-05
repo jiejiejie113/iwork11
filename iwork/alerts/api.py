@@ -78,7 +78,7 @@ def _active_flow_scopes(identity: IworkIdentity) -> set[str]:
     Returns:
         set[str]: 当前身份可管理的生产组名称集合。
     """
-    if identity.is_admin:
+    if identity.can_manage_all_flows:
         return set(settings.VISIBLE_FLOWS)
     return set(
         ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS)
@@ -96,10 +96,12 @@ def _current_role(identity: IworkIdentity, flow_scopes: set[str] | None = None) 
         flow_scopes (set[str] | None): 已查询的可管理生产组集合。
 
     Returns:
-        str: ``admin``、``leader``或``user``。
+        str: ``admin``、``iwork_admin``、``leader``或``user``。
     """
     if identity.is_admin:
         return "admin"
+    if identity.is_iwork_admin:
+        return "iwork_admin"
     return "leader" if (flow_scopes if flow_scopes is not None else _active_flow_scopes(identity)) else "user"
 
 
@@ -221,11 +223,14 @@ def subscriptions(request: HttpRequest) -> JsonResponse:
             if scope_type == "flow" and (
                 not scope_value
                 or scope_value not in settings.VISIBLE_FLOWS
-                or (not identity.is_admin and not identity_can_manage_flow(
+                or (
+                    not identity.can_manage_all_flows
+                    and not identity_can_manage_flow(
                     identity,
                     scope_value,
                     get_business_date(),
-                ))
+                    )
+                )
             ):
                 return JsonResponse(
                     {"code": "managed_flow_required", "message": "只能订阅当前负责的生产组"},
@@ -261,6 +266,11 @@ def _visible_events(identity: IworkIdentity):
     audience_filter = Q(audiences__audience_type="subject", audiences__audience_key=identity.subject)
     if identity.is_admin:
         audience_filter |= Q(audiences__audience_type="role", audiences__audience_key="admin")
+    if identity.is_iwork_admin:
+        audience_filter |= Q(
+            audiences__audience_type="role",
+            audiences__audience_key="iwork_admin",
+        )
     for subscription in _valid_subscriptions(identity):
         subscription_filter = Q(rule=subscription.rule)
         if subscription.scope_type == "flow":
@@ -395,6 +405,7 @@ async def notification_stream(request: HttpRequest) -> StreamingHttpResponse | J
         async with notification_wakeup_broker.subscribe(
             identity.subject,
             is_admin=identity.is_admin,
+            is_iwork_admin=identity.is_iwork_admin,
         ) as queue:
             while loop.time() < deadline:
                 timeout = min(15.0, max(0.0, deadline - loop.time()))

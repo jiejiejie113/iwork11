@@ -263,6 +263,28 @@ def test_today_targets_api_returns_all_visible_flows_to_admin(fixed_business_clo
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 @override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+def test_today_targets_api_returns_all_visible_flows_to_iwork_admin(fixed_business_clock):
+    """iwork 专属管理员应看到全部可见 Flow，并可编辑当日目标。"""
+    response = Client().get(
+        '/api/account/today-targets/',
+        **_identity_headers(
+            subject='today-iwork-admin',
+            username='today-iwork-admin',
+            groups='/iwork-admin,/apps/iwork',
+        ),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item['flow'] for item in payload['groups']] == ['SO3-L3A', 'SO3-L3B']
+    assert all(item['can_edit'] for item in payload['groups'])
+    assert payload['is_admin'] is False
+    assert payload['is_iwork_admin'] is True
+    assert payload['responsibility_summary']['pending_count'] == 2
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
 def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
     fixed_business_clock,
 ):
@@ -320,6 +342,23 @@ def test_today_targets_entry_only_renders_for_leader_or_admin(fixed_business_clo
     assert marker in leader_response.content
     assert marker not in user_response.content
     assert marker in admin_response.content
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_today_targets_entry_and_summary_render_for_iwork_admin(fixed_business_clock):
+    """iwork 专属管理员应显示今日目标入口和全部责任摘要。"""
+    response = Client().get(
+        '/targets/today/',
+        **_identity_headers(
+            subject='navigation-iwork-admin',
+            username='navigation-iwork-admin',
+            groups='/iwork-admin,/apps/iwork',
+        ),
+    )
+
+    assert response.status_code == 200
+    assert b"basePath + 'targets/today/'" in response.content
+    assert b'id="today-target-responsibility-summary"' in response.content
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

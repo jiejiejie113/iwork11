@@ -69,8 +69,10 @@ def _today_target_navigation_context(request):
     """
     identity = getattr(request, 'iwork_identity', None)
     is_admin = bool(identity and identity.subject and identity.is_admin)
-    can_manage = is_admin
-    if identity and identity.subject and not is_admin:
+    is_iwork_admin = bool(identity and identity.subject and identity.is_iwork_admin)
+    can_view_all_targets = is_admin or is_iwork_admin
+    can_manage = can_view_all_targets
+    if identity and identity.subject and not can_view_all_targets:
         try:
             business_date = get_business_date()
             can_manage = ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
@@ -88,7 +90,8 @@ def _today_target_navigation_context(request):
             can_manage = False
     return {
         'can_manage_today_targets': can_manage,
-        'today_targets_is_admin': is_admin,
+        'today_targets_is_admin': can_view_all_targets,
+        'today_targets_is_iwork_admin': is_iwork_admin,
     }
 
 

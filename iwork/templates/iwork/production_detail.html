@@ -2131,7 +2131,7 @@ createApp({
         const canEditCurrentFlow = computed(() => (
             detailType.value === 'flow'
             && !isHistoricalDate.value
-            && Boolean(account.value?.is_admin || managedFlowNames.value.includes(detailKey.value))
+            && Boolean(account.value?.is_admin || account.value?.is_iwork_admin || managedFlowNames.value.includes(detailKey.value))
         ));
 
         function obligationStatusText(status) {

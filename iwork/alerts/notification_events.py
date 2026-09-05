@@ -24,6 +24,7 @@ class _Subscriber:
 
     subject: str
     is_admin: bool
+    is_iwork_admin: bool
     queue: asyncio.Queue
 
 
@@ -43,19 +44,26 @@ class NotificationWakeupBroker:
         subject: str,
         *,
         is_admin: bool,
+        is_iwork_admin: bool = False,
     ) -> AsyncIterator[asyncio.Queue]:
         """登记一个已经通过身份校验的SSE连接。
 
         Args:
             subject: Keycloak稳定账号标识。
             is_admin: 当前连接是否拥有管理员角色。
+            is_iwork_admin: 当前连接是否拥有 iwork 专属管理员角色。
 
         Yields:
             asyncio.Queue: 容量为一的通知唤醒队列。
         """
         queue: asyncio.Queue = asyncio.Queue(maxsize=1)
         self._bind_running_loop()
-        subscriber = _Subscriber(subject=subject, is_admin=is_admin, queue=queue)
+        subscriber = _Subscriber(
+            subject=subject,
+            is_admin=is_admin,
+            is_iwork_admin=is_iwork_admin,
+            queue=queue,
+        )
         self._subscribers.add(subscriber)
         self._ensure_listener_started()
         try:
@@ -74,18 +82,20 @@ class NotificationWakeupBroker:
         *,
         subjects: Collection[str] = (),
         include_admins: bool = False,
+        include_iwork_admin: bool = False,
     ) -> None:
         """向匹配受众覆盖式写入一条通用唤醒。
 
         Args:
             subjects: 允许收到唤醒的Keycloak subject集合。
             include_admins: 是否同时唤醒当前管理员连接。
+            include_iwork_admin: 是否同时唤醒当前 iwork 专属管理员连接。
         """
         allowed_subjects = set(subjects)
         for subscriber in tuple(self._subscribers):
             if subscriber.subject not in allowed_subjects and not (
                 include_admins and subscriber.is_admin
-            ):
+            ) and not (include_iwork_admin and subscriber.is_iwork_admin):
                 continue
             if subscriber.queue.full():
                 with suppress(asyncio.QueueEmpty):
@@ -139,6 +149,7 @@ class NotificationWakeupBroker:
                     self.broadcast(
                         subjects=payload["subjects"],
                         include_admins=payload["include_admins"],
+                        include_iwork_admin=payload.get("include_iwork_admin", False),
                     )
             except asyncio.CancelledError:
                 raise
@@ -170,25 +181,32 @@ def _parse_wakeup(message: object) -> dict[str, object] | None:
             return None
         subjects = payload.get("subjects", [])
         include_admins = payload.get("include_admins", False)
+        include_iwork_admin = payload.get("include_iwork_admin", False)
         if not isinstance(subjects, list) or not all(isinstance(item, str) for item in subjects):
             return None
-        if not isinstance(include_admins, bool):
+        if not isinstance(include_admins, bool) or not isinstance(include_iwork_admin, bool):
             return None
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    return {"subjects": subjects, "include_admins": include_admins}
+    return {
+        "subjects": subjects,
+        "include_admins": include_admins,
+        "include_iwork_admin": include_iwork_admin,
+    }
 
 
 def publish_notification_wakeup(
     *,
     subjects: Collection[str] = (),
     include_admins: bool = False,
+    include_iwork_admin: bool = False,
 ) -> int:
     """向所有Web Worker发布不含警报正文的身份定向唤醒。
 
     Args:
         subjects: 需要唤醒的具体subject。
         include_admins: 是否唤醒当前管理员连接。
+        include_iwork_admin: 是否唤醒当前 iwork 专属管理员连接。
 
     Returns:
         int: Redis报告的订阅者数量。
@@ -197,6 +215,7 @@ def publish_notification_wakeup(
         "protocol_version": NOTIFICATION_PROTOCOL_VERSION,
         "subjects": sorted(set(subjects)),
         "include_admins": include_admins,
+        "include_iwork_admin": include_iwork_admin,
     }
     connection = get_redis_connection("default")
     return int(connection.publish(NOTIFICATION_CHANNEL, json.dumps(payload, ensure_ascii=False)))

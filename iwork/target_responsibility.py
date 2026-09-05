@@ -167,6 +167,7 @@ def sync_principal(identity: IworkIdentity) -> IworkPrincipal:
             'display_name': identity.display_name,
             'keycloak_groups': identity.keycloak_groups,
             'is_admin': identity.is_admin,
+            'is_iwork_admin': identity.is_iwork_admin,
         },
     )
     return principal
@@ -206,7 +207,7 @@ def identity_can_manage_flow(
     flow_name: str,
     target_date: date,
 ) -> bool:
-    """判断管理员或有效组长能否管理指定 Flow。
+    """判断主管理员、iwork 专属管理员或有效组长能否管理指定 Flow。
 
     Args:
         identity (IworkIdentity): 待校验的可信身份。
@@ -220,7 +221,7 @@ def identity_can_manage_flow(
         TargetResponsibilityError: 身份缺少稳定subject时抛出。
     """
     identity = require_subject(identity)
-    if identity.is_admin:
+    if identity.can_manage_all_flows:
         return True
     return ManagedFlowAssignment.objects.using(LOCAL_DB_ALIAS).filter(
         active_assignment_query(target_date),
@@ -253,7 +254,7 @@ def require_flow_permission(
 
 
 def require_admin(identity: IworkIdentity | None) -> IworkIdentity:
-    """要求请求身份是管理员。
+    """要求请求身份是主管理员。
 
     Args:
         identity (IworkIdentity | None): 待校验的请求身份。
@@ -266,7 +267,29 @@ def require_admin(identity: IworkIdentity | None) -> IworkIdentity:
     """
     identity = require_subject(identity)
     if not identity.is_admin:
-        raise TargetResponsibilityError('admin_required', '此接口仅限管理员', 403)
+        raise TargetResponsibilityError('admin_required', '此接口仅限主管理员', 403)
+    return identity
+
+
+def require_iwork_admin(identity: IworkIdentity | None) -> IworkIdentity:
+    """要求请求身份是主管理员或 iwork 专属管理员。
+
+    Args:
+        identity (IworkIdentity | None): 待校验的请求身份。
+
+    Returns:
+        IworkIdentity: 已认证的 iwork 管理身份。
+
+    Raises:
+        TargetResponsibilityError: 身份缺失或没有 iwork 管理权限时抛出。
+    """
+    identity = require_subject(identity)
+    if not identity.can_manage_all_flows:
+        raise TargetResponsibilityError(
+            'admin_required',
+            '此接口仅限主管理员或 iwork 专属管理员',
+            403,
+        )
     return identity
 
 
@@ -511,7 +534,7 @@ def waive_unfinished_obligations(
     Raises:
         TargetResponsibilityError: 当前身份不是管理员时抛出。
     """
-    require_admin(identity)
+    require_iwork_admin(identity)
     instant = _now_instant(now)
     waived_count = 0
     obligations = DailyTargetObligation.objects.using(LOCAL_DB_ALIAS).filter(
@@ -568,7 +591,7 @@ def cleanup_deleted_principal_assignments(
     Raises:
         TargetResponsibilityError: 当前身份不是管理员时抛出。
     """
-    identity = require_admin(identity)
+    identity = require_iwork_admin(identity)
     normalized_subjects = {
         subject.strip()
         for subject in subjects
@@ -657,7 +680,7 @@ def save_group_target(
     if not identity.is_admin and target_date != get_business_date():
         raise TargetResponsibilityError(
             'current_business_date_required',
-            '组长只能修改当前业务日的目标',
+            'iwork 专属管理员和组长只能修改当前业务日的目标',
             403,
         )
     require_flow_permission(identity, flow_name, target_date)

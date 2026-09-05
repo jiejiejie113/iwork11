@@ -210,6 +210,10 @@ IWORK_ADMIN_GROUPS = env.list(
     'IWORK_ADMIN_GROUPS',
     default=['admin', '/admin'],
 )
+IWORK_DEDICATED_ADMIN_GROUPS = env.list(
+    'IWORK_DEDICATED_ADMIN_GROUPS',
+    default=['iwork-admin', '/iwork-admin'],
+)
 IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE = env(
     'IWORK_TARGET_SUBMISSION_DEFAULT_DEADLINE',
     default='09:00',

@@ -131,10 +131,18 @@ def reconcile_alerts_task() -> dict[str, int]:
     for delivery in deliveries:
         audience = delivery.audience
         try:
-            publish_notification_wakeup(
-                subjects=[audience.audience_key] if audience.audience_type == "subject" else [],
-                include_admins=(audience.audience_type == "role" and audience.audience_key == "admin"),
-            )
+            wakeup_kwargs = {
+                "subjects": [audience.audience_key]
+                if audience.audience_type == "subject"
+                else [],
+                "include_admins": (
+                    audience.audience_type == "role"
+                    and audience.audience_key == "admin"
+                ),
+            }
+            if audience.audience_type == "role" and audience.audience_key == "iwork_admin":
+                wakeup_kwargs["include_iwork_admin"] = True
+            publish_notification_wakeup(**wakeup_kwargs)
             delivery.status = NotificationDelivery.Status.SENT
             delivery.attempt_count += 1
             delivery.sent_at = now

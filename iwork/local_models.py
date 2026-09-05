@@ -117,6 +117,7 @@ class IworkPrincipal(models.Model):
     display_name = models.CharField('显示名称', max_length=255, blank=True, default='')
     keycloak_groups = models.JSONField('Keycloak 组', default=list, blank=True)
     is_admin = models.BooleanField('是否管理员', default=False)
+    is_iwork_admin = models.BooleanField('是否 iwork 专属管理员', default=False)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
 

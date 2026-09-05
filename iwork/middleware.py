@@ -285,7 +285,7 @@ class TargetSubmissionGateMiddleware:
         identity = getattr(request, 'iwork_identity', None)
         if identity is None or not identity.subject:
             return self.get_response(request)
-        if identity.is_admin or _is_gate_exempt(request):
+        if identity.is_admin or identity.is_iwork_admin or _is_gate_exempt(request):
             return self.get_response(request)
 
         try:

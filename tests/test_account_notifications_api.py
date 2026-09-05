@@ -28,8 +28,8 @@ def _production_csrf_origins() -> list[str]:
     return []
 
 
-def _create_admin_alert():
-    """创建一条仅管理员可见的逾期警报。"""
+def _create_role_alert(audience_key):
+    """创建一条仅指定角色可见的逾期警报。"""
     from iwork.alert_models import AlertAudience, AlertEvent
     from iwork.alerts.service import AlertService
 
@@ -45,9 +45,14 @@ def _create_admin_alert():
     AlertAudience.objects.using("iwork_local").create(
         event=event,
         audience_type="role",
-        audience_key="admin",
+        audience_key=audience_key,
     )
     return event
+
+
+def _create_admin_alert():
+    """创建一条仅主管理员可见的逾期警报。"""
+    return _create_role_alert("admin")
 
 
 @pytest.mark.django_db(databases=["default", "iwork_local"])
@@ -65,6 +70,36 @@ def test_admin_role_audience_is_resolved_when_notifications_are_read(client):
     event = _create_admin_alert()
 
     admin_response = client.get("/api/account/notifications/", **AUTH_HEADERS)
+    user_response = client.get(
+        "/api/account/notifications/",
+        REMOTE_ADDR="127.0.0.1",
+        HTTP_REMOTE_SUBJECT="user-subject",
+        HTTP_REMOTE_USER="user",
+        HTTP_REMOTE_GROUPS="/apps/iwork",
+    )
+
+    assert admin_response.status_code == 200
+    assert admin_response.json()["unread_count"] == 1
+    assert admin_response.json()["notifications"][0]["id"] == event.pk
+    assert user_response.status_code == 200
+    assert user_response.json() == {"notifications": [], "unread_count": 0}
+
+
+@pytest.mark.django_db(databases=["default", "iwork_local"])
+def test_iwork_admin_role_audience_is_resolved_when_notifications_are_read(client):
+    """iwork 专属管理员应收到 iwork 角色受众的通知，但普通用户不可见。"""
+    event = _create_role_alert("iwork_admin")
+    iwork_admin_headers = {
+        "REMOTE_ADDR": "127.0.0.1",
+        "HTTP_REMOTE_SUBJECT": "iwork-admin-subject",
+        "HTTP_REMOTE_USER": "iwork-admin",
+        "HTTP_REMOTE_GROUPS": "/iwork-admin,/apps/iwork",
+    }
+
+    admin_response = client.get(
+        "/api/account/notifications/",
+        **iwork_admin_headers,
+    )
     user_response = client.get(
         "/api/account/notifications/",
         REMOTE_ADDR="127.0.0.1",

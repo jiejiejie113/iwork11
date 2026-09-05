@@ -165,7 +165,15 @@ def test_target_overdue_event_is_deduplicated_and_recovers_after_late_submit():
         audience_type="role",
         audience_key="admin",
     ).count() == 1
-    assert NotificationDelivery.objects.using("iwork_local").filter(event=event).count() == 1
+    deliveries = list(
+        NotificationDelivery.objects.using("iwork_local")
+        .filter(event=event)
+        .select_related("audience")
+    )
+    assert {delivery.audience.audience_key for delivery in deliveries} == {
+        "admin",
+        "iwork_admin",
+    }
 
     obligation.status = "fulfilled_late"
     obligation.save(using="iwork_local", update_fields=["status"])
@@ -174,6 +182,11 @@ def test_target_overdue_event_is_deduplicated_and_recovers_after_late_submit():
     event.refresh_from_db(using="iwork_local")
     assert event.status == "recovered"
     assert event.recovered_at is not None
-    delivery = NotificationDelivery.objects.using("iwork_local").get(event=event)
-    assert delivery.event_revision == event.revision == 2
-    assert delivery.status == "pending"
+    deliveries = list(
+        NotificationDelivery.objects.using("iwork_local")
+        .filter(event=event)
+        .select_related("audience")
+    )
+    assert len(deliveries) == 2
+    assert all(delivery.event_revision == event.revision == 2 for delivery in deliveries)
+    assert all(delivery.status == "pending" for delivery in deliveries)

@@ -38,7 +38,36 @@ def test_trusted_proxy_builds_complete_identity_from_remote_headers():
         'display_name': '生产组长',
         'keycloak_groups': ['/users', '/admin'],
         'is_admin': True,
+        'is_iwork_admin': False,
     }
+
+
+@override_settings(IWORK_DEDICATED_ADMIN_GROUPS=['iwork-admin', '/iwork-admin'])
+def test_trusted_proxy_recognizes_iwork_dedicated_admin_without_master_admin():
+    """专属管理员组应获得 iwork 管理身份但不能升级为主管理员。"""
+    from iwork.middleware import TrustedProxyMiddleware
+
+    captured = {}
+
+    def endpoint(request):
+        """记录中间件写入的身份。"""
+        captured['identity'] = request.iwork_identity
+        return None
+
+    request = RequestFactory().get(
+        '/',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='iwork-admin-subject',
+        HTTP_REMOTE_USER='iwork-admin',
+        HTTP_REMOTE_GROUPS='/users, /iwork-admin, /apps/iwork',
+    )
+
+    TrustedProxyMiddleware(endpoint)(request)
+
+    identity = captured['identity']
+    assert identity.is_iwork_admin is True
+    assert identity.is_admin is False
+    assert identity.can_manage_all_flows is True
 
 
 @override_settings(IWORK_ADMIN_GROUPS=['admin', '/admin'])
@@ -387,6 +416,24 @@ def test_admin_flows_endpoint_returns_visible_flows():
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_iwork_admin_flows_endpoint_returns_visible_flows():
+    """iwork 专属管理员应能读取全部可分配 Flow 清单。"""
+    from django.conf import settings
+    from django.test import Client
+
+    response = Client().get(
+        '/api/account-admin/flows/',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='iwork-admin-subject',
+        HTTP_REMOTE_USER='iwork-admin',
+        HTTP_REMOTE_GROUPS='/users,/iwork-admin,/apps/iwork',
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {'flows': list(settings.VISIBLE_FLOWS)}
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_flows_endpoint_requires_admin():
     """非管理员访问 flows 端点必须被拒绝。"""
     from django.test import Client
@@ -397,6 +444,30 @@ def test_flows_endpoint_requires_admin():
         HTTP_REMOTE_SUBJECT='subject-a',
         HTTP_REMOTE_USER='leader',
         HTTP_REMOTE_GROUPS='/users',
+    )
+
+    assert response.status_code == 403
+    assert response.json()['code'] == 'admin_required'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_iwork_admin_cannot_change_target_submission_policy():
+    """iwork 专属管理员不能修改全局目标提交策略。"""
+    import json
+
+    from django.test import Client
+
+    response = Client().put(
+        '/api/account-admin/target-policy/',
+        data=json.dumps({
+            'deadline_time': '10:00',
+            'timezone_name': 'Asia/Bangkok',
+        }),
+        content_type='application/json',
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='iwork-admin-subject',
+        HTTP_REMOTE_USER='iwork-admin',
+        HTTP_REMOTE_GROUPS='/iwork-admin,/apps/iwork',
     )
 
     assert response.status_code == 403
@@ -426,6 +497,47 @@ def test_leader_cannot_rewrite_historical_target(monkeypatch):
             target_date=date(2026, 7, 18),
             target_qty=100,
             planned_work_minutes=None,
+        )
+
+    assert exc_info.value.code == 'current_business_date_required'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_iwork_admin_can_save_current_target_but_not_historical_target(monkeypatch):
+    """iwork 专属管理员可管理当前全部 Flow，但不能回写历史目标。"""
+    from iwork.identity import IworkIdentity
+    from iwork.local_models import GroupTargetProduction
+    from iwork.target_responsibility import TargetResponsibilityError, save_group_target
+
+    current_date = date(2026, 8, 18)
+    monkeypatch.setattr('iwork.target_responsibility.get_business_date', lambda: current_date)
+    identity = IworkIdentity(
+        subject='iwork-admin-subject',
+        username='iwork-admin',
+        is_iwork_admin=True,
+    )
+
+    saved = save_group_target(
+        identity=identity,
+        flow_name='SO3-L3A',
+        target_date=current_date,
+        target_qty=100,
+        planned_work_minutes=600,
+    )
+
+    assert saved.target_qty == 100
+    assert GroupTargetProduction.objects.using('iwork_local').filter(
+        target_date=current_date,
+        flow_name='SO3-L3A',
+    ).exists()
+
+    with pytest.raises(TargetResponsibilityError) as exc_info:
+        save_group_target(
+            identity=identity,
+            flow_name='SO3-L3A',
+            target_date=current_date - timedelta(days=1),
+            target_qty=100,
+            planned_work_minutes=600,
         )
 
     assert exc_info.value.code == 'current_business_date_required'

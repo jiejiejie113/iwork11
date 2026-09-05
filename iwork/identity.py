@@ -15,6 +15,16 @@ class IworkIdentity:
     display_name: str = ''
     keycloak_groups: list[str] = field(default_factory=list)
     is_admin: bool = False
+    is_iwork_admin: bool = False
+
+    @property
+    def can_manage_all_flows(self) -> bool:
+        """判断身份是否可以管理全部可见生产组。
+
+        Returns:
+            bool: 主管理员或 iwork 专属管理员返回 ``True``。
+        """
+        return self.is_admin or self.is_iwork_admin
 
     @property
     def is_authenticated(self) -> bool:
@@ -53,6 +63,11 @@ def parse_trusted_proxy_identity(meta: dict[str, object]) -> IworkIdentity:
     raw_groups = str(meta.get('HTTP_REMOTE_GROUPS', '') or '')
     groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
     admin_groups = set(getattr(settings, 'IWORK_ADMIN_GROUPS', ['/admin']))
+    iwork_admin_groups = set(getattr(
+        settings,
+        'IWORK_DEDICATED_ADMIN_GROUPS',
+        ['iwork-admin', '/iwork-admin'],
+    ))
     return IworkIdentity(
         subject=subject,
         username=str(meta.get('HTTP_REMOTE_USER', '') or '').strip(),
@@ -64,4 +79,5 @@ def parse_trusted_proxy_identity(meta: dict[str, object]) -> IworkIdentity:
         ).strip(),
         keycloak_groups=groups,
         is_admin=bool(admin_groups.intersection(groups)),
+        is_iwork_admin=bool(iwork_admin_groups.intersection(groups)),
     )

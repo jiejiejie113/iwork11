@@ -823,12 +823,16 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 
 - 写接口必须使用Nginx/Authorizer注入的稳定`Remote-Subject`。
 - iwork只信任`IWORK_TRUSTED_PROXY_HOSTS`解析出的明确代理地址；禁止按整个私网网段信任身份头。
-- 可信代理声明中的Keycloak短组名`admin`或全路径组名`/admin`推导管理员；当日有效`ManagedFlowAssignment`推导组长；其余iwork账号为普通用户。不得接受其他管理员组名。
+- 主管理员由Keycloak短组名`admin`或全路径组名`/admin`推导；iwork专属管理员使用独立的`/iwork-admin`组（兼容短组名`iwork-admin`）推导。专属管理员不是主管理员，不获得Django`is_staff`、`is_superuser`或Keycloak管理控制台权限。
+- Portal只有主管理员可以授予或撤销专属管理员：授予时幂等确保目标账号同时属于`/apps/iwork`和`/iwork-admin`，撤销时只移除`/iwork-admin`并保留iwork应用访问权；操作以稳定`subject`为唯一目标标识，并在写后回读确认。
+- iwork专属管理员只能看到实际授予的Portal应用，不能因为拥有iwork权限而看到其他未授权应用；Portal导航仅显示iwork账号职能入口，不显示主管理员控制台入口。
+- iwork专属管理员可查看全部可见Flow、今日目标和未填/逾期责任摘要，可管理当前业务日目标、Flow负责人和职责清理；历史目标修正、全局目标提交策略等主管理员专属操作仍受主管理员校验。
+- 可信代理声明中的当日有效`ManagedFlowAssignment`推导组长；其余iwork账号为普通用户。不得接受其他管理员组名。
 - 本地Principal只保存展示快照，授权判断始终使用当前请求身份和有效分配。
 
 ### 13.2 目标责任
 
-- 管理接口`GET /api/account-admin/flows/`只允许管理员访问，返回
+- 管理接口`GET /api/account-admin/flows/`只允许主管理员或iwork专属管理员访问，返回
   `VISIBLE_FLOWS`作为Portal分配页面的候选清单。
 - 创建Flow分配未提供`effective_date`时默认取当前业务日，并立即生成或刷新该日责任；
   截止时间后分配会直接形成逾期责任，不自动顺延到下一业务日。
@@ -845,7 +849,7 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
   个人通知和健康检查放行；管理员由当前代理声明的管理员组免拦截。
 - `GET /api/account/today-targets/` 返回当前业务日、截止时间、默认/边界工时、完成汇总和
   每个可编辑 Flow 的目标、工时、完整性、状态及提交信息；普通组长仅返回有效负责 Flow，
-  管理员返回 `VISIBLE_FLOWS` 全部 Flow。今日目标页用 8/10 小时快捷值只修改草稿，保存全部
+  主管理员和iwork专属管理员返回 `VISIBLE_FLOWS` 全部 Flow。今日目标页用 8/10 小时快捷值只修改草稿，保存全部
   时按 Flow 顺序复用现有逐组写入接口，部分失败不回滚已成功分组。
 - 目标、责任状态和审计日志必须使用`iwork_local`同一事务保存。
 - Flow负责人写入必须通过Portal轻量账号接口实时复验目标subject和`/apps/iwork`；
@@ -863,6 +867,7 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 - 通知SSE只允许发送通用唤醒，正文必须由经过当前身份过滤的HTTP接口重新读取。
 - 通知列表HTTP响应可以返回经过当前身份过滤的事件`payload`，每日责任摘要在打开、
   恢复和再次打开时都必须同步刷新payload，禁止展示旧责任状态。
+- 内置目标逾期和每日责任摘要事件的强制受众同时包含`admin`与`iwork_admin`；升级前已经生成的事件由`0013_backfill_iwork_admin_alert_audiences`幂等补齐专属管理员受众，不删除原有主管理员受众。
 - 通知抽屉默认先显示未读消息，已读消息折叠展示；只有带
   `payload.type=daily_summary`的通知允许打开责任详情。
 

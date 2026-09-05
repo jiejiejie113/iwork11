@@ -116,9 +116,17 @@ def test_daily_summary_recovers_when_all_filled():
             "leaders": [],
         }
     ]
-    delivery = NotificationDelivery.objects.using("iwork_local").get(event=event)
-    assert delivery.event_revision == event.revision == 2
-    assert delivery.status == "pending"
+    deliveries = list(
+        NotificationDelivery.objects.using("iwork_local")
+        .filter(event=event)
+        .select_related("audience")
+    )
+    assert {delivery.audience.audience_key for delivery in deliveries} == {
+        "admin",
+        "iwork_admin",
+    }
+    assert all(delivery.event_revision == event.revision == 2 for delivery in deliveries)
+    assert all(delivery.status == "pending" for delivery in deliveries)
 
 
 @pytest.mark.django_db(databases=["default", "iwork_local"])
