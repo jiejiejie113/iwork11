@@ -1,14 +1,12 @@
-{% load static %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <script src="{% static 'iwork/runtime_guard.js' %}"></script>
-    <script src="{% static 'iwork/vendor/tailwindcss.cdn.js' %}"></script>
-    <script src="{% static 'iwork/vendor/chart.umd.min.js' %}"></script>
-    <script src="{% static 'iwork/vendor/vue.global.prod.js' %}"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script>
         // 自动检测部署子路径（如 /iwork/）
         const _p = location.pathname;
@@ -16,7 +14,6 @@
     </script>
     {% include 'iwork/_tailwind_config.html' %}
     <style>
-        [v-cloak] { display: none !important; }
         .tabular-nums { font-variant-numeric: tabular-nums; }
         .status-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -64,11 +61,7 @@
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen" data-device="{{ device_type }}">
-<div id="iwork-runtime-error" hidden role="alert"
-     style="margin: 2rem auto; max-width: 42rem; padding: 1rem; color: #fecaca; background: #450a0a; border: 1px solid #b91c1c; border-radius: .5rem;">
-    页面脚本加载失败，请刷新后重试；如果问题持续，请联系管理员。
-</div>
-<div id="app" v-cloak class="iwork-app container mx-auto px-4 py-6" data-initial-view="{{ initial_view }}">
+<div id="app" class="iwork-app container mx-auto px-4 py-6" data-initial-view="{{ initial_view }}">
 
     <!-- ========== 顶部工具栏 ========== -->
     <header class="iwork-page-header flex justify-between items-center mb-2 flex-wrap gap-4">
@@ -1010,7 +1003,6 @@ createApp({
         };
     }
 }).mount('#app');
-if (window.iworkMarkVueMounted) window.iworkMarkVueMounted();
 </script>
 </body>
 </html>
