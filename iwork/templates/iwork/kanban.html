@@ -1,16 +1,17 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Eastex生产看板 - 产量看板</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="{% static 'iwork/vendor/tailwindcss.cdn.js' %}"></script>
 <script>
 tailwind.config = {
     darkMode: 'class'
 }
 </script>
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="{% static 'iwork/vendor/vue.global.prod.js' %}"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen overflow-x-hidden">
 

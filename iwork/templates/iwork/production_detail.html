@@ -1,18 +1,21 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="{% static 'iwork/runtime_guard.js' %}"></script>
+    <script src="{% static 'iwork/vendor/tailwindcss.cdn.js' %}"></script>
+    <script src="{% static 'iwork/vendor/chart.umd.min.js' %}"></script>
+    <script src="{% static 'iwork/vendor/vue.global.prod.js' %}"></script>
     <script>
         const _p = location.pathname;
         window.basePath = _p.includes('/iwork/') ? '/iwork/' : '/';
     </script>
     {% include 'iwork/_tailwind_config.html' %}
     <style>
+        [v-cloak] { display: none !important; }
         .tabular-nums { font-variant-numeric: tabular-nums; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .animate-spin { animation: spin 1s linear infinite; }
@@ -339,7 +342,11 @@
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" data-device="{{ device_type }}" style="touch-action:auto;">
-<div id="app" class="iwork-app container mx-auto flex flex-col h-full min-h-0 px-4 py-6"
+<div id="iwork-runtime-error" hidden role="alert"
+     style="margin: 2rem auto; max-width: 42rem; padding: 1rem; color: #fecaca; background: #450a0a; border: 1px solid #b91c1c; border-radius: .5rem;">
+    页面脚本加载失败，请刷新后重试；如果问题持续，请联系管理员。
+</div>
+<div id="app" v-cloak class="iwork-app container mx-auto flex flex-col h-full min-h-0 px-4 py-6"
      data-initial-view="{{ initial_view }}"
      data-detail-type="{{ detail_type|default:'' }}"
      data-detail-key="{{ detail_key|default:'' }}">
@@ -371,7 +378,6 @@
             </span>
         </div>
         <span v-if="!isHistoricalDate" class="iwork-last-update text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
-        </div>
     </header>
 
     <!-- 静默加载条 -->
@@ -4615,6 +4621,7 @@ createApp({
         };
     }
 }).mount('#app');
+if (window.iworkMarkVueMounted) window.iworkMarkVueMounted();
 </script>
 </body>
 </html>
