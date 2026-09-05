@@ -208,14 +208,13 @@
             -webkit-user-select: none;
         }
         .step-order-drag-handle:active { cursor: grabbing; }
-        /* 工序拖拽开关：方形盒边风格，外层与“全部工序”按钮保持同一行高 */
+        /* 工序拖拽开关（融合版）：与「全部工序」按钮同框一体，轨道随状态变色
+           （关闭=灰轨+灰白滑块，开启=橙轨+亮白滑块），无独立边框、无文字说明 */
         .step-order-drag-toggle {
-            display: inline-flex;
+            display: flex;
             align-items: center;
-            gap: .375rem;
-            height: 36px;
             flex-shrink: 0;
-            color: #94a3b8;
+            padding: 0 6px 0 2px;   /* 轨道与容器右缘之间留出小呼吸间距 */
             cursor: pointer;
             user-select: none;
             -webkit-user-select: none;
@@ -235,33 +234,42 @@
             align-items: center;
             justify-content: flex-start;
             box-sizing: border-box;
-            width: 56px;
-            height: 30px;
+            width: 48px;
+            height: 28px;
             padding: 2px;
-            border: 1px solid #475569;
-            border-radius: 0;
-            background: #172033;
-            transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+            border: none;              /* 去外边框：与整体容器融为一体 */
+            border-radius: 6px;
+            background: #64748b;       /* 关闭态轨道：灰（slate-500） */
+            transition: background-color .16s ease;
         }
         .step-order-drag-toggle-thumb {
             display: block;
-            width: 24px;
-            height: 24px;
-            border-radius: 2px;
-            background: #64748b;
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            background: #e2e8f0;       /* 关闭态滑块：灰白（slate-200） */
             transition: background-color .16s ease, transform .16s ease;
         }
         .step-order-drag-toggle input:checked + .step-order-drag-toggle-track {
             justify-content: flex-end;
-            border-color: #22d3ee;
-            background: #164e63;
+            background: #f97316;       /* 开启态轨道：橙（orange-500） */
         }
         .step-order-drag-toggle input:checked + .step-order-drag-toggle-track .step-order-drag-toggle-thumb {
-            background: #67e8f9;
+            background: #ffffff;       /* 开启态滑块：亮白 */
         }
         .step-order-drag-toggle input:focus-visible + .step-order-drag-toggle-track {
             outline: 2px solid #60a5fa;
             outline-offset: 3px;
+        }
+        /* 整体容器：按钮 + 开关同框，外背景填充色与「全部工序」一致（整块蓝色） */
+        .drag-toggle-merged {
+            display: flex;
+            align-items: stretch;
+            width: 100%;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #2563eb;       /* 外部填充色与「全部工序」bg-blue-600 完全一致 */
         }
         .step-order-move { transition: transform 0.24s cubic-bezier(.2,.8,.2,1); }
         /* 树形表格：外框容器先做高度过渡，内部行再淡入淡出 */
@@ -818,10 +826,10 @@
             <!-- 左侧边栏：工序列表 -->
             <div class="w-[220px] max-lg:w-full max-lg:h-[220px] flex-shrink-0 bg-slate-800 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
                 <div class="px-3 py-2 border-b border-slate-700 flex-shrink-0">
-                    <div class="flex items-center gap-2">
+                    <div class="drag-toggle-merged">
                         <button @click="selectedStep = null"
                                 :class="selectedStep === null ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'"
-                                class="flex-1 min-w-0 text-left px-3 py-2 rounded text-sm font-medium transition-colors">
+                                class="flex-1 min-w-0 text-left px-3 py-2 rounded text-sm font-medium transition-colors whitespace-nowrap">
                             全部工序
                         </button>
                         <label class="step-order-drag-toggle"
@@ -835,7 +843,6 @@
                             <span class="step-order-drag-toggle-track" aria-hidden="true">
                                 <span class="step-order-drag-toggle-thumb"></span>
                             </span>
-                            <span class="text-xs whitespace-nowrap">拖拽手柄</span>
                         </label>
                     </div>
                 </div>
