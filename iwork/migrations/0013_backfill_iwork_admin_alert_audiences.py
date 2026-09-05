@@ -54,33 +54,6 @@ def backfill_iwork_admin_alert_audiences(apps, schema_editor):
         )
 
 
-def remove_iwork_admin_alert_audiences(apps, schema_editor):
-    """回滚迁移创建的内置警报专属管理员受众及其投递记录。
-
-    Args:
-        apps: Django迁移时提供的历史模型注册表。
-        schema_editor: 当前数据库连接的迁移编辑器。
-    """
-    database_alias = schema_editor.connection.alias
-    if database_alias != "iwork_local":
-        return
-
-    alert_rule = apps.get_model("iwork", "AlertRule")
-    alert_audience = apps.get_model("iwork", "AlertAudience")
-    rule_ids = list(
-        alert_rule.objects.using(database_alias)
-        .filter(code__in=BUILTIN_RULE_CODES)
-        .values_list("id", flat=True)
-    )
-    if not rule_ids:
-        return
-    alert_audience.objects.using(database_alias).filter(
-        event__rule_id__in=rule_ids,
-        audience_type="role",
-        audience_key=IWORK_ADMIN_ROLE,
-    ).delete()
-
-
 class Migration(migrations.Migration):
     """补齐内置警报事件的 iwork 专属管理员受众。"""
 
@@ -91,6 +64,6 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(
             backfill_iwork_admin_alert_audiences,
-            remove_iwork_admin_alert_audiences,
+            migrations.RunPython.noop,
         ),
     ]

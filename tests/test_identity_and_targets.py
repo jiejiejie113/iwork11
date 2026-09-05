@@ -434,6 +434,26 @@ def test_iwork_admin_flows_endpoint_returns_visible_flows():
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_iwork_admin_cannot_query_historical_target_obligations():
+    """iwork 专属管理员只能查询当前业务日责任，不能读取历史责任。"""
+    from django.test import Client
+    from iwork.statistics import get_business_date
+
+    historical_date = (get_business_date() - timedelta(days=1)).isoformat()
+    response = Client().get(
+        '/api/account-admin/target-obligations/',
+        {'date': historical_date},
+        REMOTE_ADDR='127.0.0.1',
+        HTTP_REMOTE_SUBJECT='iwork-admin-subject',
+        HTTP_REMOTE_USER='iwork-admin',
+        HTTP_REMOTE_GROUPS='/users,/iwork-admin,/apps/iwork',
+    )
+
+    assert response.status_code == 403
+    assert response.json()['code'] == 'current_business_date_required'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_flows_endpoint_requires_admin():
     """非管理员访问 flows 端点必须被拒绝。"""
     from django.test import Client

@@ -745,6 +745,14 @@ def target_obligations(request):
     )
     if date_error:
         return date_error
+    if identity.is_iwork_admin and not identity.is_admin and target_date != get_business_date():
+        return Response(
+            {
+                'error': 'iwork专属管理员只能查询当前业务日责任',
+                'code': 'current_business_date_required',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
     ensure_daily_target_obligations(target_date)
     obligations = (
         DailyTargetObligation.objects.using(LOCAL_DB_ALIAS)
