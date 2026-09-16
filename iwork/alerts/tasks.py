@@ -71,7 +71,7 @@ def evaluate_published_snapshot_task(
     """异步评估一份已成功发布的实时快照。
 
     Args:
-        business_date_text: ISO格式曼谷业务日期。
+        business_date_text: ISO格式缅甸业务日期。
         snapshot_version: 已切换为current的版本。
 
     Returns:

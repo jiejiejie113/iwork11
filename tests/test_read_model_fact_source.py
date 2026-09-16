@@ -11,7 +11,7 @@ from iwork.read_model.builder import build_snapshot
 
 
 BUSINESS_DATE = date(2026, 8, 3)
-NOW = datetime(2026, 8, 3, 11, 0, tzinfo=ZoneInfo("Asia/Bangkok"))
+NOW = datetime(2026, 8, 3, 11, 0, tzinfo=ZoneInfo("Asia/Yangon"))
 
 
 def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():

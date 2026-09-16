@@ -242,7 +242,7 @@ Celery Beat (每 60s)
 
 > 来源：`iwork/api_views.py`，注册于 `iwork/urls.py`
 
-今日视图优先读取 Redis。早于曼谷业务日期的请求默认读取 `iwork_local` 中已经发布的
+今日视图优先读取 Redis。早于缅甸业务日期的请求默认读取 `iwork_local` 中已经发布的
 历史快照，不访问远程生产库，也不支持 `mode` 切换。
 
 ### `GET /api/dashboard/detail/flows/`
@@ -299,9 +299,9 @@ Celery Beat (每 60s)
 }
 ```
 
-员工效率为 `output_value / work_minutes * 100`。`work_minutes` 使用 UTC+7：
-07:00 起算，11:00-12:00 固定 240 分钟，12:00 后扣除一小时午休。历史日期、
-尚未上班、工时缺失或分钟数为 0 时效率返回 `null`。
+员工效率为 `output_value / work_minutes * 100`。`work_minutes` 使用 UTC+6:30：
+07:30 起算，扣除午休 11:30-12:00 与晚休 16:00-16:30，18:30 收工后封顶 600 分钟。
+历史日期、尚未上班、工时缺失或分钟数为 0 时效率返回 `null`。
 
 缓存：今日 `stats:detail:flow:v2:<name>`（TTL 到午夜）。缓存产值快照；上班分钟和
 员工效率在请求时计算。

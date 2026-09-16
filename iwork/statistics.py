@@ -22,6 +22,9 @@ BUSINESS_TIME_ZONE = ZoneInfo(settings.IWORK_BUSINESS_TIME_ZONE)
 WORKDAY_START_MINUTE = settings.WORKDAY_START_MINUTE
 WORKDAY_LUNCH_START_MINUTE = settings.WORKDAY_LUNCH_START_MINUTE
 WORKDAY_LUNCH_END_MINUTE = settings.WORKDAY_LUNCH_END_MINUTE
+WORKDAY_BREAK2_START_MINUTE = settings.WORKDAY_BREAK2_START_MINUTE
+WORKDAY_BREAK2_END_MINUTE = settings.WORKDAY_BREAK2_END_MINUTE
+WORKDAY_END_MINUTE = settings.WORKDAY_END_MINUTE
 
 # =====
 # 临时开关：跳过月份全表扫描查询以加速启动（改为 False 恢复完整功能）
@@ -71,13 +74,13 @@ def _result_or_cancel(future, name: str, timeout: int = QUERY_TIMEOUT):
 
 
 def _seconds_to_midnight(current_time: datetime | None = None) -> int:
-    """计算距离曼谷业务日午夜的剩余秒数。
+    """计算距离缅甸业务日午夜的剩余秒数。
 
     Args:
         current_time: 可选的当前时间；主要用于稳定验证跨时区边界。
 
     Returns:
-        距离下一个曼谷午夜的秒数，并增加五秒边界余量。
+        距离下一个缅甸午夜的秒数，并增加五秒边界余量。
     """
     now = _as_business_time(current_time)
     midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -106,7 +109,7 @@ def calculate_flow_efficiency(avg_time: float | None, baseline: float | None) ->
 
 
 def _as_business_time(current_time: datetime | None = None) -> datetime:
-    """将指定时间转换为曼谷业务时区时间。"""
+    """将指定时间转换为缅甸业务时区时间。"""
     now = current_time or datetime.now(BUSINESS_TIME_ZONE)
     if now.tzinfo is None:
         now = now.replace(tzinfo=BUSINESS_TIME_ZONE)
@@ -114,7 +117,7 @@ def _as_business_time(current_time: datetime | None = None) -> datetime:
 
 
 def get_business_date(current_time: datetime | None = None) -> date:
-    """返回 UTC+7 业务日期。"""
+    """返回 UTC+6:30 业务日期。"""
     return _as_business_time(current_time).date()
 
 
@@ -122,7 +125,8 @@ def get_effective_work_minutes(
     target_date: date,
     current_time: datetime | None = None,
 ) -> int | None:
-    """返回 UTC+7 当日从 07:00 起、扣除 11:00-12:00 午休的分钟数。"""
+    """返回 UTC+6:30 当日从 07:30 起、扣除午休(11:30-12:00)与晚休(16:00-16:30)、
+    18:30 收工封顶的有效工作分钟数；未开工返回 None，收工后按封顶值返回。"""
     now = _as_business_time(current_time)
     if target_date != now.date():
         return None
@@ -130,20 +134,30 @@ def get_effective_work_minutes(
     current_minutes = now.hour * 60 + now.minute
     if current_minutes < WORKDAY_START_MINUTE:
         return None
-    if current_minutes < WORKDAY_LUNCH_START_MINUTE:
-        return current_minutes - WORKDAY_START_MINUTE
-    if current_minutes < WORKDAY_LUNCH_END_MINUTE:
-        return WORKDAY_LUNCH_START_MINUTE - WORKDAY_START_MINUTE
-    lunch_minutes = WORKDAY_LUNCH_END_MINUTE - WORKDAY_LUNCH_START_MINUTE
-    return current_minutes - WORKDAY_START_MINUTE - lunch_minutes
+    if current_minutes >= WORKDAY_END_MINUTE:
+        current_minutes = WORKDAY_END_MINUTE
+
+    elapsed = current_minutes - WORKDAY_START_MINUTE
+    breaks = (
+        (WORKDAY_LUNCH_START_MINUTE, WORKDAY_LUNCH_END_MINUTE),
+        (WORKDAY_BREAK2_START_MINUTE, WORKDAY_BREAK2_END_MINUTE),
+    )
+    for break_start, break_end in breaks:
+        if current_minutes <= break_start:
+            break
+        if current_minutes < break_end:
+            elapsed -= current_minutes - break_start
+            break
+        elapsed -= break_end - break_start
+    return elapsed
 
 
 def detail_cache_key(name: str, target_date: date | None = None) -> str:
-    """生成按曼谷业务日期隔离的详情缓存键。
+    """生成按缅甸业务日期隔离的详情缓存键。
 
     Args:
         name: 详情缓存的逻辑名称。
-        target_date: 缓存所属业务日期；默认取当前曼谷业务日。
+        target_date: 缓存所属业务日期；默认取当前缅甸业务日。
 
     Returns:
         包含业务日期的详情缓存键。
@@ -153,10 +167,10 @@ def detail_cache_key(name: str, target_date: date | None = None) -> str:
 
 
 def realtime_process_list_cache_key(target_date: date | None = None) -> str:
-    """生成按曼谷业务日期隔离的实时工序列表缓存键。
+    """生成按缅甸业务日期隔离的实时工序列表缓存键。
 
     Args:
-        target_date: 缓存所属业务日期；默认取当前曼谷业务日。
+        target_date: 缓存所属业务日期；默认取当前缅甸业务日。
 
     Returns:
         包含业务日期的实时工序列表缓存键。
@@ -248,7 +262,7 @@ def _refresh_cached_monthly_today(
     Args:
         cached_rows: 按工序组织的月度缓存数据。
         today_rows: 本轮查询得到的当天数据。
-        today_str: 曼谷业务日的 ISO 日期字符串。
+        today_str: 缅甸业务日的 ISO 日期字符串。
 
     Returns:
         dict: 保留历史日期、仅使用本轮当天数据的月度结果。
@@ -460,11 +474,11 @@ def get_batch_stats(q=None, target_date: date | None = None) -> dict:
 
 
 def cache_batch_to_redis(batch: dict, target_date: date | None = None) -> None:
-    """将批量结果写入 Redis，并在曼谷业务日午夜失效。
+    """将批量结果写入 Redis，并在缅甸业务日午夜失效。
 
     Args:
         batch: 按工序组织的实时统计批次。
-        target_date: 批次所属的曼谷业务日期。
+        target_date: 批次所属的缅甸业务日期。
     """
     ttl = _seconds_to_midnight()
     business_date = target_date or get_business_date()
@@ -516,7 +530,7 @@ def cache_detail_batch_to_redis(
 
     Args:
         detail_batch: Flow、工序和产品详情批次。
-        target_date: 批次所属的曼谷业务日期。
+        target_date: 批次所属的缅甸业务日期。
     """
     ttl = _seconds_to_midnight()
     business_date = target_date or get_business_date()

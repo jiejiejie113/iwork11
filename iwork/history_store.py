@@ -58,7 +58,7 @@ class RemoteHistorySource:
         """从远程只读库构建指定日期的聚合载荷。
 
         Args:
-            target_date: 已结束的曼谷业务日期。
+            target_date: 已结束的缅甸业务日期。
 
         Returns:
             经过聚合的生产事实、工序元数据和源数据计数。
@@ -156,7 +156,7 @@ def snapshot_history_date(target_date: date, source=None) -> HistoricalSyncState
     """构建并原子发布一个已结束生产日期的本地历史快照。
 
     Args:
-        target_date: 需要生成快照的曼谷业务日期。
+        target_date: 需要生成快照的缅甸业务日期。
         source: 可选的远程数据源适配器。
 
     Returns:
@@ -211,7 +211,7 @@ def _renew_snapshot_lock(lock, target_date: date, stop_event: Event, lease_lost:
 
     Args:
         lock: django-redis 分布式锁实例。
-        target_date: 当前构建的曼谷业务日期。
+        target_date: 当前构建的缅甸业务日期。
         stop_event: 主任务完成后用于停止续租线程的事件。
         lease_lost: 续租失败时通知主任务终止发布的事件。
     """
@@ -235,7 +235,7 @@ def _snapshot_history_date_locked(
     """在持有单日期构建锁时生成并发布历史快照。
 
     Args:
-        target_date: 需要生成快照的曼谷业务日期。
+        target_date: 需要生成快照的缅甸业务日期。
         source: 可选的远程数据源适配器。
         ensure_lock_owned: 发布前验证分布式锁所有权的回调。
 

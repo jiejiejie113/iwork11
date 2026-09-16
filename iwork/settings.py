@@ -204,8 +204,8 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 # ======
 # 业务配置（统一管理，模块内通过 django.conf.settings 引用）
-# iwork 的生产日期、班次和 Celery 调度统一使用曼谷时区。
-IWORK_BUSINESS_TIME_ZONE = env('IWORK_BUSINESS_TIME_ZONE', default='Asia/Bangkok')
+# iwork 的生产日期、班次和 Celery 调度统一使用缅甸时区。
+IWORK_BUSINESS_TIME_ZONE = env('IWORK_BUSINESS_TIME_ZONE', default='Asia/Yangon')
 IWORK_ADMIN_GROUPS = env.list(
     'IWORK_ADMIN_GROUPS',
     default=['admin', '/admin'],
@@ -243,9 +243,13 @@ IWORK_ACCOUNT_ACCESS_VALIDATION_TIMEOUT_SECONDS = env.float(
     default=5.0,
 )
 CELERY_TIMEZONE = IWORK_BUSINESS_TIME_ZONE
-WORKDAY_START_MINUTE = 7 * 60
-WORKDAY_LUNCH_START_MINUTE = 11 * 60
+# 缅甸工厂作息（本地时刻分钟数）：07:30 开工，午休 11:30-12:00，晚休 16:00-16:30，18:30 收工。
+WORKDAY_START_MINUTE = 7 * 60 + 30
+WORKDAY_LUNCH_START_MINUTE = 11 * 60 + 30
 WORKDAY_LUNCH_END_MINUTE = 12 * 60
+WORKDAY_BREAK2_START_MINUTE = 16 * 60
+WORKDAY_BREAK2_END_MINUTE = 16 * 60 + 30
+WORKDAY_END_MINUTE = 18 * 60 + 30
 
 # 历史快照单日期构建锁超时；应覆盖一次完整的远程聚合与本地发布。
 HISTORY_SNAPSHOT_LOCK_TIMEOUT = env.int('HISTORY_SNAPSHOT_LOCK_TIMEOUT', default=1800)
@@ -268,7 +272,7 @@ PRODUCTION_ORDERS_SQLITE_PATH = BASE_DIR / 'sqlite' / 'production_orders.db'
 PRODUCTION_ORDERS_IMPORT_BATCH_SIZE = 1000
 PRODUCTION_ORDERS_PROGRESS_INTERVAL = 5000
 
-# 实时与详情缓存按曼谷业务日期隔离，避免跨午夜的旧任务覆盖新数据。
+# 实时与详情缓存按缅甸业务日期隔离，避免跨午夜的旧任务覆盖新数据。
 REALTIME_PROCESS_LIST_CACHE_PREFIX = 'stats:realtime:_process_list'
 DETAIL_CACHE_PREFIX = 'stats:detail:v5'
 PRODUCT_OVERVIEW_CACHE_NAME = 'product_overview'

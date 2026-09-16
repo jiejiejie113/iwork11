@@ -547,7 +547,7 @@ GET /api/dashboard/detail/flow/<flow_name>/
 ```
 
 `output_value = qty * step_time`。员工任一工序缺少标准工时时，总产值和员工效率
-返回 `null`。员工效率按 UTC+7 当日有效上班分钟实时计算，历史日期返回 `null`。
+返回 `null`。员工效率按 UTC+6:30 当日有效上班分钟实时计算，历史日期返回 `null`。
 历史目标从 `target_production` 按 `target_date + employee_id + workorder` 读取，响应中的
 `target` 和 `wo_targets` 只属于请求日期；历史页面不可编辑目标。
 
@@ -720,7 +720,7 @@ data: {"type":"dashboard_update","timestamp":"2026-05-29T14:30:00","data":{"tota
 
 ### 8.5 数据源选择
 
-数据源由请求日期自动决定：曼谷业务日期当天读取 Redis，并在缓存缺失时回退远程只读
+数据源由请求日期自动决定：缅甸业务日期当天读取 Redis，并在缓存缺失时回退远程只读
 查询；早于业务日期的请求只读取 `iwork_local` 成功快照。历史接口不支持 `mode`
 切换，旧客户端传入该参数也不会绕过本地快照。
 

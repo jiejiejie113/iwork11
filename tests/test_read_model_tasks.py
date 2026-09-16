@@ -151,7 +151,7 @@ def test_refresh_lock_prevents_overlapping_remote_collection(mock_build):
 @patch("iwork.tasks.SnapshotStore")
 @patch("iwork.tasks.build_snapshot")
 def test_refresh_discards_snapshot_after_bangkok_midnight(mock_build, mock_store_class):
-    """构建期间跨过曼谷午夜时不得发布昨日快照。"""
+    """构建期间跨过缅甸午夜时不得发布昨日快照。"""
     from iwork.tasks import sync_dashboard_stats
 
     mock_build.return_value = {

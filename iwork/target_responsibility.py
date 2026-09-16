@@ -294,7 +294,7 @@ def require_iwork_admin(identity: IworkIdentity | None) -> IworkIdentity:
 
 
 def get_policy_for_date(target_date: date) -> tuple[time, str]:
-    """获取目标日期生效的策略，缺省为曼谷 09:00。
+    """获取目标日期生效的策略，缺省为缅甸 09:00。
 
     Args:
         target_date (date): 待查询策略的业务日期。

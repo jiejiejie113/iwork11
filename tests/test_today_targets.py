@@ -12,7 +12,7 @@ from django.test import Client, RequestFactory, override_settings
 
 
 TARGET_DATE = date(2026, 9, 2)
-BUSINESS_ZONE = ZoneInfo('Asia/Bangkok')
+BUSINESS_ZONE = ZoneInfo('Asia/Yangon')
 EARLY_TIME = datetime(2026, 9, 2, 8, 30, tzinfo=BUSINESS_ZONE)
 
 

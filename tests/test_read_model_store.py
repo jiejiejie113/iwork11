@@ -14,7 +14,7 @@ from iwork.read_model.errors import (
 from iwork.read_model.store import SnapshotStore
 
 
-BUSINESS_TIME_ZONE = ZoneInfo("Asia/Bangkok")
+BUSINESS_TIME_ZONE = ZoneInfo("Asia/Yangon")
 BUSINESS_DATE = date(2026, 7, 31)
 
 
@@ -212,7 +212,7 @@ def test_stale_snapshot_is_served_until_hard_limit():
 
 
 def test_business_dates_are_isolated():
-    """不同曼谷业务日期不得读取到彼此的 current 指针。"""
+    """不同缅甸业务日期不得读取到彼此的 current 指针。"""
     now = datetime(2026, 7, 31, 12, 0, tzinfo=BUSINESS_TIME_ZONE)
     store = SnapshotStore(cache_backend=cache, now=lambda: now)
     store.publish(_snapshot_payload(now))

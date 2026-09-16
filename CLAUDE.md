@@ -123,7 +123,7 @@ api_views_local.py  ← 本地历史读取 + 缺失快照异步入队 API
 - 业务配置管理（ALLOWED_FLOWS / HIDDEN_FLOWS / VISIBLE_FLOWS）
 - 隐藏分组机制
 - 工单列表字段规范
-- 时间与时区（UTC+7）
+- 时间与时区（UTC+6:30 缅甸）
 - 图表配置（字体、颜色）
 - SSE 异步架构
 - 前后端字段同步对照表

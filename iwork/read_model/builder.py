@@ -24,10 +24,10 @@ def build_snapshot(
     source=None,
     now: Callable[[], datetime] | None = None,
 ) -> dict:
-    """为单个曼谷业务日期构建完整快照。
+    """为单个缅甸业务日期构建完整快照。
 
     Args:
-        business_date: 需要构建的曼谷业务日期。
+        business_date: 需要构建的缅甸业务日期。
         source: 远程查询模块兼容适配器；默认使用 ``iwork.queries``。
         now: 返回当前时间的函数；主要用于稳定测试版本信息。
 

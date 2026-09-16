@@ -24,7 +24,7 @@ class ReadModelFactSource:
         """从远程生产库单次采集基础事实并加载只读补充信息。
 
         Args:
-            business_date: 需要采集的曼谷业务日期。
+            business_date: 需要采集的缅甸业务日期。
             source: 远程查询模块兼容适配器；默认使用 ``iwork.queries``。
 
         Returns:
@@ -81,7 +81,7 @@ class ReadModelFactSource:
         """初始化单次采集事实源。
 
         Args:
-            business_date: 事实所属的曼谷业务日期。
+            business_date: 事实所属的缅甸业务日期。
             facts: 单次远程查询返回的细粒度生产事实。
             cumulative_facts: 按当前明细粒度汇总的累计生产事实。
             products: 按完整工单号组织的本地产品信息。

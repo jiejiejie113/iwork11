@@ -14,7 +14,7 @@ from iwork.read_model.store import SnapshotStore
 
 
 BUSINESS_DATE = date(2026, 7, 31)
-NOW = datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Asia/Bangkok"))
+NOW = datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Asia/Yangon"))
 
 
 @pytest.fixture(autouse=True)

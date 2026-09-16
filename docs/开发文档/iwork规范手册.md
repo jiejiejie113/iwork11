@@ -376,23 +376,41 @@ Flow 员工明细表提供“字段设置”面板，展开和收起视图分别
 
 ## 5. 时间与时区
 
-所有前端时间显示使用 **UTC+7**（越南/曼谷时区）：
+所有前端时间显示使用 **UTC+6:30**（缅甸时区）：
 
 ```javascript
-new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' })
+new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' })
 ```
 
-生产详情默认日期也必须使用 `Asia/Bangkok`，不得使用 UTC 的
+生产详情默认日期也必须使用 `Asia/Yangon`，不得使用 UTC 的
 `new Date().toISOString()`。后端 Flow 详情使用同一业务日期判断“今日”缓存。
 
-员工有效上班分钟从 07:00 起算，11:00-12:00 固定为 240 分钟，12:00 后扣除一
-小时午休；历史日期、07:00 前和分钟数为 0 时不计算员工效率。
+后端业务时区统一由 `settings.IWORK_BUSINESS_TIME_ZONE` 控制（默认
+`Asia/Yangon`，`env/local.env` 与 `env/production.env` 显式声明）；Celery
+调度、目标提交策略默认时区、业务日期与缓存 TTL 均跟随该配置。
+
+**缅甸工厂作息**（`settings.py` 中的 `WORKDAY_*` 常量）：
+07:30 开工，午休 11:30-12:00，晚休 16:00-16:30，18:30 收工。员工有效上班分钟
+（`statistics.get_effective_work_minutes`）从 07:30 起算，扣除两段休息，18:30
+后按封顶 600 分钟返回；历史日期、07:30 前返回 None（不计算员工效率）。
 
 **适用位置**：
-- `dashboard.html`：`lastUpdate`（SSE 接收时更新）
+- `dashboard.html`：`lastUpdate`（SSE 接收时更新）、`currentHour`（小时趋势）
 - `production_detail.html`：`lastUpdateTime`（数据加载/刷新时更新）
+- `today_targets.html`：`formatDeadline`（截止时间格式化）
 
-**修改方式**：如需调整时区，全局替换 `Asia/Bangkok` 为目标时区标识符。
+**修改方式**：如需调整时区，全局替换 `Asia/Yangon` 为目标时区标识符，并同步
+更新 `env/*.env` 中的 `IWORK_BUSINESS_TIME_ZONE`、`WORKDAY_*` 常量与相关测试。
+
+**存量数据更新**（切换时区时人工执行，`timezone_name` 影响未来截止时间计算）：
+
+```sql
+UPDATE target_submission_policy
+SET timezone_name = 'Asia/Yangon'
+WHERE timezone_name = 'Asia/Bangkok';
+```
+
+`daily_target_obligation.deadline_at` 为已冻结的历史时刻，不随策略变更回改。
 
 ---
 

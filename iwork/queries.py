@@ -521,7 +521,7 @@ def get_read_model_fact_rows(target_date: date) -> list[dict]:
     """使用单条远程 SQL 采集当前业务日的细粒度生产事实。
 
     Args:
-        target_date: 曼谷业务日期。
+        target_date: 缅甸业务日期。
 
     Returns:
         list[dict]: 可在内存中派生全部实时视图的不可变事实行。
@@ -594,7 +594,7 @@ def get_read_model_facts(target_date: date) -> dict:
     """构建实时读模型使用的最低必要粒度聚合事实。
 
     Args:
-        target_date: 曼谷业务日期。
+        target_date: 缅甸业务日期。
 
     Returns:
         员工、工序、工单、Flow 粒度事实和工单产品映射。

@@ -235,7 +235,7 @@ def test_production_detail_sse_discards_late_today_responses_after_date_change()
 
 
 def test_production_detail_sse_advances_to_new_business_date_at_midnight():
-    """持续打开的今日页面应随 SSE 通知切换到新的曼谷业务日期。"""
+    """持续打开的今日页面应随 SSE 通知切换到新的缅甸业务日期。"""
     assert 'const businessToday = ref(businessDateString());' in TEMPLATE
     assert 'function adoptProductionDetailBusinessDate(msg)' in TEMPLATE
     assert 'const wasFollowingToday = selectedDate.value === businessToday.value;' in TEMPLATE

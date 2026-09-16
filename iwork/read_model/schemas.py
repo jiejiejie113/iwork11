@@ -36,7 +36,7 @@ def _sum_qty_for_business_date(
 
     Args:
         rows: 包含 ``date`` 与 ``qty`` 的统计明细。
-        business_date: 需要汇总的曼谷业务日期。
+        business_date: 需要汇总的缅甸业务日期。
         field_name: 用于错误提示的字段名称。
 
     Returns:
@@ -69,7 +69,7 @@ def _validate_realtime_totals(realtime: dict, business_date: date) -> None:
 
     Args:
         realtime: 按 ``all`` 和工序号组织的实时统计视图。
-        business_date: 当前快照对应的曼谷业务日期。
+        business_date: 当前快照对应的缅甸业务日期。
 
     Raises:
         SnapshotValidationError: 任一可比较汇总与实时总量不一致。

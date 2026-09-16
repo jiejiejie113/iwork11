@@ -147,7 +147,7 @@ class SnapshotStore:
 
         Args:
             view_name: 快照视图名称。
-            business_date: 曼谷业务日期。
+            business_date: 缅甸业务日期。
 
         Returns:
             数据、元数据和陈旧标记。
@@ -175,7 +175,7 @@ class SnapshotStore:
         """只读取当前完整版本的元数据。
 
         Args:
-            business_date: 曼谷业务日期。
+            business_date: 缅甸业务日期。
 
         Returns:
             空业务数据、当前版本元数据和陈旧标记。
@@ -205,7 +205,7 @@ class SnapshotStore:
 
         Args:
             view_names: 需要同时读取的视图名称。
-            business_date: 曼谷业务日期。
+            business_date: 缅甸业务日期。
 
         Returns:
             以视图名为键的数据字典、共同元数据和陈旧标记。
@@ -270,7 +270,7 @@ class SnapshotStore:
 
         Args:
             metadata: 当前版本的快照元数据。
-            business_date: 请求的曼谷业务日期。
+            business_date: 请求的缅甸业务日期。
 
         Returns:
             快照是否超过软陈旧阈值。

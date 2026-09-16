@@ -95,7 +95,7 @@ class AlertService:
         保证Celery至少一次执行不会产生重复评估。
 
         Args:
-            business_date: 快照所属曼谷业务日期。
+            business_date: 快照所属缅甸业务日期。
             snapshot_version: 已切换为 current 的快照版本。
 
         Returns:
@@ -270,7 +270,7 @@ class AlertService:
         """评估并恢复指定业务日的目标逾期事件。
 
         Args:
-            business_date: 待检查的曼谷业务日期。
+            business_date: 待检查的缅甸业务日期。
 
         Returns:
             EvaluationResult: 本轮仍处于异常中的事件数量。
@@ -335,7 +335,7 @@ class AlertService:
         汇总事件；全部填写或豁免后转为已恢复。每条事件按业务日去重。
 
         Args:
-            business_date: 待检查的曼谷业务日期。
+            business_date: 待检查的缅甸业务日期。
 
         Returns:
             EvaluationResult: 本轮未填写生产组数量。

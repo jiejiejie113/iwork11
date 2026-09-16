@@ -47,18 +47,18 @@ class TestCalculateFlowEfficiency:
 
 
 class TestEmployeeEfficiency:
-    """Flow 员工效率使用 UTC+7 有效上班分钟。"""
+    """Flow 员工效率使用 UTC+6:30 有效上班分钟。"""
 
-    def test_morning_work_minutes_start_at_seven(self):
-        """有效工时应从曼谷时间七点开始。"""
+    def test_morning_work_minutes_start_at_seven_thirty(self):
+        """有效工时应从缅甸时间七点半开始。"""
         from iwork.statistics import get_effective_work_minutes
 
-        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
+        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Yangon'))
 
-        assert get_effective_work_minutes(date(2026, 7, 15), now) == 210
+        assert get_effective_work_minutes(date(2026, 7, 15), now) == 180
 
-    def test_business_date_uses_bangkok_timezone(self):
-        """业务日期应使用曼谷时区。"""
+    def test_business_date_uses_yangon_timezone(self):
+        """业务日期应使用缅甸时区。"""
         from iwork.statistics import get_business_date
 
         utc_evening = datetime(
@@ -72,20 +72,29 @@ class TestEmployeeEfficiency:
         ('hour', 'minute', 'expected'),
         [
             (6, 59, None),
-            (7, 0, 0),
-            (11, 0, 240),
+            (7, 29, None),
+            (7, 30, 0),
+            (11, 0, 210),
             (11, 30, 240),
+            (11, 45, 240),
             (12, 0, 240),
             (13, 0, 300),
+            (16, 0, 480),
+            (16, 15, 480),
+            (16, 30, 480),
+            (17, 0, 510),
+            (18, 30, 600),
+            (19, 0, 600),
+            (23, 59, 600),
         ],
     )
     def test_work_minutes_cover_shift_boundaries(self, hour, minute, expected):
-        """有效工时计算应覆盖班次边界。"""
+        """有效工时计算应覆盖缅甸作息边界（含午休、晚休与收工封顶）。"""
         from iwork.statistics import get_effective_work_minutes
 
         now = datetime(
             2026, 7, 15, hour, minute, 59,
-            tzinfo=ZoneInfo('Asia/Bangkok'),
+            tzinfo=ZoneInfo('Asia/Yangon'),
         )
 
         assert get_effective_work_minutes(date(2026, 7, 15), now) == expected
@@ -94,7 +103,7 @@ class TestEmployeeEfficiency:
         """历史日期不应返回实时有效工时。"""
         from iwork.statistics import get_effective_work_minutes
 
-        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Bangkok'))
+        now = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo('Asia/Yangon'))
 
         assert get_effective_work_minutes(date(2026, 7, 14), now) is None
 
@@ -111,11 +120,11 @@ class TestEmployeeEfficiency:
 class TestSecondsToMidnight:
     """_seconds_to_midnight TTL 计算"""
 
-    def test_uses_bangkok_midnight_for_utc_input(self):
-        """UTC 时间输入应按曼谷午夜计算缓存剩余时间。"""
+    def test_uses_yangon_midnight_for_utc_input(self):
+        """UTC 时间输入应按缅甸午夜计算缓存剩余时间。"""
         from iwork.statistics import _seconds_to_midnight
 
-        utc_time = datetime(2026, 7, 20, 16, 59, 59, tzinfo=ZoneInfo('UTC'))
+        utc_time = datetime(2026, 7, 20, 17, 29, 59, tzinfo=ZoneInfo('UTC'))
 
         assert _seconds_to_midnight(utc_time) == 6
 
@@ -137,7 +146,7 @@ class TestSecondsToMidnight:
         from iwork.statistics import _seconds_to_midnight
 
         # 直接计算预期值
-        now = datetime.now(ZoneInfo('Asia/Bangkok'))
+        now = datetime.now(ZoneInfo('Asia/Yangon'))
         midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         expected = int((midnight - now).total_seconds()) + 5
 

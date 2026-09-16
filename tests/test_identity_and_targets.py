@@ -158,7 +158,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
     early_time = datetime.combine(
         target_date,
         time(8, 30),
-        tzinfo=ZoneInfo('Asia/Bangkok'),
+        tzinfo=ZoneInfo('Asia/Yangon'),
     )
     monkeypatch.setattr('iwork.target_responsibility.get_business_date', lambda: target_date)
     monkeypatch.setattr('iwork.target_responsibility.timezone.now', lambda: early_time)
@@ -183,7 +183,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_pending_obligation_becomes_overdue_after_bangkok_deadline():
-    """曼谷 09:00 后未提交的责任应标记为逾期。"""
+    """缅甸 09:00 后未提交的责任应标记为逾期。"""
     from zoneinfo import ZoneInfo
 
     from iwork.local_models import IworkPrincipal, ManagedFlowAssignment
@@ -198,13 +198,13 @@ def test_pending_obligation_becomes_overdue_after_bangkok_deadline():
     now = datetime.combine(
         date(2026, 8, 18),
         time(9, 1),
-        tzinfo=ZoneInfo('Asia/Bangkok'),
+        tzinfo=ZoneInfo('Asia/Yangon'),
     )
 
     obligations = ensure_daily_target_obligations(date(2026, 8, 18), now=now)
 
     assert obligations[0].status == 'overdue'
-    assert timezone.localtime(obligations[0].deadline_at, ZoneInfo('Asia/Bangkok')).time() == time(9, 0)
+    assert timezone.localtime(obligations[0].deadline_at, ZoneInfo('Asia/Yangon')).time() == time(9, 0)
 
 
 def test_policy_change_uses_next_business_day():
@@ -270,7 +270,7 @@ def test_waived_obligation_revives_when_leader_reassigned():
     from iwork.identity import IworkIdentity
 
     target_date = date(2026, 8, 18)
-    early_time = datetime.combine(target_date, time(8, 30), tzinfo=ZoneInfo('Asia/Bangkok'))
+    early_time = datetime.combine(target_date, time(8, 30), tzinfo=ZoneInfo('Asia/Yangon'))
     leader_a = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     assignment = ManagedFlowAssignment.objects.create(
         principal=leader_a,
@@ -322,7 +322,7 @@ def test_late_submission_preserves_overdue_fact():
         flow_name='Sewing-A1',
         effective_date=target_date - timedelta(days=30),
     )
-    late_time = datetime.combine(target_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
+    late_time = datetime.combine(target_date, time(9, 1), tzinfo=ZoneInfo('Asia/Yangon'))
     ensure_daily_target_obligations(target_date, now=late_time)
 
     with patch('iwork.target_responsibility.timezone.now', return_value=late_time):
@@ -481,7 +481,7 @@ def test_iwork_admin_cannot_change_target_submission_policy():
         '/api/account-admin/target-policy/',
         data=json.dumps({
             'deadline_time': '10:00',
-            'timezone_name': 'Asia/Bangkok',
+            'timezone_name': 'Asia/Yangon',
         }),
         content_type='application/json',
         REMOTE_ADDR='127.0.0.1',
@@ -592,7 +592,7 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
     early_time = datetime.combine(
         target_date,
         time(8, 30),
-        tzinfo=ZoneInfo('Asia/Bangkok'),
+        tzinfo=ZoneInfo('Asia/Yangon'),
     )
     monkeypatch.setattr('iwork.target_responsibility.timezone.now', lambda: early_time)
     ensure_daily_target_obligations(target_date)
@@ -631,7 +631,7 @@ def test_assignment_after_deadline_takes_effect_same_day_as_overdue():
     from iwork.local_models import DailyTargetObligation
 
     current_date = date(2026, 8, 18)
-    after_deadline = datetime.combine(current_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
+    after_deadline = datetime.combine(current_date, time(9, 1), tzinfo=ZoneInfo('Asia/Yangon'))
     with (
         patch('iwork.api_views_account.get_business_date', return_value=current_date),
         patch('iwork.api_views_account._validate_target_iwork_access'),
@@ -673,7 +673,7 @@ def test_assignment_without_effective_date_defaults_to_business_date():
     from django.test import Client
 
     current_date = date(2026, 8, 18)
-    early_time = datetime.combine(current_date, time(8, 30), tzinfo=ZoneInfo('Asia/Bangkok'))
+    early_time = datetime.combine(current_date, time(8, 30), tzinfo=ZoneInfo('Asia/Yangon'))
     with (
         patch('iwork.api_views_account.get_business_date', return_value=current_date),
         patch('iwork.api_views_account._validate_target_iwork_access'),

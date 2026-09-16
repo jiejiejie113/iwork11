@@ -69,7 +69,7 @@ def sync_dashboard_stats(self):
         logger.info('开始构建完整实时快照: {}', business_date)
         snapshot = build_snapshot(business_date)
         if get_business_date() != business_date:
-            logger.warning('实时快照构建期间已跨过曼谷午夜，放弃发布日期 {}', business_date)
+            logger.warning('实时快照构建期间已跨过缅甸午夜，放弃发布日期 {}', business_date)
             return 0
 
         version = SnapshotStore().publish(snapshot)
@@ -176,7 +176,7 @@ def build_history_snapshot(
     """异步构建单个历史日期快照。
 
     Args:
-        target_date_text: ISO 格式的曼谷业务日期。
+        target_date_text: ISO 格式的缅甸业务日期。
         request_token: Web 请求生成的分布式锁所有权令牌；旧任务缺少令牌时安全退出。
 
     Returns:
