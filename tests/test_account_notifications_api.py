@@ -37,10 +37,10 @@ def _create_role_alert(audience_key):
     event = AlertEvent.objects.using("iwork_local").create(
         rule=rule,
         business_date=date(2026, 8, 18),
-        dimension_key="SO3-L3A",
+        dimension_key="Sewing-A1",
         title="生产组目标逾期未填",
-        message="生产组 SO3-L3A 尚未提交今日目标。",
-        payload={"flow": "SO3-L3A"},
+        message="生产组 Sewing-A1 尚未提交今日目标。",
+        payload={"flow": "Sewing-A1"},
     )
     AlertAudience.objects.using("iwork_local").create(
         event=event,
@@ -206,7 +206,7 @@ def test_leader_can_only_subscribe_to_an_assigned_flow(client):
     )
     assignment = ManagedFlowAssignment.objects.using("iwork_local").create(
         principal=principal,
-        flow_name="SO3-L3A",
+        flow_name="Sewing-A1",
         effective_date=date(2026, 8, 1),
         created_by_subject="admin-subject",
     )
@@ -222,7 +222,7 @@ def test_leader_can_only_subscribe_to_an_assigned_flow(client):
             "subscriptions": [{
                 "rule_code": "data_watermark_anomaly",
                 "scope_type": "flow",
-                "scope_value": "SO3-L3A",
+                "scope_value": "Sewing-A1",
             }],
         }),
         content_type="application/json",
@@ -242,7 +242,7 @@ def test_leader_can_only_subscribe_to_an_assigned_flow(client):
     )
 
     assert allowed.status_code == 200
-    assert allowed.json()["subscriptions"][0]["scope_value"] == "SO3-L3A"
+    assert allowed.json()["subscriptions"][0]["scope_value"] == "Sewing-A1"
     assert denied.status_code == 403
     assert denied.json()["code"] == "managed_flow_required"
 

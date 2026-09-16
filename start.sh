@@ -4,16 +4,16 @@ set -e
 
 echo "=== iwork Docker Startup Script ==="
 
-# Wait for MySQL
+# Wait for MySQL（主机与端口来自环境变量；本地开发可指向 host.docker.internal）
 echo "Waiting for MySQL..."
-while ! python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect(('mysql', 3306)); s.close()" 2>/dev/null; do
+while ! python -c "import socket, os; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect((os.environ.get('ACCESS_DB_HOST', 'mysql'), int(os.environ.get('ACCESS_DB_PORT', '3306')))); s.close()" 2>/dev/null; do
     sleep 2
 done
 echo "MySQL is ready"
 
 # Wait for Redis
 echo "Waiting for Redis..."
-while ! python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect(('iwork-redis', 6379)); s.close()" 2>/dev/null; do
+while ! python -c "import socket, os; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect((os.environ.get('REDIS_HOST', 'iwork-redis'), int(os.environ.get('REDIS_PORT', '6379')))); s.close()" 2>/dev/null; do
     sleep 2
 done
 echo "Redis is ready"

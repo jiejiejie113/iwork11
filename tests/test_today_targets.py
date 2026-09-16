@@ -79,10 +79,10 @@ def test_old_target_without_work_hours_is_incomplete_and_not_backfilled(fixed_bu
         is_group_target_complete,
     )
 
-    _create_assignment('leader-old', 'SO3-L3A')
+    _create_assignment('leader-old', 'Sewing-A1')
     target = GroupTargetProduction.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_qty=0,
     )
 
@@ -101,10 +101,10 @@ def test_missing_target_does_not_reuse_a_stale_fulfilled_obligation(fixed_busine
     from iwork.local_models import DailyTargetObligation
     from iwork.target_responsibility import ensure_daily_target_obligations
 
-    _create_assignment('leader-deleted-target', 'SO3-L3A')
+    _create_assignment('leader-deleted-target', 'Sewing-A1')
     DailyTargetObligation.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         status=DailyTargetObligation.Status.FULFILLED,
         deadline_at=datetime(2026, 9, 2, 9, 0, tzinfo=BUSINESS_ZONE),
         submitted_by_subject='former-leader',
@@ -116,7 +116,7 @@ def test_missing_target_does_not_reuse_a_stale_fulfilled_obligation(fixed_busine
 
     obligation = DailyTargetObligation.objects.using('iwork_local').get(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
     )
     assert obligation.status == DailyTargetObligation.Status.PENDING
     assert obligation.submitted_at is None
@@ -129,10 +129,10 @@ def test_missing_work_hours_becomes_overdue_then_late_save_fulfills(fixed_busine
     from iwork.local_models import DailyTargetObligation, GroupTargetProduction
     from iwork.target_responsibility import ensure_daily_target_obligations, save_group_target
 
-    _create_assignment('leader-late', 'SO3-L3A')
+    _create_assignment('leader-late', 'Sewing-A1')
     GroupTargetProduction.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_qty=100,
     )
     fixed_business_clock['value'] = datetime(2026, 9, 2, 9, 1, tzinfo=BUSINESS_ZONE)
@@ -140,13 +140,13 @@ def test_missing_work_hours_becomes_overdue_then_late_save_fulfills(fixed_busine
 
     obligation = DailyTargetObligation.objects.using('iwork_local').get(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
     )
     assert obligation.status == DailyTargetObligation.Status.OVERDUE
 
     save_group_target(
         identity=IworkIdentity(subject='leader-late', username='leader-late'),
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_date=TARGET_DATE,
         target_qty=0,
         planned_work_minutes=600,
@@ -162,11 +162,11 @@ def test_service_rejects_new_submission_without_work_hours(fixed_business_clock)
     from iwork.identity import IworkIdentity
     from iwork.target_responsibility import TargetResponsibilityError, save_group_target
 
-    _create_assignment('leader-required', 'SO3-L3A')
+    _create_assignment('leader-required', 'Sewing-A1')
     with pytest.raises(TargetResponsibilityError) as raised:
         save_group_target(
             identity=IworkIdentity(subject='leader-required', username='leader-required'),
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             target_date=TARGET_DATE,
             target_qty=0,
             planned_work_minutes=None,
@@ -176,7 +176,7 @@ def test_service_rejects_new_submission_without_work_hours(fixed_business_clock)
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
 def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     fixed_business_clock,
 ):
@@ -191,19 +191,19 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     )
     ManagedFlowAssignment.objects.using('iwork_local').create(
         principal=principal,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=TARGET_DATE - timedelta(days=1),
     )
     assignment = ManagedFlowAssignment.objects.using('iwork_local').create(
         principal=principal,
-        flow_name='SO3-L3B',
+        flow_name='Sewing-A2',
         effective_date=TARGET_DATE - timedelta(days=1),
     )
     assert assignment.pk
 
     GroupTargetProduction.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_qty=0,
         planned_work_minutes=600,
         submitted_by_subject='leader-api',
@@ -212,7 +212,7 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     )
     GroupTargetProduction.objects.using('iwork_local').create(
         target_date=TARGET_DATE - timedelta(days=1),
-        flow_name='SO3-L3B',
+        flow_name='Sewing-A2',
         target_qty=200,
         planned_work_minutes=480,
     )
@@ -231,7 +231,7 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
         'total_count': 2,
         'all_complete': False,
     }
-    assert [item['flow'] for item in payload['groups']] == ['SO3-L3A', 'SO3-L3B']
+    assert [item['flow'] for item in payload['groups']] == ['Sewing-A1', 'Sewing-A2']
     first, second = payload['groups']
     assert first['group_target'] == 0
     assert first['target_set'] is True
@@ -246,7 +246,7 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
 def test_today_targets_api_returns_all_visible_flows_to_admin(fixed_business_clock):
     """管理员今日目标页应显示全部可见 Flow，并全部允许编辑。"""
     response = Client().get(
@@ -256,13 +256,13 @@ def test_today_targets_api_returns_all_visible_flows_to_admin(fixed_business_clo
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item['flow'] for item in payload['groups']] == ['SO3-L3A', 'SO3-L3B']
+    assert [item['flow'] for item in payload['groups']] == ['Sewing-A1', 'Sewing-A2']
     assert all(item['can_edit'] for item in payload['groups'])
     assert payload['summary']['all_complete'] is False
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
 def test_today_targets_api_returns_all_visible_flows_to_iwork_admin(fixed_business_clock):
     """iwork 专属管理员应看到全部可见 Flow，并可编辑当日目标。"""
     response = Client().get(
@@ -276,7 +276,7 @@ def test_today_targets_api_returns_all_visible_flows_to_iwork_admin(fixed_busine
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item['flow'] for item in payload['groups']] == ['SO3-L3A', 'SO3-L3B']
+    assert [item['flow'] for item in payload['groups']] == ['Sewing-A1', 'Sewing-A2']
     assert all(item['can_edit'] for item in payload['groups'])
     assert payload['is_admin'] is False
     assert payload['is_iwork_admin'] is True
@@ -284,17 +284,17 @@ def test_today_targets_api_returns_all_visible_flows_to_iwork_admin(fixed_busine
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
 def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
     fixed_business_clock,
 ):
     """管理员今日目标摘要应覆盖全部 Flow，并保留责任负责人信息。"""
     from iwork.local_models import GroupTargetProduction
 
-    _create_assignment('summary-leader', 'SO3-L3A')
+    _create_assignment('summary-leader', 'Sewing-A1')
     GroupTargetProduction.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_qty=100,
         planned_work_minutes=600,
         submitted_by_subject='summary-leader',
@@ -309,7 +309,7 @@ def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
 
     assert response.status_code == 200
     summary = response.json()['responsibility_summary']
-    assert [item['flow_name'] for item in summary['items']] == ['SO3-L3A', 'SO3-L3B']
+    assert [item['flow_name'] for item in summary['items']] == ['Sewing-A1', 'Sewing-A2']
     assert summary['status_counts']['fulfilled'] == 1
     assert summary['status_counts']['pending'] == 1
     assert summary['items'][0]['leaders'] == [
@@ -322,7 +322,7 @@ def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_today_targets_entry_only_renders_for_leader_or_admin(fixed_business_clock):
     """今日目标入口只对当前有效组长或管理员渲染。"""
-    _create_assignment('navigation-leader', 'SO3-L3A')
+    _create_assignment('navigation-leader', 'Sewing-A1')
     client = Client()
 
     leader_response = client.get(
@@ -373,11 +373,11 @@ def test_deleted_principal_cleanup_removes_assignments_but_keeps_history_snapsho
         ManagedFlowAssignment,
     )
 
-    retained = _create_assignment('deleted-with-history', 'SO3-L3A')
-    removed = _create_assignment('deleted-without-history', 'SO3-L3B')
+    retained = _create_assignment('deleted-with-history', 'Sewing-A1')
+    removed = _create_assignment('deleted-without-history', 'Sewing-A2')
     obligation = DailyTargetObligation.objects.using('iwork_local').create(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         deadline_at=datetime(2026, 9, 2, 9, 0, tzinfo=BUSINESS_ZONE),
     )
     DailyTargetObligationLeader.objects.using('iwork_local').create(
@@ -414,10 +414,10 @@ def test_set_targets_requires_work_hours_and_csrf_is_still_enforced(fixed_busine
     from iwork.api_views import set_targets
     from iwork.identity import IworkIdentity
 
-    _create_assignment('leader-validation', 'SO3-L3A')
+    _create_assignment('leader-validation', 'Sewing-A1')
     request = APIRequestFactory().post(
         '/api/dashboard/set-targets/',
-        data={'flow': 'SO3-L3A', 'group_target': 0},
+        data={'flow': 'Sewing-A1', 'group_target': 0},
         format='json',
     )
     request.iwork_identity = IworkIdentity(subject='leader-validation', username='leader-validation')
@@ -428,7 +428,7 @@ def test_set_targets_requires_work_hours_and_csrf_is_still_enforced(fixed_busine
     csrf_client = Client(enforce_csrf_checks=True)
     csrf_response = csrf_client.post(
         '/api/dashboard/set-targets/',
-        data=json.dumps({'flow': 'SO3-L3A', 'group_target': 0, 'work_hours': 10}),
+        data=json.dumps({'flow': 'Sewing-A1', 'group_target': 0, 'work_hours': 10}),
         content_type='application/json',
         **_identity_headers(subject='leader-validation', username='leader-validation'),
     )
@@ -436,30 +436,30 @@ def test_set_targets_requires_work_hours_and_csrf_is_still_enforced(fixed_busine
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
-@override_settings(VISIBLE_FLOWS=['SO3-L3A', 'SO3-L3B'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
 def test_partial_group_saves_keep_success_when_a_later_group_fails(fixed_business_clock):
     """逐组保存允许部分成功，失败组不会回滚已保存分组。"""
     from iwork.local_models import GroupTargetProduction
 
-    _create_assignment('leader-partial', 'SO3-L3A')
+    _create_assignment('leader-partial', 'Sewing-A1')
     from iwork.local_models import IworkPrincipal, ManagedFlowAssignment
 
     principal = IworkPrincipal.objects.using('iwork_local').get(subject='leader-partial')
     ManagedFlowAssignment.objects.using('iwork_local').create(
         principal=principal,
-        flow_name='SO3-L3B',
+        flow_name='Sewing-A2',
         effective_date=TARGET_DATE - timedelta(days=1),
     )
     client = Client()
     valid = client.post(
         '/api/dashboard/set-targets/',
-        data=json.dumps({'flow': 'SO3-L3A', 'group_target': 0, 'work_hours': 10}),
+        data=json.dumps({'flow': 'Sewing-A1', 'group_target': 0, 'work_hours': 10}),
         content_type='application/json',
         **_identity_headers(subject='leader-partial', username='leader-partial'),
     )
     failed = client.post(
         '/api/dashboard/set-targets/',
-        data=json.dumps({'flow': 'SO3-L3B', 'group_target': 100, 'work_hours': 0}),
+        data=json.dumps({'flow': 'Sewing-A2', 'group_target': 100, 'work_hours': 0}),
         content_type='application/json',
         **_identity_headers(subject='leader-partial', username='leader-partial'),
     )
@@ -468,13 +468,13 @@ def test_partial_group_saves_keep_success_when_a_later_group_fails(fixed_busines
     assert failed.status_code == 400
     assert GroupTargetProduction.objects.using('iwork_local').filter(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_qty=0,
         planned_work_minutes=600,
     ).exists()
     assert not GroupTargetProduction.objects.using('iwork_local').filter(
         target_date=TARGET_DATE,
-        flow_name='SO3-L3B',
+        flow_name='Sewing-A2',
     ).exists()
 
 
@@ -497,7 +497,7 @@ def test_target_gate_redirects_pages_and_blocks_business_api_with_stable_code(fi
     """待提交负责人访问页面被带回地址，业务 API 返回稳定 403。"""
     from iwork.middleware import TargetSubmissionGateMiddleware
 
-    _create_assignment('leader-gate', 'SO3-L3A')
+    _create_assignment('leader-gate', 'Sewing-A1')
     captured = []
 
     def endpoint(request):
@@ -523,7 +523,7 @@ def test_target_gate_exempts_admin_without_local_admin_snapshot(fixed_business_c
     """管理员是否放行只看当前代理组声明，不依赖本地管理员快照。"""
     from iwork.middleware import TargetSubmissionGateMiddleware
 
-    _create_assignment('leader-other', 'SO3-L3A')
+    _create_assignment('leader-other', 'Sewing-A1')
     response = TargetSubmissionGateMiddleware(
         lambda _request: HttpResponse('admin-passed'),
     )(_middleware_request('/', subject='current-admin', username='current-admin', groups='/admin'))
@@ -537,7 +537,7 @@ def test_target_gate_allows_unassigned_target_page_static_notifications_and_heal
     """今日目标页、静态资源、个人通知和匿名健康请求不会被目标门禁拦截。"""
     from iwork.middleware import TargetSubmissionGateMiddleware
 
-    _create_assignment('leader-exempt', 'SO3-L3A')
+    _create_assignment('leader-exempt', 'Sewing-A1')
     middleware = TargetSubmissionGateMiddleware(lambda _request: HttpResponse('passed'))
     for path in (
         '/targets/today/',

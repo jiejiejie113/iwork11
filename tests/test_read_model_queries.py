@@ -84,14 +84,14 @@ def _publish_snapshot() -> ReadModelQueries:
                     "stepno": 70,
                     "total_qty": 80,
                     "employee_ids": [1, 2],
-                    "flows": ["SO3-L3A"],
+                    "flows": ["Sewing-A1"],
                 },
                 {
                     "wrk_order": "WO-A",
                     "stepno": 70,
                     "total_qty": 50,
                     "employee_ids": [1],
-                    "flows": ["SO3-L3A"],
+                    "flows": ["Sewing-A1"],
                 },
                 {
                     "wrk_order": "WO-A",
@@ -105,7 +105,7 @@ def _publish_snapshot() -> ReadModelQueries:
                     "stepno": 70,
                     "total_qty": 999,
                     "employee_ids": [9],
-                    "flows": ["SO2-L2A"],
+                    "flows": ["Sewing-Training"],
                 },
             ],
             "products": {
@@ -135,7 +135,7 @@ def _publish_snapshot() -> ReadModelQueries:
             {"reg_per_sys_id": 1, "stepno": 70, "wrk_order": "WO-B", "flow": "A", "qty": 30, "record_count": 1},
             {"reg_per_sys_id": 2, "stepno": 70, "wrk_order": "WO-B", "flow": "A", "qty": 50, "record_count": 1},
             {"reg_per_sys_id": 3, "stepno": 69, "wrk_order": "WO-A", "flow": "B", "qty": 20, "record_count": 1},
-            {"reg_per_sys_id": 9, "stepno": 70, "wrk_order": "WO-HIDDEN", "flow": "SO2-L2A", "qty": 999, "record_count": 1},
+            {"reg_per_sys_id": 9, "stepno": 70, "wrk_order": "WO-HIDDEN", "flow": "Sewing-Training", "qty": 999, "record_count": 1},
         ],
     }
     store = SnapshotStore(cache_backend=cache, now=lambda: NOW)
@@ -216,7 +216,7 @@ def test_kanban_show_all_flows_can_restore_hidden_facts():
     default_result = queries.kanban_stats(BUSINESS_DATE)
     show_all_result = queries.kanban_stats(BUSINESS_DATE, show_all_flows=True)
 
-    assert default_result.data["total_production"] == 150
+    assert default_result.data["total_production"] == 1149
     assert show_all_result.data["total_production"] == 1149
 
 

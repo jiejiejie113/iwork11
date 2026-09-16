@@ -1,0 +1,21 @@
+# 本地局域网反代覆盖文件（仅 local 环境使用，生产配置包不包含本文件）
+# 用法：docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d iwork-proxy
+# DKT_iwork 的 8000 端口仍只在 docker_dkt-net 内暴露，由 iwork-proxy 提供宿主访问入口。
+services:
+  iwork-proxy:
+    image: nginx:1.27-alpine
+    container_name: DKT_iwork_proxy
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - dkt-net
+    depends_on:
+      - iwork
+
+networks:
+  dkt-net:
+    external: true
+    name: docker_dkt-net

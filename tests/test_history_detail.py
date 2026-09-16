@@ -33,7 +33,7 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
         event_hour=10,
         registered_date=registered_at,
         registered_time=registered_at,
-        flow='SO5-L5C',
+        flow='Sewing-A5',
         station_id='L5C',
         employee_id=1942,
         wrk_order='BU1208A',
@@ -88,7 +88,7 @@ def test_historical_flow_detail_uses_local_snapshot_by_default(client):
     ])
 
     response = client.get(
-        '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-15&mode=remote'
+        '/api/dashboard/detail/flow/Sewing-A5/?date=2026-07-15&mode=remote'
     )
 
     assert response.status_code == 200
@@ -123,7 +123,7 @@ def test_historical_flow_detail_prefers_saved_remark_employee_id(client):
         event_hour=10,
         registered_date=registered_at,
         registered_time=registered_at,
-        flow='SO5-L5C',
+        flow='Sewing-A5',
         station_id='L5C',
         employee_id=1942,
         employee_remark='EMP-A',
@@ -147,7 +147,7 @@ def test_historical_flow_detail_prefers_saved_remark_employee_id(client):
     )
 
     response = client.get(
-        '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-16'
+        '/api/dashboard/detail/flow/Sewing-A5/?date=2026-07-16'
     )
 
     assert response.status_code == 200
@@ -173,7 +173,7 @@ def test_remote_history_source_keeps_only_mapped_employee_facts(
     queryset.annotate.return_value.values.return_value.annotate.return_value.order_by.return_value = [
         {
             'event_hour': 10,
-            'Flow': 'SO5-L5C',
+            'Flow': 'Sewing-A5',
             'StationID': 'L5C',
             'RegPerSysID': 1001,
             'WrkOrder': 'BU1208A',
@@ -183,7 +183,7 @@ def test_remote_history_source_keeps_only_mapped_employee_facts(
         },
         {
             'event_hour': 11,
-            'Flow': 'SO5-L5C',
+            'Flow': 'Sewing-A5',
             'StationID': 'L5C',
             'RegPerSysID': 1002,
             'WrkOrder': 'BU1208A',
@@ -197,7 +197,7 @@ def test_remote_history_source_keeps_only_mapped_employee_facts(
 
     assert payload.facts == [{
         'event_hour': 10,
-        'flow': 'SO5-L5C',
+        'flow': 'Sewing-A5',
         'station_id': 'L5C',
         'employee_id': 1001,
         'employee_remark': 'EMP-A',
@@ -220,7 +220,7 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
         event_hour=10,
         registered_date=registered_at,
         registered_time=registered_at,
-        flow='SO5-L5C',
+        flow='Sewing-A5',
         station_id='L5C',
         employee_id=1942,
         wrk_order='BU1208A',
@@ -283,14 +283,14 @@ def test_historical_product_overview_uses_snapshot_metadata(client):
     assert product['product_name'] == 'Sage pile jacket'
     assert product['total_qty'] == 233
     assert product['wrk_orders'][0]['initial_style_no'] == 'SAMPLE-01'
-    assert 'SO5-L5C' in payload['normal_flows']
+    assert 'Sewing-A5' in payload['normal_flows']
     assert 'Finishing-QC1' not in payload['normal_flows']
     steps = product['wrk_orders'][0]['stepnos']
     step = steps[0]
     assert step['description'] == '翻猪肠绑绳'
     assert step['step_time'] == 0.131
     assert step['output_value'] == pytest.approx(23.973)
-    assert step['flows'] == [{'flow': 'SO5-L5C', 'qty': 183, 'workers': 1}]
+    assert step['flows'] == [{'flow': 'Sewing-A5', 'qty': 183, 'workers': 1}]
     assert steps[1]['flows'] == [
         {'flow': 'Finishing-QC1', 'qty': 50, 'workers': 1},
     ]
@@ -312,7 +312,7 @@ def test_historical_flow_overview_lists_all_styles_and_counts_step_70_only(clien
             event_hour=10,
             registered_date=registered_at,
             registered_time=registered_at,
-            flow='SO5-L5C',
+            flow='Sewing-A5',
             station_id='L5C',
             employee_id=1942,
             wrk_order=wrk_order,
@@ -336,7 +336,7 @@ def test_historical_flow_overview_lists_all_styles_and_counts_step_70_only(clien
     response = client.get('/api/dashboard/detail/flows/?date=2026-07-15')
 
     assert response.status_code == 200
-    assert response.json()['SO5-L5C']['initial_styles'] == [
+    assert response.json()['Sewing-A5']['initial_styles'] == [
         {'initial_style_no': 'SAMPLE-01', 'qty': 80},
         {'initial_style_no': 'SAMPLE-02', 'qty': 0},
     ]
@@ -353,7 +353,7 @@ def test_snapshot_history_date_publishes_validated_snapshot():
             return HistorySnapshotPayload(
                 facts=[{
                     'event_hour': 10,
-                    'flow': 'SO5-L5C',
+                    'flow': 'Sewing-A5',
                     'station_id': 'L5C',
                     'employee_id': 1942,
                     'wrk_order': 'BU1208A',
@@ -503,7 +503,7 @@ def test_missing_history_snapshot_can_be_built_then_read(client):
     payload = HistorySnapshotPayload(
         facts=[{
             'event_hour': 10,
-            'flow': 'SO5-L5C',
+            'flow': 'Sewing-A5',
             'station_id': 'L5C',
             'employee_id': 1942,
             'wrk_order': 'BU1208A',
@@ -539,7 +539,7 @@ def test_missing_history_snapshot_can_be_built_then_read(client):
     assert build_payload['message'] == '本地历史快照已生成'
 
     detail_response = client.get(
-        '/api/dashboard/detail/flow/SO5-L5C/?date=2026-07-15'
+        '/api/dashboard/detail/flow/Sewing-A5/?date=2026-07-15'
     )
     assert detail_response.status_code == 200
     assert detail_response.json()['source'] == 'local_snapshot'
@@ -947,7 +947,7 @@ def test_history_dashboard_stats_read_from_persisted_facts(client):
         event_hour=10,
         registered_date=registered_at,
         registered_time=registered_at,
-        flow='SO5-L5C',
+        flow='Sewing-A5',
         station_id='L5C',
         employee_id=1942,
         wrk_order='BU1208A',

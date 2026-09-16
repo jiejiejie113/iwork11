@@ -655,16 +655,16 @@ class TestFlowDetailEndpoint:
             })
 
         bundle = {
-            'flow_employees': {'SO3-L3A': employees},
-            'flow_hourly': {'SO3-L3A': []},
+            'flow_employees': {'Sewing-A1': employees},
+            'flow_hourly': {'Sewing-A1': []},
         }
         with patch(
             'iwork.api_views.READ_MODEL.details',
             return_value=_snapshot_result(bundle),
         ):
             response = flow_detail(
-                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
-                flow_name='SO3-L3A',
+                APIRequestFactory().get('/api/dashboard/detail/flow/Sewing-A1/'),
+                flow_name='Sewing-A1',
             )
 
         assert response.status_code == 200
@@ -707,13 +707,13 @@ class TestFlowDetailEndpoint:
         with patch(
             'iwork.api_views.READ_MODEL.details',
             return_value=_snapshot_result({
-                'flow_employees': {'SO3-L3A': employees},
-                'flow_hourly': {'SO3-L3A': []},
+                'flow_employees': {'Sewing-A1': employees},
+                'flow_hourly': {'Sewing-A1': []},
             }),
         ):
             response = flow_detail(
-                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
-                flow_name='SO3-L3A',
+                APIRequestFactory().get('/api/dashboard/detail/flow/Sewing-A1/'),
+                flow_name='Sewing-A1',
             )
 
         assigned = {
@@ -747,13 +747,13 @@ class TestFlowDetailEndpoint:
         with patch(
             'iwork.api_views.READ_MODEL.details',
             return_value=_snapshot_result({
-                'flow_employees': {'SO3-L3A': employees},
-                'flow_hourly': {'SO3-L3A': []},
+                'flow_employees': {'Sewing-A1': employees},
+                'flow_hourly': {'Sewing-A1': []},
             }),
         ):
             response = flow_detail(
-                APIRequestFactory().get('/api/dashboard/detail/flow/SO3-L3A/'),
-                flow_name='SO3-L3A',
+                APIRequestFactory().get('/api/dashboard/detail/flow/Sewing-A1/'),
+                flow_name='Sewing-A1',
             )
 
         assert response.data['current_group_target'] == 700
@@ -847,7 +847,7 @@ class TestInitialStyleOverviewEndpoint:
 
         bundle = {
             'flow_employees': {
-                'SO3-L3A': [
+                'Sewing-A1': [
                     {
                         'reg_per_sys_id': 1001,
                         'steps': [
@@ -881,7 +881,7 @@ class TestInitialStyleOverviewEndpoint:
                         }],
                     },
                 ],
-                'SO5-L5B': [
+                'Sewing-A3': [
                     {
                         'reg_per_sys_id': 1001,
                         'steps': [{
@@ -929,8 +929,8 @@ class TestInitialStyleOverviewEndpoint:
         assert style['worker_count'] == 2
         assert style['workorder_count'] == 3
         assert style['flows'] == [
-            {'flow': 'SO5-L5B', 'qty': 30, 'worker_count': 2},
-            {'flow': 'SO3-L3A', 'qty': 20, 'worker_count': 1},
+            {'flow': 'Sewing-A3', 'qty': 30, 'worker_count': 2},
+            {'flow': 'Sewing-A1', 'qty': 20, 'worker_count': 1},
         ]
         assert style['stepnos'] == {
             1: {'qty': 10},
@@ -951,7 +951,7 @@ class TestInitialStyleOverviewEndpoint:
         from iwork.api_views import initial_style_overview
 
         local_data = {
-            'SO3-L3A': [{
+            'Sewing-A1': [{
                 'reg_per_sys_id': 1001,
                 'steps': [{
                     'stepno': 70,
@@ -987,7 +987,7 @@ class TestInitialStyleDetailEndpoint:
 
         bundle = {
             'flow_employees': {
-                'SO3-L3A': [{
+                'Sewing-A1': [{
                     'reg_per_sys_id': 1001,
                     'steps': [
                         {
@@ -1007,7 +1007,7 @@ class TestInitialStyleDetailEndpoint:
                         },
                     ],
                 }],
-                'SO5-L5B': [
+                'Sewing-A3': [
                     {
                         'reg_per_sys_id': 1001,
                         'steps': [{
@@ -1045,15 +1045,15 @@ class TestInitialStyleDetailEndpoint:
         assert response.data['total_qty'] == 80
         assert response.data['cumulative_qty'] == 800
         assert response.data['worker_count'] == 2
-        assert response.data['flows'] == ['SO3-L3A', 'SO5-L5B']
+        assert response.data['flows'] == ['Sewing-A1', 'Sewing-A3']
         first_employee = response.data['employees'][0]
         assert first_employee['reg_per_sys_id'] == 1001
         assert first_employee['total_qty'] == 40
         assert first_employee['cumulative_qty'] == 400
         assert first_employee['workorders'] == ['WO-1', 'WO-2']
         assert [step['flow'] for step in first_employee['steps']] == [
-            'SO3-L3A',
-            'SO5-L5B',
+            'Sewing-A1',
+            'Sewing-A3',
         ]
         assert all(
             step['initial_style_no'] == 'BU-1'
@@ -1077,7 +1077,7 @@ class TestInitialStyleDetailEndpoint:
 
         bundle = {
             'flow_employees': {
-                'SO3-L3A': [
+                'Sewing-A1': [
                     {
                         'reg_per_sys_id': 1001,
                         'total_qty': 100,
@@ -1125,7 +1125,7 @@ class TestInitialStyleDetailEndpoint:
         assert step['target'] == 250
         assert step['target_rate'] == pytest.approx(40.0)
         assert response.data['flow_targets'] == [{
-            'flow': 'SO3-L3A',
+            'flow': 'Sewing-A1',
             'group_target': 1000,
             'current_group_target': 500,
             'work_hours': 10.0,
@@ -1147,7 +1147,7 @@ class TestInitialStyleDetailEndpoint:
 
         bundle = {
             'flow_employees': {
-                'SO3-L3A': [{
+                'Sewing-A1': [{
                     'reg_per_sys_id': 1001,
                     'steps': [{
                         'stepno': 1,
@@ -1185,7 +1185,7 @@ class TestInitialStyleDetailEndpoint:
         from iwork.api_views import initial_style_detail
 
         local_data = {
-            'SO3-L3A': [{
+            'Sewing-A1': [{
                 'reg_per_sys_id': 1001,
                 'steps': [{
                     'stepno': 1,
@@ -1247,7 +1247,7 @@ class TestProductOverviewEndpoint:
                     }],
                 }],
             }],
-            'normal_flows': ['SO3-L3A'],
+            'normal_flows': ['Sewing-A1'],
         }
         with patch(
             'iwork.api_views.READ_MODEL.detail',
@@ -1259,7 +1259,7 @@ class TestProductOverviewEndpoint:
 
         assert response.status_code == 200
         assert response.data['products'] == cached['products']
-        assert response.data['normal_flows'] == ['SO3-L3A']
+        assert response.data['normal_flows'] == ['Sewing-A1']
         assert response.data['source'] == 'redis_snapshot'
         read.assert_called_once()
 
@@ -1599,7 +1599,7 @@ class TestSetTargets:
 
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
-            data={'flow': 'SO3-L3A', 'group_target': 1000, 'work_hours': 10},
+            data={'flow': 'Sewing-A1', 'group_target': 1000, 'work_hours': 10},
             format='json',
         )
 
@@ -1608,18 +1608,18 @@ class TestSetTargets:
 
         assert response.status_code == 200
         assert response.data['status'] == 'ok'
-        assert response.data['flow'] == 'SO3-L3A'
+        assert response.data['flow'] == 'Sewing-A1'
         assert response.data['group_target'] == 1000
         mock_save_group_target.assert_called_once_with(
             identity=request.iwork_identity,
             target_date=date.today(),
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             target_qty=1000,
             planned_work_minutes=600,
         )
         assert mock_cache.set.call_count == 2
         mock_cache.set.assert_any_call(
-            f'group_target:{date.today().isoformat()}:SO3-L3A',
+            f'group_target:{date.today().isoformat()}:Sewing-A1',
             1000,
             timeout=mock_cache.set.call_args.kwargs['timeout'],
         )
@@ -1631,7 +1631,7 @@ class TestSetTargets:
 
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
-            data={'flow': 'SO3-L3A', 'group_target': -1},
+            data={'flow': 'Sewing-A1', 'group_target': -1},
             format='json',
         )
 
@@ -1649,7 +1649,7 @@ class TestSetTargets:
 
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
-            data={'flow': 'SO3-L3A', 'group_target': 1000, 'work_hours': 10},
+            data={'flow': 'Sewing-A1', 'group_target': 1000, 'work_hours': 10},
             format='json',
         )
 
@@ -1661,7 +1661,7 @@ class TestSetTargets:
         mock_save_group_target.assert_called_once_with(
             identity=request.iwork_identity,
             target_date=date.today(),
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             target_qty=1000,
             planned_work_minutes=600,
         )
@@ -1680,7 +1680,7 @@ class TestSetTargets:
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
             data={
-                'flow': 'SO3-L3A',
+                'flow': 'Sewing-A1',
                 'group_target': 1000,
                 'work_hours': work_hours,
             },
@@ -1700,7 +1700,7 @@ class TestSetTargets:
 
         request = APIRequestFactory().post(
             '/api/dashboard/set-targets/',
-            data={'flow': 'SO3-L3A', 'group_target': 1000.5},
+            data={'flow': 'Sewing-A1', 'group_target': 1000.5},
             format='json',
         )
 

@@ -25,7 +25,7 @@ def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "BU1211-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "event_hour": 8,
                 "qty": 60,
             },
@@ -33,7 +33,7 @@ def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():
                 "reg_per_sys_id": 1002,
                 "stepno": 70,
                 "wrk_order": "BU1211-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "event_hour": 8,
                 "qty": 40,
             },
@@ -41,7 +41,7 @@ def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():
                 "reg_per_sys_id": 1003,
                 "stepno": 69,
                 "wrk_order": "BU1211-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "event_hour": 9,
                 "qty": 20,
             },
@@ -52,8 +52,8 @@ def test_detail_views_use_unique_remark_ids_and_drop_invalid_employees():
         },
     )
 
-    overview = source.get_batch_flow_overview(BUSINESS_DATE)["SO3-L3A"]
-    employees = source.get_batch_flow_employees(BUSINESS_DATE)["SO3-L3A"]
+    overview = source.get_batch_flow_overview(BUSINESS_DATE)["Sewing-A1"]
+    employees = source.get_batch_flow_employees(BUSINESS_DATE)["Sewing-A1"]
     stepno_employees = source.get_batch_stepno_employees(BUSINESS_DATE)
 
     assert overview["stepnos"] == {
@@ -80,7 +80,7 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "ABC123-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "station_id": "A01",
                 "event_hour": 8,
                 "qty": 60,
@@ -90,7 +90,7 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
                 "reg_per_sys_id": 1002,
                 "stepno": 70,
                 "wrk_order": "ABC123-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "station_id": "A02",
                 "event_hour": 9,
                 "qty": 40,
@@ -100,7 +100,7 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
                 "reg_per_sys_id": 1003,
                 "stepno": 70,
                 "wrk_order": "HIDDEN-01",
-                "flow": "SO2-L2A",
+                "flow": "Sewing-Training",
                 "station_id": "B01",
                 "event_hour": 9,
                 "qty": 999,
@@ -125,7 +125,7 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
     assert realtime["monthly_process_stats"] == [
         {"date": BUSINESS_DATE.isoformat(), "step": 70, "qty": 100},
     ]
-    assert snapshot["views"]["detail"]["flow_overview"]["SO3-L3A"] == {
+    assert snapshot["views"]["detail"]["flow_overview"]["Sewing-A1"] == {
         "stepnos": {"70": {"qty": 100, "workers": 2}},
         "total_workers": 2,
         "initial_styles": [{"initial_style_no": "", "qty": 100}],
@@ -147,7 +147,7 @@ def test_flow_detail_uses_same_snapshot_cumulative_quantity():
             "reg_per_sys_id": 1001,
             "stepno": 70,
             "wrk_order": "BU1211",
-            "flow": "SO3-L3B",
+            "flow": "Sewing-A2",
             "qty": 80,
             "record_count": 2,
         }],
@@ -155,13 +155,13 @@ def test_flow_detail_uses_same_snapshot_cumulative_quantity():
             "reg_per_sys_id": 1001,
             "stepno": 70,
             "wrk_order": "BU1211",
-            "flow": "SO3-L3B",
+            "flow": "Sewing-A2",
             "cumulative_qty": 23152,
         }],
     )
 
     snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
-    employee = snapshot["views"]["detail"]["flow_employees"]["SO3-L3B"][0]
+    employee = snapshot["views"]["detail"]["flow_employees"]["Sewing-A2"][0]
 
     assert employee["total_qty"] == 80
     assert employee["cumulative_qty"] == 23152
@@ -179,7 +179,7 @@ def test_initial_style_number_flows_through_realtime_and_detail_views():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "BU1211",
-                "flow": "SO3-L3B",
+                "flow": "Sewing-A2",
                 "qty": 80,
                 "record_count": 1,
             },
@@ -187,7 +187,7 @@ def test_initial_style_number_flows_through_realtime_and_detail_views():
                 "reg_per_sys_id": 1001,
                 "stepno": 69,
                 "wrk_order": "BU1211",
-                "flow": "SO3-L3B",
+                "flow": "Sewing-A2",
                 "qty": 40,
                 "record_count": 1,
             },
@@ -204,8 +204,8 @@ def test_initial_style_number_flows_through_realtime_and_detail_views():
     snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
 
     realtime_workorder = snapshot["views"]["realtime"][70]["workorders"][0]
-    flow_overview = snapshot["views"]["detail"]["flow_overview"]["SO3-L3B"]
-    flow_step = snapshot["views"]["detail"]["flow_employees"]["SO3-L3B"][0][
+    flow_overview = snapshot["views"]["detail"]["flow_overview"]["Sewing-A2"]
+    flow_step = snapshot["views"]["detail"]["flow_employees"]["Sewing-A2"][0][
         "steps"
     ][0]
     product_workorder = snapshot["views"]["detail"]["product_overview"][
@@ -231,14 +231,14 @@ def test_flow_overview_lists_styles_from_all_steps_but_counts_step_70_only():
                 "reg_per_sys_id": 1001,
                 "stepno": 17,
                 "wrk_order": "BU-NON-OUTPUT",
-                "flow": "SO3-L3B",
+                "flow": "Sewing-A2",
                 "qty": 6,
             },
             {
                 "reg_per_sys_id": 1002,
                 "stepno": 70,
                 "wrk_order": "BU-OUTPUT",
-                "flow": "SO3-L3B",
+                "flow": "Sewing-A2",
                 "qty": 80,
             },
         ],
@@ -248,7 +248,7 @@ def test_flow_overview_lists_styles_from_all_steps_but_counts_step_70_only():
         },
     )
 
-    overview = source.get_batch_flow_overview(BUSINESS_DATE)["SO3-L3B"]
+    overview = source.get_batch_flow_overview(BUSINESS_DATE)["Sewing-A2"]
 
     assert overview["stepnos"]["70"]["qty"] == 80
     assert overview["initial_styles"] == [
@@ -268,7 +268,7 @@ def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "BU1191",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 10,
                 "record_count": 1,
             },
@@ -294,7 +294,7 @@ def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "BU1191",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "cumulative_qty": 100,
             },
             {
@@ -323,9 +323,9 @@ def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
     product = product_overview["products"][0]
     workorder = product["wrk_orders"][0]
 
-    assert set(flow_overview) == {"SO3-L3A"}
-    assert set(flow_employees) == {"SO3-L3A"}
-    assert "SO3-L3A" in product_overview["normal_flows"]
+    assert set(flow_overview) == {"Sewing-A1"}
+    assert set(flow_employees) == {"Sewing-A1"}
+    assert "Sewing-A1" in product_overview["normal_flows"]
     assert "Finishing-QC1" not in product_overview["normal_flows"]
     assert workorder["qty"] == 60
     assert workorder["cumulative_qty"] == 600
@@ -333,7 +333,7 @@ def test_product_overview_keeps_all_flows_while_flow_views_keep_allowlist():
         flow["flow"]
         for step in workorder["stepnos"]
         for flow in step["flows"]
-    } == {"SO3-L3A", "Finishing-QC1", ""}
+    } == {"Sewing-A1", "Finishing-QC1", ""}
 
 
 def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
@@ -363,7 +363,7 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
         "reg_per_sys_id": 1001,
         "stepno": 70,
         "wrk_order": "BU1211",
-        "flow": "SO3-L3B",
+        "flow": "Sewing-A2",
         "qty": 80,
         "record_count": 2,
     }])
@@ -371,7 +371,7 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
         "reg_per_sys_id": 1001,
         "stepno": 70,
         "wrk_order": "BU1211",
-        "flow": "SO3-L3B",
+        "flow": "Sewing-A2",
         "cumulative_qty": 23152,
     }])
     remote.get_read_model_products.return_value = {}
@@ -380,7 +380,7 @@ def test_collector_loads_cumulative_rows_inside_consistent_snapshot():
 
     source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
 
-    assert source.cumulative_qty[("SO3-L3B", 1001, 70, "BU1211")] == 23152
+    assert source.cumulative_qty[("Sewing-A2", 1001, 70, "BU1211")] == 23152
     remote.get_igarment_creation_dates.assert_not_called()
     remote.get_read_model_cumulative_rows.assert_called_once_with(["BU1211"])
     remote.get_initial_style_numbers.assert_called_once_with(["BU1211"])
@@ -413,7 +413,7 @@ def test_collector_loads_remark_mapping_inside_consistent_snapshot():
         "reg_per_sys_id": 1001,
         "stepno": 70,
         "wrk_order": "BU1211",
-        "flow": "SO3-L3B",
+        "flow": "Sewing-A2",
         "qty": 80,
         "record_count": 2,
     }])
@@ -426,7 +426,7 @@ def test_collector_loads_remark_mapping_inside_consistent_snapshot():
     source = ReadModelFactSource.collect(BUSINESS_DATE, source=remote)
 
     assert source.detail_employee_remark_map == {"1001": "EMP-A"}
-    employees = source.get_batch_flow_employees(BUSINESS_DATE)["SO3-L3B"]
+    employees = source.get_batch_flow_employees(BUSINESS_DATE)["Sewing-A2"]
     assert employees[0]["reg_per_sys_id"] == "EMP-A"
     remote.get_employee_remark_map.assert_called_once_with()
 
@@ -458,7 +458,7 @@ def test_collector_uses_remote_history_only_before_business_date():
         "reg_per_sys_id": 1001,
         "stepno": 70,
         "wrk_order": "ABC123-01",
-        "flow": "SO3-L3A",
+        "flow": "Sewing-A1",
         "station_id": "A01",
         "event_hour": 8,
         "qty": 100,
@@ -514,21 +514,21 @@ def test_product_overview_merges_same_name_and_keeps_unclassified_last():
                 "reg_per_sys_id": 1,
                 "stepno": 70,
                 "wrk_order": "AAA111-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 10,
             },
             {
                 "reg_per_sys_id": 2,
                 "stepno": 70,
                 "wrk_order": "BBB222-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 20,
             },
             {
                 "reg_per_sys_id": 3,
                 "stepno": 70,
                 "wrk_order": "UNKNOWN-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 999,
             },
         ],
@@ -556,14 +556,14 @@ def test_fact_counts_preserve_sql_null_semantics():
                 "reg_per_sys_id": None,
                 "stepno": 70,
                 "wrk_order": "ABC123-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 10,
             },
             {
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "ABC123-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "qty": 5,
             },
             {
@@ -580,8 +580,8 @@ def test_fact_counts_preserve_sql_null_semantics():
     overview = source.get_batch_flow_overview(BUSINESS_DATE)
 
     assert basic[69]["workorder_count"] == 0
-    assert overview["SO3-L3A"]["stepnos"]["70"]["workers"] == 1
-    assert overview["SO3-L3A"]["total_workers"] == 1
+    assert overview["Sewing-A1"]["stepnos"]["70"]["workers"] == 1
+    assert overview["Sewing-A1"]["total_workers"] == 1
 
 
 def test_realtime_workorders_keep_products_and_current_step_flows():
@@ -596,7 +596,7 @@ def test_realtime_workorders_keep_products_and_current_step_flows():
                 "reg_per_sys_id": 1001,
                 "stepno": 70,
                 "wrk_order": "ABC123-01",
-                "flow": "SO3-L3A",
+                "flow": "Sewing-A1",
                 "station_id": "A01",
                 "event_hour": 8,
                 "qty": 60,
@@ -624,7 +624,7 @@ def test_realtime_workorders_keep_products_and_current_step_flows():
     assert workorder == {
         "wrk_order": "ABC123-01",
         "total_qty": 60,
-        "flows": ["SO3-L3A"],
+        "flows": ["Sewing-A1"],
         "product_name": "产品甲",
         "order_no": "ORDER-1",
         "initial_style_no": "",
@@ -634,7 +634,7 @@ def test_realtime_workorders_keep_products_and_current_step_flows():
     assert all_workorder == {
         "wrk_order": "ABC123-01",
         "total_qty": 100,
-        "flows": ["OTHER-STEP-FLOW", "SO3-L3A"],
+        "flows": ["OTHER-STEP-FLOW", "Sewing-A1"],
         "product_name": "产品甲",
         "order_no": "ORDER-1",
         "initial_style_no": "",

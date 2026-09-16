@@ -726,12 +726,10 @@ data: {"type":"dashboard_update","timestamp":"2026-05-29T14:30:00","data":{"tota
 
 ### 8.6 Flow 白名单
 
-当前系统仅处理以下 45 个 Flow 分组：
+当前系统仅处理以下 25 个 Flow 分组（2026-09 数据库迁移后采用 Sewing 产线命名，
+无隐藏分组；`Sewing-Training` 与空尾缀 `Sewing-` 不入白名单）：
 
 ```
-SO2-L2A/B/C/D/E/F/G, SO3-L3A/B/C/D/E/F,
-SO5-L5B/C/D/E, SO6-L6A/B/C/D/E/F/G,
-SO8-L8A/B/C/D/E/F, SO9-L9A/B/C/D,
-SO10-L10A/B/C/D/E/F/G, SO11-L11A/B/D/E,
-SO14-L14A/B/C/D
+Sewing-A1/A2/A3/A4/A5/A8/A10/A11/A12/A13/A19,
+Sewing-B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B16/B17/B19
 ```

@@ -324,23 +324,17 @@ SSE_NOTIFICATION_RETRY_MAX_SECONDS = env.float(
 # Flow 白名单生效工序 — 仅此工序使用 ALLOWED_FLOWS 过滤，其他工序查询全量 Flow
 ALLOWED_FLOWS_STEPNO = 70
 
-# Flow 白名单 — 生产详情仅保留这些分组
+# Flow 白名单 — 生产详情仅保留这些分组（Sewing 产线命名，2026-09 数据库迁移后生效）
 ALLOWED_FLOWS = [
-    'SO11-L11A', 'SO11-L11B', 'SO11-L11D', 'SO11-L11E',
-    'SO14-L14A', 'SO14-L14B', 'SO14-L14C', 'SO14-L14D',
-    'SO3-L3A', 'SO3-L3B', 'SO3-L3C', 'SO3-L3D', 'SO3-L3E', 'SO3-L3F',
-    'SO5-L5B', 'SO5-L5C', 'SO5-L5D', 'SO5-L5E',
-    'SO6-L6H',
-    'SO8-L8A', 'SO8-L8B', 'SO8-L8C', 'SO8-L8D', 'SO8-L8E', 'SO8-L8F',
-    'SO9-L9A', 'SO9-L9B', 'SO9-L9C', 'SO9-L9D', 'SO9-L9E',
+    'Sewing-A1', 'Sewing-A2', 'Sewing-A3', 'Sewing-A4', 'Sewing-A5', 'Sewing-A8',
+    'Sewing-A10', 'Sewing-A11', 'Sewing-A12', 'Sewing-A13', 'Sewing-A19',
+    'Sewing-B3', 'Sewing-B4', 'Sewing-B5', 'Sewing-B6', 'Sewing-B7', 'Sewing-B8',
+    'Sewing-B9', 'Sewing-B10', 'Sewing-B11', 'Sewing-B12', 'Sewing-B13',
+    'Sewing-B16', 'Sewing-B17', 'Sewing-B19',
 ]
 
 # 隐藏分组 — 不查询、不显示（配置具体 Flow 名称）
-HIDDEN_FLOWS = [
-    'SO2-L2A', 'SO2-L2B', 'SO2-L2C', 'SO2-L2D', 'SO2-L2E', 'SO2-L2F', 'SO2-L2G',
-    'SO6-L6A', 'SO6-L6B', 'SO6-L6C', 'SO6-L6D', 'SO6-L6E', 'SO6-L6F', 'SO6-L6G',
-    'SO10-L10A', 'SO10-L10B', 'SO10-L10C', 'SO10-L10D', 'SO10-L10E', 'SO10-L10F', 'SO10-L10G',
-]
+HIDDEN_FLOWS = []
 
 # 实际可见分组 = 白名单 - 隐藏
 VISIBLE_FLOWS = [f for f in ALLOWED_FLOWS if f not in HIDDEN_FLOWS]

@@ -102,7 +102,7 @@ def test_cumulative_rows_use_all_non_null_regdates(mock_model):
             'RegPerSysID': 1001,
             'StepNo': 70,
             'WrkOrder': 'BU1211',
-            'Flow': 'SO3-L3B',
+            'Flow': 'Sewing-A2',
             'cumulative_qty': 23152,
         },
         {
@@ -132,7 +132,7 @@ def test_cumulative_rows_use_all_non_null_regdates(mock_model):
             'reg_per_sys_id': 1001,
             'stepno': 70,
             'wrk_order': 'BU1211',
-            'flow': 'SO3-L3B',
+            'flow': 'Sewing-A2',
             'cumulative_qty': 23152,
         },
         {
@@ -781,9 +781,9 @@ class TestGetBatchProductOverview:
 
         queryset = mock_records.return_value
         queryset.values.return_value.annotate.return_value.order_by.return_value = [
-            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'SO3-L3A', 'qty': 100, 'workers': 2},
-            {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'SO3-L3A', 'qty': 50, 'workers': 1},
-            {'WrkOrder': 'BU0724', 'StepNo': 72, 'Flow': 'SO3-L3A', 'qty': 20, 'workers': 1},
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'Sewing-A1', 'qty': 100, 'workers': 2},
+            {'WrkOrder': 'BU0724', 'StepNo': 71, 'Flow': 'Sewing-A1', 'qty': 50, 'workers': 1},
+            {'WrkOrder': 'BU0724', 'StepNo': 72, 'Flow': 'Sewing-A1', 'qty': 20, 'workers': 1},
             {
                 'WrkOrder': 'BU0724', 'StepNo': 80,
                 'Flow': 'Finishing-QC1', 'qty': 30, 'workers': 1,
@@ -810,7 +810,7 @@ class TestGetBatchProductOverview:
         assert steps[2]['step_time'] == 0.0
         assert steps[2]['output_value'] == 0.0
         assert result['products'][0]['total_qty'] == 200
-        assert 'SO3-L3A' in result['normal_flows']
+        assert 'Sewing-A1' in result['normal_flows']
         assert 'Finishing-QC1' not in result['normal_flows']
         queryset.exclude.assert_not_called()
         queryset.filter.assert_not_called()

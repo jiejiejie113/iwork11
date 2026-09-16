@@ -378,7 +378,7 @@
                 {[ historySnapshotMessage ]}
             </span>
         </div>
-        <span v-if="!isHistoricalDate" class="iwork-last-update text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(柬埔寨时间)</span>
+<span v-if="!isHistoricalDate" class="iwork-last-update text-xs text-slate-500 ml-auto whitespace-nowrap">最后更新: {[ lastUpdateTime ]}(缅甸时间)</span>
     </header>
 
     <!-- 静默加载条 -->
@@ -1174,7 +1174,7 @@ createApp({
         const collapsed = ref(false);   // false = 展开，true = 收起
         function businessDateString() {
             const parts = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Asia/Bangkok',
+                timeZone: 'Asia/Yangon',
                 year: 'numeric',
                 month: '2-digit',
                 day: '2-digit',
@@ -1319,7 +1319,7 @@ createApp({
             clearInterval(loadingTimer);
             loadingProgress.value = 100;
             if (!isHistoricalDate.value) {
-                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
             }
             setTimeout(() => {
                 isLoading.value = false;
@@ -2156,7 +2156,7 @@ createApp({
         function formatAccountTime(value) {
             if (!value) return '';
             return new Date(value).toLocaleString('zh-CN', {
-                timeZone: 'Asia/Bangkok',
+                timeZone: 'Asia/Yangon',
                 month: '2-digit',
                 day: '2-digit',
                 hour: '2-digit',
@@ -4028,7 +4028,7 @@ createApp({
                 productNormalFlows.value = data.normal_flows || [];
                 normalizeProductActivePath();
                 saveProductViewState();
-                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
             } catch (e) { loadError.value = e.message; console.error('加载产品概览失败:', e); }
             finally {
                 hideLoading();
@@ -4135,7 +4135,7 @@ createApp({
                     };
                 });
                 targets[detailTargetScopeKey()] = responseTargets;
-                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
                 return true;
             } catch (e) {
                 console.warn('SSE 刷新生产详情失败，将等待重试:', e);
@@ -4163,7 +4163,7 @@ createApp({
                     saveProductViewState();
                     await nextTick();
                     renderProductChart();
-                    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
                     return true;
                 }
                 if (refreshGroupMode === 'initial_style') {
@@ -4185,7 +4185,7 @@ createApp({
                     workorderList.value = woData.items || [];
                     await nextTick();
                     renderOverviewCharts();
-                    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
                     return true;
                 }
                 const [flowResp, woResp] = await Promise.all([
@@ -4207,7 +4207,7 @@ createApp({
                 await nextTick();
                 renderMiniCharts();
                 renderOverviewCharts();
-                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
                 return true;
             } catch (e) {
                 console.warn('SSE 刷新生产详情概览失败，将等待重试:', e);

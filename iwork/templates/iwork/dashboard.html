@@ -105,7 +105,7 @@
                 class="px-4 py-2 border border-slate-600 rounded-lg text-sm transition-colors">
                 {[ isPaused ? '恢复更新' : '暂停更新' ]}
             </button>
-            <span v-if="currentView === 'realtime'" class="iwork-last-update text-sm text-slate-500">最后更新: {[ lastUpdate ]}(柬埔寨时间)</span>
+            <span v-if="currentView === 'realtime'" class="iwork-last-update text-sm text-slate-500">最后更新: {[ lastUpdate ]}(缅甸时间)</span>
     </header>
 
     <div v-if="currentView === 'history' && historySnapshotMessage"
@@ -340,10 +340,10 @@ createApp({
         const wsConnected = ref(false);
         const wsStatus = ref('未连接');
         const lastUpdate = ref('');
-        const currentHour = ref(parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false })));
+        const currentHour = ref(parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Yangon', hour: 'numeric', hour12: false })));
         function businessDateString(dayOffset = 0) {
             const parts = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Asia/Bangkok',
+                timeZone: 'Asia/Yangon',
                 year: 'numeric',
                 month: '2-digit',
                 day: '2-digit',
@@ -561,7 +561,7 @@ createApp({
 
                 // 实时模式：叠加时段趋势折线
                 if (currentView.value === 'realtime') {
-                    currentHour.value = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false }));
+                    currentHour.value = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Yangon', hour: 'numeric', hour12: false }));
                     const hourlyForStep = (data.monthly_hourly_stats || [])
                         .filter(s => s.step === stepnoFilter.value && s.hour <= currentHour.value + 1);
                     const lineData = mpDates.map(d => {
@@ -869,7 +869,7 @@ createApp({
                     }
                     wsConnected.value = true;
                     wsStatus.value = msg.stale ? '已连接（数据更新延迟）' : '已连接';
-                    lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Bangkok' });
+                    lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Yangon' });
                     renderAllCharts();
                 } catch (e) {
                     console.error('SSE 数据解析失败:', e);

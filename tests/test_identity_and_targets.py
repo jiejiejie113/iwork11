@@ -150,7 +150,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
     for leader in (leader_a, leader_b):
         ManagedFlowAssignment.objects.create(
             principal=leader,
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             effective_date=date(2026, 8, 1),
         )
     target_date = date(2026, 8, 19)
@@ -166,7 +166,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
 
     result = save_group_target(
         identity=IworkIdentity(subject='subject-b', username='leader-b'),
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         target_date=target_date,
         target_qty=0,
         planned_work_minutes=600,
@@ -174,7 +174,7 @@ def test_any_active_leader_can_complete_a_daily_obligation(monkeypatch):
 
     obligation = DailyTargetObligation.objects.get(
         target_date=target_date,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
     )
     assert result.target_qty == 0
     assert obligation.status == DailyTargetObligation.Status.FULFILLED
@@ -192,7 +192,7 @@ def test_pending_obligation_becomes_overdue_after_bangkok_deadline():
     principal = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     ManagedFlowAssignment.objects.create(
         principal=principal,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 8, 1),
     )
     now = datetime.combine(
@@ -228,7 +228,7 @@ def test_generated_obligation_freezes_deadline_and_appends_new_leaders():
     leader_a = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     ManagedFlowAssignment.objects.create(
         principal=leader_a,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 8, 1),
     )
     obligation = ensure_daily_target_obligations(target_date)[0]
@@ -237,7 +237,7 @@ def test_generated_obligation_freezes_deadline_and_appends_new_leaders():
     leader_b = IworkPrincipal.objects.create(subject='subject-b', username='leader-b')
     ManagedFlowAssignment.objects.create(
         principal=leader_b,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 8, 18),
     )
     TargetSubmissionPolicy.objects.create(
@@ -274,23 +274,23 @@ def test_waived_obligation_revives_when_leader_reassigned():
     leader_a = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     assignment = ManagedFlowAssignment.objects.create(
         principal=leader_a,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 8, 1),
     )
     ensure_daily_target_obligations(target_date, now=early_time)
     assignment.delete()
     waive_unfinished_obligations(
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         identity=IworkIdentity(subject='admin-subject', username='admin', is_admin=True),
         now=early_time,
     )
-    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')
+    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='Sewing-A1')
     assert obligation.status == DailyTargetObligation.Status.WAIVED
 
     leader_b = IworkPrincipal.objects.create(subject='subject-b', username='leader-b')
     ManagedFlowAssignment.objects.create(
         principal=leader_b,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=target_date,
     )
     ensure_daily_target_obligations(target_date, now=early_time)
@@ -319,7 +319,7 @@ def test_late_submission_preserves_overdue_fact():
     principal = IworkPrincipal.objects.create(subject='subject-a', username='leader-a')
     ManagedFlowAssignment.objects.create(
         principal=principal,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=target_date - timedelta(days=30),
     )
     late_time = datetime.combine(target_date, time(9, 1), tzinfo=ZoneInfo('Asia/Bangkok'))
@@ -328,13 +328,13 @@ def test_late_submission_preserves_overdue_fact():
     with patch('iwork.target_responsibility.timezone.now', return_value=late_time):
         save_group_target(
             identity=IworkIdentity(subject='subject-a', username='leader-a'),
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             target_date=target_date,
             target_qty=1,
             planned_work_minutes=600,
         )
 
-    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')
+    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='Sewing-A1')
     assert obligation.status == DailyTargetObligation.Status.FULFILLED_LATE
 
 
@@ -375,7 +375,7 @@ def test_admin_assignment_api_uses_portal_contract_fields(monkeypatch):
         data=json.dumps({
             'subject': 'leader-subject',
             'username': 'leader',
-            'flow_name': 'SO3-L3A',
+            'flow_name': 'Sewing-A1',
             'effective_date': '2026-08-18',
             'expires_date': None,
         }),
@@ -504,7 +504,7 @@ def test_leader_cannot_rewrite_historical_target(monkeypatch):
     principal = IworkPrincipal.objects.create(subject='leader-subject', username='leader')
     ManagedFlowAssignment.objects.create(
         principal=principal,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 7, 1),
         expires_date=date(2026, 7, 31),
     )
@@ -513,7 +513,7 @@ def test_leader_cannot_rewrite_historical_target(monkeypatch):
     with pytest.raises(TargetResponsibilityError) as exc_info:
         save_group_target(
             identity=IworkIdentity(subject='leader-subject', username='leader'),
-            flow_name='SO3-L3A',
+            flow_name='Sewing-A1',
             target_date=date(2026, 7, 18),
             target_qty=100,
             planned_work_minutes=None,
@@ -583,7 +583,7 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
     principal = IworkPrincipal.objects.create(subject='leader-subject', username='leader')
     assignment = ManagedFlowAssignment.objects.create(
         principal=principal,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
         effective_date=date(2026, 8, 1),
     )
     target_date = date(2026, 8, 19)
@@ -603,7 +603,7 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
             'id': assignment.pk,
             'subject': principal.subject,
             'username': principal.username,
-            'flow_name': 'SO3-L3A',
+            'flow_name': 'Sewing-A1',
             'effective_date': '2026-08-20',
             'expires_date': None,
         }),
@@ -615,7 +615,7 @@ def test_assignment_date_change_waives_future_unfinished_obligation(monkeypatch)
     )
 
     assert response.status_code == 200
-    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='SO3-L3A')
+    obligation = DailyTargetObligation.objects.get(target_date=target_date, flow_name='Sewing-A1')
     assert obligation.status == DailyTargetObligation.Status.WAIVED
 
 
@@ -642,7 +642,7 @@ def test_assignment_after_deadline_takes_effect_same_day_as_overdue():
             data=json.dumps({
                 'subject': 'leader-subject',
                 'username': 'leader',
-                'flow_name': 'SO3-L3A',
+                'flow_name': 'Sewing-A1',
                 'effective_date': current_date.isoformat(),
                 'expires_date': None,
             }),
@@ -657,7 +657,7 @@ def test_assignment_after_deadline_takes_effect_same_day_as_overdue():
     assert response.json()['effective_date'] == '2026-08-18'
     obligation = DailyTargetObligation.objects.get(
         target_date=current_date,
-        flow_name='SO3-L3A',
+        flow_name='Sewing-A1',
     )
     assert obligation.status == DailyTargetObligation.Status.OVERDUE
     assert list(obligation.leader_links.values_list('subject', flat=True)) == ['leader-subject']
@@ -684,7 +684,7 @@ def test_assignment_without_effective_date_defaults_to_business_date():
             data=json.dumps({
                 'subject': 'leader-subject',
                 'username': 'leader',
-                'flow_name': 'SO3-L3A',
+                'flow_name': 'Sewing-A1',
                 'expires_date': None,
             }),
             content_type='application/json',
@@ -749,7 +749,7 @@ def test_direct_assignment_revalidates_target_iwork_access(monkeypatch):
         data=json.dumps({
             'subject': 'leader-subject',
             'username': 'leader',
-            'flow_name': 'SO3-L3A',
+            'flow_name': 'Sewing-A1',
             'effective_date': '2026-08-18',
             'expires_date': None,
         }),
@@ -796,7 +796,7 @@ def test_direct_assignment_rejects_invalid_validation_host(monkeypatch):
         data=json.dumps({
             'subject': 'leader-subject',
             'username': 'leader',
-            'flow_name': 'SO3-L3A',
+            'flow_name': 'Sewing-A1',
             'effective_date': '2026-08-18',
             'expires_date': None,
         }),

@@ -317,12 +317,12 @@ class TestGetBatchFlowEmployeesLocal:
         mock_qs.filter.return_value = mock_qs
         mock_qs.values.return_value.annotate.return_value.order_by.return_value = [
             {
-                'Flow': 'SO3-L3A', 'RegPerSysID': 1001,
+                'Flow': 'Sewing-A1', 'RegPerSysID': 1001,
                 'StepNo': 15, 'WrkOrder': 'BU0724', 'qty': 100,
             },
         ]
 
-        employee = get_batch_flow_employees(date(2026, 7, 14))['SO3-L3A'][0]
+        employee = get_batch_flow_employees(date(2026, 7, 14))['Sewing-A1'][0]
 
         assert employee['total_qty'] == 100
         assert employee['output_value'] is None
@@ -381,7 +381,7 @@ class TestGetBatchProductOverviewLocal:
 
         queryset = mock_records.return_value
         queryset.values.return_value.annotate.return_value.order_by.return_value = [
-            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'SO3-L3A', 'qty': 100, 'workers': 2},
+            {'WrkOrder': 'BU0724', 'StepNo': 70, 'Flow': 'Sewing-A1', 'qty': 100, 'workers': 2},
             {
                 'WrkOrder': 'BU0724', 'StepNo': 80,
                 'Flow': 'Finishing-QC1', 'qty': 50, 'workers': 1,
@@ -399,7 +399,7 @@ class TestGetBatchProductOverviewLocal:
         assert step['step_time'] is None
         assert step['output_value'] is None
         assert result['products'][0]['total_qty'] == 150
-        assert 'SO3-L3A' in result['normal_flows']
+        assert 'Sewing-A1' in result['normal_flows']
         assert 'Finishing-QC1' not in result['normal_flows']
         queryset.exclude.assert_not_called()
         queryset.filter.assert_not_called()

@@ -3,6 +3,8 @@ import os
 
 _TEST_ENV_DEFAULTS = {
     'DJANGO_SECRET_KEY': 'iwork-test-only-secret-key',
+    'DJANGO_STATIC_URL': '/iwork/static/',
+    'DJANGO_ALLOWED_HOSTS': 'localhost,127.0.0.1,testserver',
     'ACCESS_DB_NAME': 'test_default',
     'ACCESS_DB_USER': 'test',
     'ACCESS_DB_PASSWORD': 'test',
