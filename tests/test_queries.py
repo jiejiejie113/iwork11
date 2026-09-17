@@ -208,6 +208,7 @@ def test_read_model_snapshot_uses_repeatable_read(mock_connections, mock_atomic)
 
     connection = mock_connections.__getitem__.return_value
     connection.vendor = 'mysql'
+    connection.mysql_version = (5, 7, 8)
     cursor = connection.cursor.return_value.__enter__.return_value
 
     with read_model_consistent_snapshot():
@@ -218,6 +219,26 @@ def test_read_model_snapshot_uses_repeatable_read(mock_connections, mock_atomic)
         call('SET SESSION MAX_EXECUTION_TIME = 30000'),
         call('SET SESSION MAX_EXECUTION_TIME = 0'),
     ])
+    mock_atomic.assert_called_once_with(using='iwork')
+
+
+@patch('iwork.queries.transaction.atomic')
+@patch('iwork.queries.connections')
+def test_read_model_snapshot_skips_execution_limit_on_old_mysql(mock_connections, mock_atomic):
+    """MySQL 5.6 不支持 MAX_EXECUTION_TIME，应跳过语句级执行上限。"""
+    from iwork.queries import read_model_consistent_snapshot
+
+    connection = mock_connections.__getitem__.return_value
+    connection.vendor = 'mysql'
+    connection.mysql_version = (5, 6, 29)
+    cursor = connection.cursor.return_value.__enter__.return_value
+
+    with read_model_consistent_snapshot():
+        pass
+
+    cursor.execute.assert_called_once_with(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+    )
     mock_atomic.assert_called_once_with(using='iwork')
 
 

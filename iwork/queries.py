@@ -156,19 +156,29 @@ def read_model_consistent_snapshot():
     """
     connection = connections['iwork']
     timeout_ms = getattr(settings, 'IWORK_REMOTE_STATEMENT_TIMEOUT_MS', 30000)
+    supports_execution_time = (
+        connection.vendor == 'mysql'
+        and getattr(connection, 'mysql_version', (0, 0, 0)) >= (5, 7, 8)
+    )
     if connection.vendor == 'mysql':
         with connection.cursor() as cursor:
             cursor.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    if supports_execution_time:
         try:
             with connection.cursor() as cursor:
                 cursor.execute(f'SET SESSION MAX_EXECUTION_TIME = {int(timeout_ms)}')
         except OperationalError as exc:
             logger.warning('设置远程语句执行上限失败，按无上限继续: {}', exc)
+    else:
+        logger.debug(
+            '远程 MySQL {} 不支持 MAX_EXECUTION_TIME，跳过语句级执行上限',
+            getattr(connection, 'mysql_version', None),
+        )
     try:
         with transaction.atomic(using='iwork'):
             yield
     finally:
-        if connection.vendor == 'mysql':
+        if supports_execution_time:
             try:
                 with connection.cursor() as cursor:
                     cursor.execute('SET SESSION MAX_EXECUTION_TIME = 0')
