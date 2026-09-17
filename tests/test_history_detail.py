@@ -414,6 +414,82 @@ def test_snapshot_history_date_publishes_validated_snapshot():
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_snapshot_history_date_gates_low_mapping_coverage():
+    """员工映射覆盖率低于阈值时拒绝发布，并保留既有成功快照。"""
+    from iwork.history_store import SnapshotCoverageError
+
+    target_date = date(2026, 7, 17)
+
+    def _payload(kept_records, total_records):
+        """构造指定过滤前后记录数的单事实载荷。"""
+        return HistorySnapshotPayload(
+            facts=[{
+                'event_hour': 10,
+                'flow': 'Sewing-A5',
+                'station_id': 'L5C',
+                'employee_id': 1942,
+                'wrk_order': 'BU1208A',
+                'step_no': 38,
+                'qty': kept_records,
+                'source_record_count': kept_records,
+            }],
+            metadata=[{
+                'wrk_order': 'BU1208A',
+                'step_no': 38,
+                'description': '翻猪肠绑绳',
+                'step_time': 0.131,
+            }],
+            source_row_count=kept_records,
+            source_total_qty=kept_records,
+            source_total_records=total_records,
+        )
+
+    class LowCoverageSource:
+        """模拟远程员工主数据断裂导致的缩水载荷。"""
+
+        def load(self, _requested_date):
+            """返回覆盖率约 1% 的缩水载荷。"""
+            return _payload(100, 10000)
+
+    class HealthySource:
+        """模拟覆盖率正常的完整载荷。"""
+
+        def load(self, _requested_date):
+            """返回覆盖率 100% 的完整载荷。"""
+            return _payload(10000, 10000)
+
+    with pytest.raises(SnapshotCoverageError, match='覆盖率'):
+        snapshot_history_date(target_date, source=LowCoverageSource())
+
+    failed = HistoricalSyncState.objects.using('iwork_local').get(
+        snapshot_date=target_date,
+    )
+    assert failed.status == HistoricalSyncState.Status.FAILED
+    assert '覆盖率' in failed.error_message
+    assert HistoricalProductionFact.objects.using('iwork_local').filter(
+        production_date=target_date,
+    ).count() == 0
+
+    state = snapshot_history_date(target_date, source=HealthySource())
+    assert state.status == HistoricalSyncState.Status.SUCCESS
+    assert state.snapshot_version == 1
+
+    with pytest.raises(SnapshotCoverageError, match='覆盖率'):
+        snapshot_history_date(target_date, source=LowCoverageSource())
+
+    preserved = HistoricalSyncState.objects.using('iwork_local').get(
+        snapshot_date=target_date,
+    )
+    assert preserved.status == HistoricalSyncState.Status.SUCCESS
+    assert preserved.snapshot_version == 1
+    assert '覆盖率' in preserved.error_message
+    assert HistoricalProductionFact.objects.using('iwork_local').filter(
+        production_date=target_date,
+        source_record_count=10000,
+    ).count() == 1
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_snapshot_history_date_rejects_duplicate_build_before_loading_source():
     """同日期已有构建任务时，服务层应在远程查询前拒绝重复任务。"""
     from django.core.cache import cache

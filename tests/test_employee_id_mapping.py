@@ -26,3 +26,19 @@ def test_group_target_allocation_supports_text_remark_ids():
     )
 
     assert allocations == {"70": {"EMP-1": 2, "EMP-2": 1}}
+
+
+def test_worker_no_key_builds_unique_employee_map():
+    """员工 ID 字段可切换为 WorkerNo，空值和重复值同样被排除。"""
+    from iwork.employee_id_mapping import build_unique_remark_map
+
+    rows = [
+        {"SysID": 1001, "WorkerNo": "PC002"},
+        {"SysID": 1002, "WorkerNo": "PC002"},
+        {"SysID": 1003, "WorkerNo": "   "},
+        {"SysID": 1004, "WorkerNo": None},
+        {"SysID": 1005, "WorkerNo": " 11532 "},
+    ]
+
+    assert build_unique_remark_map(rows, remark_key="WorkerNo") == {"1005": "11532"}
+    assert build_unique_remark_map(rows) == {}

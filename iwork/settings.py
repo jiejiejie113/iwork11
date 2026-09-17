@@ -253,6 +253,12 @@ WORKDAY_END_MINUTE = 18 * 60 + 30
 
 # 历史快照单日期构建锁超时；应覆盖一次完整的远程聚合与本地发布。
 HISTORY_SNAPSHOT_LOCK_TIMEOUT = env.int('HISTORY_SNAPSHOT_LOCK_TIMEOUT', default=1800)
+# 历史快照发布闸门：员工映射覆盖率低于该比例时拒绝发布，避免远程主数据
+# 异常导致快照静默缩水（正常基线约 99.8%，断裂时约 3%）。
+HISTORY_SNAPSHOT_MIN_COVERAGE = env.float(
+    'HISTORY_SNAPSHOT_MIN_COVERAGE',
+    default=0.9,
+)
 HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = env.int(
     'HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL',
     default=60,

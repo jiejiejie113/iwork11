@@ -33,6 +33,7 @@ from iwork.statistics import get_business_date
 # 历史快照锁配置
 HISTORY_SNAPSHOT_LOCK_TIMEOUT = settings.HISTORY_SNAPSHOT_LOCK_TIMEOUT
 HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL = settings.HISTORY_SNAPSHOT_LOCK_RENEW_INTERVAL
+HISTORY_SNAPSHOT_MIN_COVERAGE = settings.HISTORY_SNAPSHOT_MIN_COVERAGE
 
 
 class SnapshotBuildInProgressError(RuntimeError):
@@ -43,12 +44,17 @@ class SnapshotBuildLeaseLostError(SnapshotBuildInProgressError):
     """历史快照构建任务已失去分布式锁所有权。"""
 
 
+class SnapshotCoverageError(RuntimeError):
+    """员工映射覆盖率低于阈值，拒绝发布静默缩水的历史快照。"""
+
+
 @dataclass(frozen=True)
 class HistorySnapshotPayload:
     facts: list[dict]
     metadata: list[dict]
     source_row_count: int
     source_total_qty: int
+    source_total_records: int = 0
 
 
 class RemoteHistorySource:
@@ -79,6 +85,9 @@ class RemoteHistorySource:
             employee_remark_map = get_employee_remark_map()
 
         facts = []
+        total_source_records = sum(
+            int(row['source_record_count'] or 0) for row in rows
+        )
         for row in rows:
             employee_id = row['RegPerSysID'] or 0
             employee_remark = employee_remark_map.get(
@@ -103,6 +112,7 @@ class RemoteHistorySource:
             metadata=metadata,
             source_row_count=sum(row['source_record_count'] for row in facts),
             source_total_qty=sum(row['qty'] for row in facts),
+            source_total_records=total_source_records,
         )
 
     @staticmethod
@@ -347,10 +357,26 @@ def _snapshot_history_date_locked(
 
 
 def _validate_payload(payload: HistorySnapshotPayload) -> None:
-    """校验聚合载荷与源数据记录数及总产量一致。"""
+    """校验聚合载荷与源数据记录数及总产量一致，并执行覆盖率发布闸门。"""
     fact_row_count = sum(row['source_record_count'] for row in payload.facts)
     fact_total_qty = sum(row['qty'] for row in payload.facts)
     if fact_row_count != payload.source_row_count:
         raise ValueError('历史快照源记录数校验失败')
     if fact_total_qty != payload.source_total_qty:
         raise ValueError('历史快照总产量校验失败')
+    if payload.source_total_records > 0:
+        coverage = payload.source_row_count / payload.source_total_records
+        if coverage < HISTORY_SNAPSHOT_MIN_COVERAGE:
+            logger.error(
+                '历史快照员工映射覆盖率 {:.1%} 低于阈值 {:.1%}，拒绝发布: '
+                '源记录 {}/{}',
+                coverage,
+                HISTORY_SNAPSHOT_MIN_COVERAGE,
+                payload.source_row_count,
+                payload.source_total_records,
+            )
+            raise SnapshotCoverageError(
+                f'员工映射覆盖率 {coverage:.1%} 低于阈值 '
+                f'{HISTORY_SNAPSHOT_MIN_COVERAGE:.1%}，'
+                f'源记录 {payload.source_row_count}/{payload.source_total_records}'
+            )

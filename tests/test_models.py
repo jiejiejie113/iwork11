@@ -124,6 +124,15 @@ class TestPypersonModel:
 
         assert isinstance(Pyperson._meta.get_field('Remark'), TextField)
 
+    def test_worker_no_is_employee_id_source(self):
+        """员工工号字段支持字母数字文本且允许为空。"""
+        from django.db.models import CharField
+
+        field = Pyperson._meta.get_field('WorkerNo')
+        assert isinstance(field, CharField)
+        assert field.max_length == 16
+        assert field.null is True
+
 
 class TestPywrkstpModel:
     """工单工序工时表模型测试。"""

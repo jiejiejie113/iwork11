@@ -242,6 +242,28 @@ def test_read_model_snapshot_skips_execution_limit_on_old_mysql(mock_connections
     mock_atomic.assert_called_once_with(using='iwork')
 
 
+@patch('iwork.models.Pyperson')
+@patch('iwork.models.Pytckreg3')
+def test_employee_remark_map_reads_worker_no(mock_pytckreg3, mock_pyperson):
+    """员工映射必须读取完整唯一的 WorkerNo，而非已清空的 Remark。"""
+    from iwork.queries import get_employee_remark_map
+
+    mock_pyperson.objects.using.return_value.filter.return_value.values.return_value = [
+        {'SysID': 1001, 'WorkerNo': 'PC002'},
+        {'SysID': 1002, 'WorkerNo': '11532'},
+    ]
+
+    result = get_employee_remark_map()
+
+    mock_pytckreg3.objects.using.assert_called_once_with('iwork')
+    mock_pyperson.objects.using.assert_called_once_with('iwork')
+    mock_pyperson.objects.using.return_value.filter.return_value.values.assert_called_once_with(
+        'SysID',
+        'WorkerNo',
+    )
+    assert result == {'1001': 'PC002', '1002': '11532'}
+
+
 class TestApplyStepnoFilter:
     """apply_stepno_filter"""
 
