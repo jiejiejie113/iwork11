@@ -132,7 +132,7 @@ def dashboard(request):
     context = _with_device_context(request, {
         'stats': stats,
         'stats_json': stats_json,
-        'page_title': 'TPI生产看板',
+        'page_title': 'PCI生产看板',
         'initial_view': 'realtime',
     })
     return render(request, 'iwork/dashboard.html', context)
@@ -145,7 +145,7 @@ def history_dashboard(request):
     context = _with_device_context(request, {
         'stats': {'total_qty': 0, 'workorder_count': 0},
         'stats_json': '{}',
-        'page_title': 'TPI生产看板 - 历史数据',
+        'page_title': 'PCI生产看板 - 历史数据',
         'initial_view': 'history',
     })
     return render(request, 'iwork/dashboard.html', context)
@@ -175,7 +175,7 @@ def today_targets(request):
 def production_detail(request):
     """生产详情 — Flow 概览页"""
     context = _with_device_context(request, {
-        'page_title': 'TPI生产看板 - 生产详情',
+        'page_title': 'PCI生产看板 - 生产详情',
         'initial_view': 'overview',
         'detail_type': '',
         'detail_key': '',
@@ -188,7 +188,7 @@ def production_detail(request):
 def production_detail_flow(request, flow_name):
     """生产详情 — Flow 员工明细"""
     context = _with_device_context(request, {
-        'page_title': f'TPI生产看板 - 生产详情 - {flow_name}',
+        'page_title': f'PCI生产看板 - 生产详情 - {flow_name}',
         'initial_view': 'detail',
         'detail_type': 'flow',
         'detail_key': flow_name,
@@ -201,7 +201,7 @@ def production_detail_flow(request, flow_name):
 def production_detail_stepno(request, stepno):
     """生产详情 — 工序员工明细"""
     context = _with_device_context(request, {
-        'page_title': f'TPI生产看板 - 生产详情 - 工序 {stepno}',
+        'page_title': f'PCI生产看板 - 生产详情 - 工序 {stepno}',
         'initial_view': 'detail',
         'detail_type': 'stepno',
         'detail_key': stepno,
@@ -225,7 +225,7 @@ def production_detail_initial_style(request):
     initial_style_no = str(request.GET.get('initial_style_no') or '').strip()
     label = initial_style_no or '未设置'
     context = _with_device_context(request, {
-        'page_title': f'TPI生产看板 - 生产详情 - 初版款号 {label}',
+        'page_title': f'PCI生产看板 - 生产详情 - 初版款号 {label}',
         'initial_view': 'detail',
         'detail_type': 'initial_style',
         'detail_key': initial_style_no,
@@ -237,6 +237,6 @@ def production_detail_initial_style(request):
 def kanban_page(request):
     """产量看板页面"""
     context = _with_device_context(request, {
-        'page_title': 'TPI生产看板 - 产量看板',
+        'page_title': 'PCI生产看板 - 产量看板',
     })
     return render(request, 'iwork/kanban.html', context)
