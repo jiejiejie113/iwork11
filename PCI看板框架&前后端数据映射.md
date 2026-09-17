@@ -146,7 +146,7 @@ D:\iwork\
 | `queries.py` | 远程库查询层：细粒度事实单条 SQL（`get_read_model_fact_rows`）、全历史累计、批量查询族 `get_batch_*`、看板查询族 `get_kanban_*`、工序元数据；Flow 白名单过滤（仅 stepno 70） |
 | `statistics.py` | 并行聚合引擎：`get_batch_stats`（6 线程并行 5 维查询 + 月趋势缓存 TTL 30 天）、`get_batch_detail_stats`（5 线程）、有效工时计算（缅甸 07:30 起扣午休 11:30-12:00 与晚休 16:00-16:30，18:30 封顶） |
 | `tasks.py` | Celery：`sync_dashboard_stats`（beat 每 60s：Redis 刷新锁 → 构建快照 → 发布 → 通知 SSE → 入队告警评估）、`snapshot_recent_history`（每日 03:00 重建最近 3 天）、`build_history_snapshot`（带 `request_token` 请求锁所有权校验） |
-| `history_store.py` | 历史快照构建：`RemoteHistorySource.load()` 可重复读事务内单次聚合远程表（小时抽取、员工 `WorkerNo` 映射），发布前经覆盖率闸门校验（`HISTORY_SNAPSHOT_MIN_COVERAGE`，默认 0.9，低于阈值抛 `SnapshotCoverageError` 拒绝发布）；`_snapshot_history_date_locked` 事务内先删后建 `HistoricalProductionFact`/`HistoricalStepSnapshot`（batch 2000）+ 更新 `HistoricalSyncState`；Redis 分布式锁 + 60s 续租 |
+| `history_store.py` | 历史快照构建：`RemoteHistorySource.load()` 可重复读事务内单次聚合远程表（小时抽取、员工 `DormNo` 优先/`WorkerNo` 回退映射），发布前经覆盖率闸门校验（`HISTORY_SNAPSHOT_MIN_COVERAGE`，默认 0.9，低于阈值抛 `SnapshotCoverageError` 拒绝发布）；`_snapshot_history_date_locked` 事务内先删后建 `HistoricalProductionFact`/`HistoricalStepSnapshot`（batch 2000）+ 更新 `HistoricalSyncState`；Redis 分布式锁 + 60s 续租 |
 | `sync.py` | 旧式逐行全量同步：按 `RegDate` 范围流式取远程 `pytckreg3`（chunk 5000），19 字段比对后 `update_or_create` 到本地 `LocalPytckreg3` |
 | `middleware.py` | `TrustedProxyMiddleware`：仅接受 Docker 内网可信代理 IP，解析 `Remote-*` 身份头；`TargetSubmissionGateMiddleware`：当前负责人未提交今日目标时拦截页面/API |
 | `identity.py` | `IworkIdentity`：subject/username/email/display_name/keycloak_groups/is_admin/is_iwork_admin |
@@ -293,7 +293,7 @@ D:\iwork\
 | Django 模型 | 表名 | 关键字段 | 用途 |
 |---|---|---|---|
 | `Pytckreg3` | `pytckreg3` | `TicketNo`(PK,13) `SeqNo` `WrkOrder`(14) `BundleNo` `StepNo` `Qty` `RegPerSysID` `RegDate` `RegTime` `RFID` `Flow`(40) `PO` `TimeCost` `SysSource` `AccBundleNo` `MtrType` `Color` `Sizx` `SerialNum` `StationID`；`full_datetime` 属性合并日期时间 | 生产流水线打卡记录（所有产量/工时的事实来源） |
-| `Pyperson` | `pyperson` | `SysID`(PK) `WorkerNo` `Remark` | 人员主数据；`WorkerNo` 为**员工工号（员工 ID 来源）**，空值/重复由映射规则过滤；`Remark` 已于 2026-09 被远程清空，不再作为员工 ID |
+| `Pyperson` | `pyperson` | `SysID`(PK) `WorkerNo` `DormNo` `Remark` | 人员主数据；**员工 ID 为 `DormNo` 优先、`WorkerNo` 回退**（生产一线员工 `DormNo` 为空时回退工号），空值/重复由映射规则过滤；`Remark` 已于 2026-09 被远程清空，不再使用 |
 | `Pywrkord` | `pywrkord` | `WrkOrder`(PK,14) `ExtField01` | 工单扩展；`ExtField01` = **初版款号** |
 | `Pydefstp` | `pydefstp` | `StepNo`(PK) | 工序定义（生产详情不使用其 Description） |
 | `Pywrkstp` | `pywrkstp` | 复合主键 `(WrkOrder, StepNo)` `Description`(120) `StepTime`(标准工时 float) | 工单工序描述与标准工时 |
@@ -332,7 +332,8 @@ D:\iwork\
 erDiagram
     pyperson {
         int SysID PK "人员系统ID"
-        char16 WorkerNo "员工工号（员工ID来源）"
+        char16 WorkerNo "员工工号（DormNo 缺失时回退）"
+        char20 DormNo "员工ID（优先）"
         text Remark "2026-09 起被远程清空，已弃用"
     }
     pytckreg3 {
@@ -372,7 +373,7 @@ erDiagram
 
 | 关系 | 字段链 | 应用用途 |
 |---|---|---|
-| 打卡 → 员工 | `pytckreg3.RegPerSysID → pyperson.SysID` | 员工 ID 映射（`WorkerNo`；`Remark` 已弃用） |
+| 打卡 → 员工 | `pytckreg3.RegPerSysID → pyperson.SysID` | 员工 ID 映射（`DormNo` 优先、`WorkerNo` 回退；`Remark` 已弃用） |
 | 打卡 → 工单 | `pytckreg3.WrkOrder → pywrkord.WrkOrder` | 初版款号 `ExtField01`；前 6 位跨库匹配本地 `production_orders.style_no` |
 | 打卡 → 工序工时 | `pytckreg3.(WrkOrder, StepNo) → pywrkstp.(WrkOrder, StepNo)` | 工序描述、标准工时与产值 |
 | 打卡 → 工序定义 | `pytckreg3.StepNo → pydefstp.StepNo` | 仅模型映射，生产详情不使用 |
@@ -398,7 +399,7 @@ erDiagram
 
 | 业务概念 | 数据库位置 | 字段链路 |
 |---|---|---|
-| 员工 ID | `iwork.pyperson.WorkerNo`；`iwork.pytckreg3.RegPerSysID`；历史冗余 `iwork_local.historical_production_fact.employee_remark` | `RegPerSysID`（打卡记录）→ `pyperson.SysID` 匹配 → `pyperson.WorkerNo`（员工工号；2026-09-17 起取代已清空的 `Remark`）→ 历史事实表冗余为 `employee_remark`；查询层显示用 `employee_remark or employee_id` |
+| 员工 ID | `iwork.pyperson.DormNo`（优先）/ `WorkerNo`（回退）；`iwork.pytckreg3.RegPerSysID`；历史冗余 `iwork_local.historical_production_fact.employee_remark` | `RegPerSysID`（打卡记录）→ `pyperson.SysID` 匹配 → `DormNo` 优先、缺失时回退 `WorkerNo`（2026-09-17 起，取代已清空的 `Remark`）→ 历史事实表冗余为 `employee_remark`；查询层显示用 `employee_remark or employee_id` |
 | 初版款号 | `iwork.pywrkord.ExtField01`；历史冗余 `iwork_local.historical_step_snapshot.initial_style_no` | 按 `WrkOrder` 关联 |
 | 工序描述/标准工时 | `iwork.pywrkstp.Description / StepTime`；历史冗余 `iwork_local.historical_step_snapshot.description / step_time` | `(WrkOrder, StepNo)` 联合确定 |
 | 分组（Flow） | `iwork.pytckreg3.Flow`；历史 `iwork_local.historical_production_fact.flow` | 生产组名（Sewing-A1…B19，白名单仅 stepno 70 过滤） |
@@ -423,7 +424,7 @@ erDiagram
         ──► 发布通知 iwork:read:v1:published ──► SSE ──► 浏览器
 
 [历史链路] 远程 payroll.pytckreg3 ──每日03:00 / 前端ensure触发──► Celery(build_history_snapshot)
-    └─ RemoteHistorySource.load() 事务内聚合（ExtractHour、Sum qty、WorkerNo 映射）
+    └─ RemoteHistorySource.load() 事务内聚合（ExtractHour、Sum qty、DormNo 优先/WorkerNo 回退映射）
     └─ 覆盖率闸门：过滤后源记录 / 过滤前源记录 < HISTORY_SNAPSHOT_MIN_COVERAGE(0.9)
        → 抛 SnapshotCoverageError 拒绝发布并写入 error_message（既有成功快照保留）
     └─ 先删后建 historical_production_fact / historical_step_snapshot（batch 2000）
@@ -565,7 +566,7 @@ erDiagram
 
 ### 8.8 产量看板（已下线，接口保留）
 
-> 数据来源：Redis 快照 `kanban` 视图（源头 `iwork.pytckreg3`，员工名 `iwork.pyperson.WorkerNo`；仅快照内事实筛选，无数据库直查）。
+> 数据来源：Redis 快照 `kanban` 视图（源头 `iwork.pytckreg3`，员工名 `iwork.pyperson.DormNo`（优先）/`WorkerNo`（回退）；仅快照内事实筛选，无数据库直查）。
 
 `api/kanban/stats/` → `{worker_count, total_production, avg_production, max_production, max_worker_name}`；`api/kanban/ranking/` → `{pagination{page,page_size,total_pages,total_count}, workers:[{rank, reg_per_sys_id, worker_name, stepno, wrk_orders[], flow, production}]}`；`api/kanban/filter-options/` → `{stepnos[], wrk_orders[], flows[], employees:[{reg_per_sys_id, name}]}`；筛选参数：`date`（必填）、`stepno/wrk_order/flow/reg_per_sys_id` 可多传（同名参数重复追加）、`show_all_flows`。
 
@@ -598,6 +599,12 @@ erDiagram
 ---
 
 ## 11. 变更记录
+
+### 2026-09-17 员工 ID 改为 DormNo 优先、WorkerNo 回退
+
+- 按业务要求以 `pyperson.DormNo` 作为员工 ID；因生产一线员工（`SL001`/`SW001`/`CA002` 等）`DormNo` 为空，采用 `WorkerNo` 回退，避免看板缝纫数据被过滤。
+- 只读实测：解析映射覆盖 13,425 人、无新增唯一性冲突；9/16 记录覆盖率保持 99.7%、白名单产量 11,065 与切换前一致。
+- `Pyperson` 模型新增 `DormNo` 字段；重建 9/02~9/16 与 6/01~6/30 共 45 天历史快照（全部 SUCCESS）。
 
 ### 2026-09-17 名称更名：Tpi → PCI
 
