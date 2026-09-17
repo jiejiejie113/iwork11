@@ -3,6 +3,7 @@
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -177,10 +178,15 @@ def test_service_rejects_new_submission_without_work_hours(fixed_business_clock)
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 @override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
+@patch(
+    'iwork.api_views_account._flow_production_by_flow',
+    return_value={'Sewing-A1': 0, 'Sewing-A2': 0},
+)
 def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
+    mock_production,
     fixed_business_clock,
 ):
-    """组长可一次读取多个负责分组，显式零目标和历史工时均正确序列化。"""
+    """组长可一次读取多个负责分组，显式零目标按实际产量达标。"""
     from iwork.local_models import GroupTargetProduction
 
     from iwork.local_models import IworkPrincipal, ManagedFlowAssignment
@@ -227,6 +233,9 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     assert payload['business_date'] == TARGET_DATE.isoformat()
     assert payload['summary'] == {
         'completed_count': 1,
+        'unfinished_count': 0,
+        'filled_count': 0,
+        'pending_fill_count': 1,
         'incomplete_count': 1,
         'total_count': 2,
         'all_complete': False,
@@ -237,11 +246,15 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     assert first['target_set'] is True
     assert first['work_hours'] == 10
     assert first['work_hours_set'] is True
+    assert first['actual_qty'] == 0
+    assert first['production_available'] is True
     assert first['complete'] is True
+    assert first['production_state'] == 'completed'
     assert first['status'] == 'fulfilled'
     assert second['work_hours'] == 8
     assert second['work_hours_set'] is False
     assert second['complete'] is False
+    assert second['production_state'] == 'pending_fill'
     assert second['status'] == 'pending'
 
 
@@ -285,7 +298,12 @@ def test_today_targets_api_returns_all_visible_flows_to_iwork_admin(fixed_busine
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 @override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
+@patch(
+    'iwork.api_views_account._flow_production_by_flow',
+    return_value={'Sewing-A1': 100, 'Sewing-A2': 0},
+)
 def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
+    mock_production,
     fixed_business_clock,
 ):
     """管理员今日目标摘要应覆盖全部 Flow，并保留责任负责人信息。"""
@@ -317,6 +335,95 @@ def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
     ]
     assert summary['items'][0]['complete'] is True
     assert summary['items'][1]['complete'] is False
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
+@patch(
+    'iwork.api_views_account._flow_production_by_flow',
+    return_value={'Sewing-A1': 50, 'Sewing-A2': 0},
+)
+def test_today_targets_production_state_uses_actual_output_and_deadline(
+    mock_production,
+    fixed_business_clock,
+):
+    """四状态按实际产量与截止时间判定：已填写/未完成/已完成。"""
+    from iwork.local_models import GroupTargetProduction
+
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_at=EARLY_TIME,
+    )
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='Sewing-A2',
+        target_qty=0,
+        planned_work_minutes=600,
+        submitted_at=EARLY_TIME,
+    )
+
+    headers = _identity_headers(
+        subject='state-admin',
+        username='state-admin',
+        groups='/admin',
+    )
+    payload = Client().get('/api/account/today-targets/', **headers).json()
+    groups = {item['flow']: item for item in payload['groups']}
+    assert groups['Sewing-A1']['actual_qty'] == 50
+    assert groups['Sewing-A1']['production_state'] == 'filled'
+    assert groups['Sewing-A1']['complete'] is False
+    assert groups['Sewing-A2']['production_state'] == 'completed'
+    assert payload['summary']['filled_count'] == 1
+    assert payload['summary']['completed_count'] == 1
+    assert payload['summary']['unfinished_count'] == 0
+
+    fixed_business_clock['value'] = datetime(
+        2026,
+        9,
+        2,
+        10,
+        0,
+        tzinfo=BUSINESS_ZONE,
+    )
+    payload_after = Client().get('/api/account/today-targets/', **headers).json()
+    groups_after = {item['flow']: item for item in payload_after['groups']}
+    assert groups_after['Sewing-A1']['production_state'] == 'unfinished'
+    assert groups_after['Sewing-A2']['production_state'] == 'completed'
+    assert payload_after['summary']['unfinished_count'] == 1
+    assert payload_after['summary']['completed_count'] == 1
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1', 'Sewing-A2'])
+@patch('iwork.api_views_account._flow_production_by_flow', return_value=None)
+def test_today_targets_production_unavailable_is_not_completed(
+    mock_production,
+    fixed_business_clock,
+):
+    """实时产量不可用时不得判定已完成，并标记数据不可用。"""
+    from iwork.local_models import GroupTargetProduction
+
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_at=EARLY_TIME,
+    )
+
+    payload = Client().get(
+        '/api/account/today-targets/',
+        **_identity_headers(subject='unavailable-admin', username='unavailable-admin', groups='/admin'),
+    ).json()
+    item = next(group for group in payload['groups'] if group['flow'] == 'Sewing-A1')
+    assert item['production_available'] is False
+    assert item['actual_qty'] is None
+    assert item['complete'] is False
+    assert item['production_state'] == 'filled'
+    assert payload['summary']['completed_count'] == 0
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
@@ -590,7 +697,8 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
     assert '已提交，可修改' in template
     assert 'v-if="item.work_hours_set"' in template
     assert "正在保存..." in template
-    assert "return item.complete && !item.dirty ? '已完成' : '待填写';" in template
+    assert "return '待填写';" in template
+    assert "completed: '已完成'" in template
     for detailed_status_copy in (
         '草稿待保存',
         '按时完成',
@@ -608,6 +716,27 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
         '请填写非负整数目标和 {[ minWorkHours ]}～{[ maxWorkHours ]} 小时内的工作时间。',
     ):
         assert removed_copy not in template
+
+
+def test_today_targets_template_renders_production_states_actual_output_and_polling():
+    """今日目标模板应展示四状态、实际/目标对比，并每 60s 静默轮询刷新。"""
+    template_path = Path(__file__).resolve().parents[1] / 'iwork' / 'templates' / 'iwork' / 'today_targets.html'
+    template = template_path.read_text(encoding='utf-8')
+
+    assert "completed: '已完成'" in template
+    assert "unfinished: '未完成'" in template
+    assert "filled: '已填写'" in template
+    assert "return '待填写';" in template
+    assert 'productionStatusClass' in template
+    assert '今日实际：' in template
+    assert '实时数据暂不可用' in template
+    assert 'POLL_INTERVAL_MS = 60000' in template
+    assert 'window.setInterval(pollTargets, POLL_INTERVAL_MS)' in template
+    assert 'window.clearInterval(pollTimer)' in template
+    assert 'preserveDirtyDrafts: true, silent: true' in template
+    assert 'unfinishedCount' in template
+    assert 'filledCount' in template
+    assert 'pendingFillCount' in template
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

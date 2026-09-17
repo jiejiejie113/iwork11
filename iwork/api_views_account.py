@@ -19,6 +19,8 @@ from iwork.local_models import (
     ManagedFlowAssignment,
     TargetSubmissionPolicy,
 )
+from iwork.read_model.errors import ReadModelNotReadyError
+from iwork.read_model.queries import ReadModelQueries
 from iwork.statistics import get_business_date
 from iwork.target_responsibility import (
     DEFAULT_TARGET_WORK_MINUTES,
@@ -40,6 +42,10 @@ from iwork.target_responsibility import (
     waive_unfinished_obligations,
 )
 
+
+# ======
+# 版本化实时读模型（Web 进程只读 Redis 快照）
+READ_MODEL = ReadModelQueries()
 
 # ======
 # Portal账号访问权复验配置
@@ -346,6 +352,82 @@ def _today_target_work_hours(
     return minutes / 60
 
 
+# ======
+# 今日目标产量达标状态
+PRODUCTION_STATE_COMPLETED = 'completed'
+PRODUCTION_STATE_UNFINISHED = 'unfinished'
+PRODUCTION_STATE_FILLED = 'filled'
+PRODUCTION_STATE_PENDING_FILL = 'pending_fill'
+
+
+def _flow_production_by_flow(target_date: date) -> dict[str, int] | None:
+    """读取指定业务日各 Flow 的白名单工序实际产量。
+
+    Args:
+        target_date (date): 业务日期。
+
+    Returns:
+        dict[str, int] | None: Flow 名称到实际产量的映射；
+        实时快照不可用时返回 ``None``。
+    """
+    try:
+        result = READ_MODEL.detail(target_date, 'flow_overview')
+    except ReadModelNotReadyError as exc:
+        logger.warning('实时 Flow 产量不可用，按数据缺失处理: {}', exc)
+        return None
+    except Exception as exc:
+        logger.error('读取实时 Flow 产量异常: {}', exc)
+        return None
+
+    stepno_key = str(settings.ALLOWED_FLOWS_STEPNO)
+    production: dict[str, int] = {}
+    for flow_name, overview in (result.data or {}).items():
+        stepnos = (overview or {}).get('stepnos') or {}
+        row = (
+            stepnos.get(stepno_key)
+            or stepnos.get(settings.ALLOWED_FLOWS_STEPNO)
+            or {}
+        )
+        production[str(flow_name)] = int(row.get('qty') or 0)
+    return production
+
+
+def _today_target_production_state(
+    *,
+    submitted_fully: bool,
+    target_qty: int | None,
+    actual_qty: int | None,
+    deadline_at,
+    now,
+) -> str:
+    """按填写完整性与实际产量达成计算今日目标显示状态。
+
+    优先级：已完成（产量达标）；未完成（已过截止仍未达标）；
+    已填写（未过截止且未达标）；待填写（目标或工时未填写完整）。
+
+    Args:
+        submitted_fully (bool): 目标产量与计划工时是否均已填写。
+        target_qty (int | None): 已填写的目标产量。
+        actual_qty (int | None): 当日实际产量；``None`` 表示实时数据不可用。
+        deadline_at: 已冻结的提交截止时刻。
+        now: 当前时刻。
+
+    Returns:
+        str: ``completed``、``unfinished``、``filled`` 或 ``pending_fill``。
+    """
+    if not submitted_fully:
+        return PRODUCTION_STATE_PENDING_FILL
+    if (
+        actual_qty is not None
+        and target_qty is not None
+        and actual_qty >= target_qty
+    ):
+        return PRODUCTION_STATE_COMPLETED
+    if now > deadline_at:
+        return PRODUCTION_STATE_UNFINISHED
+    return PRODUCTION_STATE_FILLED
+
+
 def _today_target_payload(
     flow_name: str,
     target: GroupTargetProduction | None,
@@ -354,6 +436,7 @@ def _today_target_payload(
     *,
     target_date: date,
     now,
+    flow_production: dict[str, int] | None = None,
 ) -> dict[str, object]:
     """序列化今日目标快捷输入页面的单组数据。
 
@@ -364,13 +447,22 @@ def _today_target_payload(
         historical_work_minutes (int | None): 最近历史工时分钟数。
         target_date (date): 当前业务日期。
         now (datetime): 当前时刻，用于无责任记录时计算状态。
+        flow_production (dict[str, int] | None): 当日各 Flow 实际产量；
+            ``None`` 表示实时快照不可用。
 
     Returns:
         dict[str, object]: 前端使用的单组目标字段。
     """
     target_set = target is not None and getattr(target, 'target_qty', None) is not None
     work_hours_set = target is not None and target.planned_work_minutes is not None
-    complete = is_group_target_complete(target)
+    submitted_fully = is_group_target_complete(target)
+    submitted_target_qty = int(target.target_qty) if target_set else None
+    production_available = flow_production is not None
+    actual_qty = (
+        int(flow_production.get(flow_name, 0))
+        if production_available
+        else None
+    )
     work_hours_source = (
         'current'
         if work_hours_set
@@ -385,11 +477,18 @@ def _today_target_payload(
         else target_submission_status(target, deadline_at, now=now)
     )
     submitted_at = None
-    if complete:
+    if submitted_fully:
         if obligation is not None:
             submitted_at = obligation.submitted_at
         elif target is not None:
             submitted_at = target.submitted_at or target.updated_at
+    production_state = _today_target_production_state(
+        submitted_fully=submitted_fully,
+        target_qty=submitted_target_qty,
+        actual_qty=actual_qty,
+        deadline_at=deadline_at,
+        now=now,
+    )
     return {
         'flow': flow_name,
         'group_target': target.target_qty if target_set else None,
@@ -397,7 +496,10 @@ def _today_target_payload(
         'work_hours_source': work_hours_source,
         'target_set': target_set,
         'work_hours_set': work_hours_set,
-        'complete': complete,
+        'complete': production_state == PRODUCTION_STATE_COMPLETED,
+        'production_state': production_state,
+        'production_available': production_available,
+        'actual_qty': actual_qty,
         'status': status_value,
         'deadline_at': deadline_at.isoformat(),
         'submitted_at': submitted_at.isoformat() if submitted_at else None,
@@ -468,6 +570,7 @@ def today_targets(request):
                 if flow_name not in historical_work_minutes:
                     historical_work_minutes[flow_name] = int(work_minutes)
 
+        flow_production = _flow_production_by_flow(business_date)
         groups = [
             _today_target_payload(
                 flow_name,
@@ -476,13 +579,28 @@ def today_targets(request):
                 historical_work_minutes.get(flow_name),
                 target_date=business_date,
                 now=now,
+                flow_production=flow_production,
             )
             for flow_name in flow_names
         ]
-        completed_count = sum(1 for item in groups if item['complete'])
+        state_counts = {
+            state: 0
+            for state in (
+                PRODUCTION_STATE_COMPLETED,
+                PRODUCTION_STATE_UNFINISHED,
+                PRODUCTION_STATE_FILLED,
+                PRODUCTION_STATE_PENDING_FILL,
+            )
+        }
+        for item in groups:
+            state_counts[item['production_state']] += 1
+        completed_count = state_counts[PRODUCTION_STATE_COMPLETED]
         total_count = len(groups)
         summary = {
             'completed_count': completed_count,
+            'unfinished_count': state_counts[PRODUCTION_STATE_UNFINISHED],
+            'filled_count': state_counts[PRODUCTION_STATE_FILLED],
+            'pending_fill_count': state_counts[PRODUCTION_STATE_PENDING_FILL],
             'incomplete_count': total_count - completed_count,
             'total_count': total_count,
             'all_complete': completed_count == total_count,
@@ -500,6 +618,9 @@ def today_targets(request):
             'max_work_hours': MAX_TARGET_WORK_MINUTES / 60,
             'summary': summary,
             'completed_count': completed_count,
+            'unfinished_count': state_counts[PRODUCTION_STATE_UNFINISHED],
+            'filled_count': state_counts[PRODUCTION_STATE_FILLED],
+            'pending_fill_count': state_counts[PRODUCTION_STATE_PENDING_FILL],
             'incomplete_count': total_count - completed_count,
             'total_count': total_count,
             'all_complete': summary['all_complete'],

@@ -68,12 +68,12 @@
                 </div>
                 <div class="text-sm text-blue-100">
                     <span class="font-semibold">请完成填写今日目标产量</span>
-                    <span class="ml-2 text-blue-300">逾期仍可补填，提交后立即解除阻断</span>
+                    <span class="ml-2 text-blue-300">保存后按当日实际产量自动判定完成，逾期仍可补填</span>
                 </div>
             </div>
         </section>
 
-        <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <div class="rounded-xl border border-slate-700 bg-slate-800 p-4">
                 <div class="text-xs text-slate-400">负责分组</div>
                 <div class="mt-1 text-2xl font-bold tabular-nums">{[ totalCount ]}</div>
@@ -82,9 +82,17 @@
                 <div class="text-xs text-emerald-300">已完成</div>
                 <div class="mt-1 text-2xl font-bold text-emerald-200 tabular-nums">{[ completedCount ]}</div>
             </div>
+            <div class="rounded-xl border border-red-800 bg-red-950/50 p-4">
+                <div class="text-xs text-red-300">未完成</div>
+                <div class="mt-1 text-2xl font-bold text-red-200 tabular-nums">{[ unfinishedCount ]}</div>
+            </div>
+            <div class="rounded-xl border border-blue-800 bg-blue-950/50 p-4">
+                <div class="text-xs text-blue-300">已填写</div>
+                <div class="mt-1 text-2xl font-bold text-blue-200 tabular-nums">{[ filledCount ]}</div>
+            </div>
             <div class="rounded-xl border border-amber-800 bg-amber-950/50 p-4">
-                <div class="text-xs text-amber-300">待完成</div>
-                <div class="mt-1 text-2xl font-bold text-amber-200 tabular-nums">{[ incompleteCount ]}</div>
+                <div class="text-xs text-amber-300">待填写</div>
+                <div class="mt-1 text-2xl font-bold text-amber-200 tabular-nums">{[ pendingFillCount ]}</div>
             </div>
             <div class="rounded-xl border border-slate-700 bg-slate-800 p-4">
                 <div class="text-xs text-slate-400">默认工时</div>
@@ -168,8 +176,17 @@
                             截止 {[ formatDeadline(item.deadline_at) ]}
                             <span v-if="item.submitted_at">· 提交于 {[ formatDateTime(item.submitted_at) ]}</span>
                         </p>
+                        <p class="mt-1 text-xs text-slate-300">
+                            今日实际：
+                            <span class="font-semibold tabular-nums"
+                                  :class="item.complete ? 'text-emerald-300' : 'text-slate-100'">
+                                {[ item.production_available ? item.actual_qty : '--' ]}
+                            </span>
+                            <span v-if="item.target_set"> / 目标 {[ item.group_target ]}</span>
+                            <span v-if="!item.production_available" class="text-amber-300">（实时数据暂不可用）</span>
+                        </p>
                     </div>
-                    <span class="rounded-full border px-3 py-1 text-xs font-medium" :class="statusClass(item)">
+                    <span class="rounded-full border px-3 py-1 text-xs font-medium" :class="productionStatusClass(item)">
                         {[ statusText(item) ]}
                     </span>
                 </div>
@@ -221,7 +238,7 @@
 </div>
 
 <script>
-    const { createApp, ref, computed, onMounted } = Vue;
+    const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
     const rawReturnTo = JSON.parse(document.getElementById('today-target-return-to').textContent || '""');
 
     function toPublicPath(value) {
@@ -268,7 +285,15 @@
             const defaultWorkHours = ref(0);
             const minWorkHours = ref(0);
             const maxWorkHours = ref(0);
-            const summary = ref({ completed_count: 0, incomplete_count: 0, total_count: 0, all_complete: false });
+            const summary = ref({
+                completed_count: 0,
+                unfinished_count: 0,
+                filled_count: 0,
+                pending_fill_count: 0,
+                incomplete_count: 0,
+                total_count: 0,
+                all_complete: false,
+            });
             const responsibilitySummary = ref({
                 pending_count: 0,
                 overdue_count: 0,
@@ -280,8 +305,13 @@
             const savingAll = ref(false);
             const saveAllMessage = ref('');
             const errorByFlow = {};
+            const POLL_INTERVAL_MS = 60000;
+            let pollTimer = null;
 
             const completedCount = computed(() => summary.value.completed_count || 0);
+            const unfinishedCount = computed(() => summary.value.unfinished_count || 0);
+            const filledCount = computed(() => summary.value.filled_count || 0);
+            const pendingFillCount = computed(() => summary.value.pending_fill_count || 0);
             const incompleteCount = computed(() => summary.value.incomplete_count || 0);
             const totalCount = computed(() => summary.value.total_count || 0);
             const responsibilityPendingCount = computed(
@@ -327,6 +357,9 @@
                 maxWorkHours.value = Number(payload.max_work_hours);
                 summary.value = payload.summary || {
                     completed_count: payload.completed_count || 0,
+                    unfinished_count: payload.unfinished_count || 0,
+                    filled_count: payload.filled_count || 0,
+                    pending_fill_count: payload.pending_fill_count || 0,
                     incomplete_count: payload.incomplete_count || 0,
                     total_count: payload.total_count || 0,
                     all_complete: Boolean(payload.all_complete),
@@ -356,8 +389,8 @@
                 });
             }
 
-            async function loadTargets({ preserveDirtyDrafts = false } = {}) {
-                loading.value = true;
+            async function loadTargets({ preserveDirtyDrafts = false, silent = false } = {}) {
+                if (!silent) loading.value = true;
                 loadError.value = '';
                 try {
                     const response = await fetch(`${basePath}api/account/today-targets/`, {
@@ -368,8 +401,13 @@
                 } catch (error) {
                     loadError.value = error.message || '今日目标读取失败';
                 } finally {
-                    loading.value = false;
+                    if (!silent) loading.value = false;
                 }
+            }
+
+            async function pollTargets() {
+                if (document.hidden) return;
+                await loadTargets({ preserveDirtyDrafts: true, silent: true });
             }
 
             function applyWorkHours(hours) {
@@ -399,7 +437,23 @@
             }
 
             function statusText(item) {
-                return item.complete && !item.dirty ? '已完成' : '待填写';
+                if (item.dirty || !item.target_set || !item.work_hours_set) return '待填写';
+                return {
+                    completed: '已完成',
+                    unfinished: '未完成',
+                    filled: '已填写',
+                }[item.production_state] || '已填写';
+            }
+
+            function productionStatusClass(item) {
+                if (item.dirty || !item.target_set || !item.work_hours_set) {
+                    return 'border-amber-700 bg-amber-950 text-amber-200';
+                }
+                return {
+                    completed: 'border-emerald-700 bg-emerald-950 text-emerald-200',
+                    unfinished: 'border-red-700 bg-red-950 text-red-200',
+                    filled: 'border-blue-700 bg-blue-950 text-blue-200',
+                }[item.production_state] || 'border-slate-600 bg-slate-800 text-slate-300';
             }
 
             function statusClass(item) {
@@ -448,7 +502,6 @@
                     item.work_hours = Number(payload.work_hours);
                     item.target_set = true;
                     item.work_hours_set = true;
-                    item.complete = true;
                     item.status = payload.is_late ? 'fulfilled_late' : 'fulfilled';
                     item.dirty = false;
                     saveAllMessage.value = `${item.flow} 已保存。`;
@@ -481,7 +534,7 @@
                     if (summary.value.all_complete) {
                         saveAllMessage.value = '全部分组已完成。';
                     } else {
-                        saveAllMessage.value = '部分分组保存成功，请处理仍显示为待填写的分组。';
+                        saveAllMessage.value = '部分分组保存成功，仍有分组未填写或未达标。';
                     }
                     maybeReturnAfterComplete();
                 } finally {
@@ -500,17 +553,26 @@
             onMounted(async () => {
                 await loadTargets();
                 maybeReturnAfterComplete();
+                pollTimer = window.setInterval(pollTargets, POLL_INTERVAL_MS);
+            });
+
+            onUnmounted(() => {
+                if (pollTimer !== null) {
+                    window.clearInterval(pollTimer);
+                    pollTimer = null;
+                }
             });
 
             return {
                 basePath, currentView, groups, businessDate, deadlineAt, defaultWorkHours,
                 minWorkHours, maxWorkHours,
                 loading, loadError, savingAll, saveAllMessage,
-                completedCount, incompleteCount, totalCount,
+                completedCount, unfinishedCount, filledCount, pendingFillCount,
+                incompleteCount, totalCount,
                 responsibilityPendingCount, responsibilityOverdueCount,
                 responsibilitySummaryItems,
                 formatDeadline, formatDateTime, loadTargets, applyWorkHours, markDraft,
-                draftIsValid, statusText, statusClass, leaderNames,
+                draftIsValid, statusText, statusClass, productionStatusClass, leaderNames,
                 saveGroup: saveSingleAndRefresh, saveAll,
             };
         },
