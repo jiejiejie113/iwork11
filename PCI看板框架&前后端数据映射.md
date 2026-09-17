@@ -545,12 +545,14 @@ erDiagram
 
 **GET `api/account/today-targets/`**：
 
+> 完成判定（2026-09-17 起）：读取实时快照 `detail.flow_overview` 的各 Flow 白名单工序（stepno 70）当日产量，与目标产量比较并结合截止时间输出四状态——`completed` 已完成（已填写且实际≥目标）、`unfinished` 未完成（未达标且已过截止）、`filled` 已填写（未达标且未过截止）、`pending_fill` 待填写（目标或工时未填写完整）。实时快照不可用时 `production_available=false` 且不判完成。页面每 60s 静默轮询刷新（保留编辑草稿、隐藏时不轮询）。
+
 | 字段 | 前端使用 |
 |---|---|
 | `business_date` / `deadline_at` | 顶部横幅 |
 | `default_work_hours` / `min_work_hours` / `max_work_hours` | 默认工时卡片 + 输入校验 |
-| `summary{completed_count, incomplete_count, total_count, all_complete}` | 统计卡片（含平铺字段兜底） |
-| `groups[]` | 分组卡片：`flow`、`deadline_at`、`submitted_at`、`group_target`、`work_hours`、`target_set`、`work_hours_set`、`work_hours_source`（`'history'` 显示「沿用最近历史工时草稿」）、`complete`、`status`、`dirty`、`saving`、`error` |
+| `summary{completed_count, unfinished_count, filled_count, pending_fill_count, incomplete_count, total_count, all_complete}` | 四类统计卡片（含平铺字段兜底） |
+| `groups[]` | 分组卡片：`flow`、`deadline_at`、`submitted_at`、`group_target`、`work_hours`、`target_set`、`work_hours_set`、`work_hours_source`（`'history'` 显示「沿用最近历史工时草稿」）、`complete`、`production_state`、`production_available`、`actual_qty`、`status`、`dirty`、`saving`、`error` |
 | `responsibility_summary{pending_count, overdue_count, status_counts, items[]}` | 管理员责任摘要表（`{% if today_targets_is_admin %}` 控制）：列=分组/目标产量/工作时间/状态/截止/负责人，字段 `flow_name`、`target_set`、`group_target`、`work_hours_set`、`work_hours`、`deadline_at`、`status`、`leaders` |
 
 **POST `api/dashboard/set-targets/`**：body `{flow, group_target, work_hours, target_date}`；响应 `{status:'ok', flow, group_target, is_late, work_hours}`（`is_late=true` → 状态 `fulfilled_late`）。**写库位置**：`iwork_local.group_target_production`（新格式分组目标，`target_date+flow_name` upsert）+ `iwork_local.daily_target_obligation`（义务状态更新）+ `iwork_local.group_target_audit_log`（审计）；同时写 Redis 缓存键 `group_target:<date>:<flow>`。旧格式 `{targets, wo_targets}` 写 `iwork_local.target_production` 并刷新 Redis `targets:<date>`、`wo_targets:<date>`。该接口三处复用：today_targets（带 `target_date`）、production_detail（无 `target_date`）、dashboard 旧形态 `{flow, targets}`（已无调用点）。
@@ -599,6 +601,12 @@ erDiagram
 ---
 
 ## 11. 变更记录
+
+### 2026-09-17 今日目标完成改为实际产量达标（四状态）
+
+- 今日目标页"完成"由"填写完整"改为"当日实际产量 ≥ 目标产量"：读取实时快照 `detail.flow_overview`（白名单工序 stepno 70）计算四状态——`已完成`（已填写且实际≥目标）、`未完成`（未达标且已过截止）、`已填写`（未达标且未过截止）、`待填写`（目标或工时未填写完整）。
+- 顶部统计改为四类计数（`completed_count`/`unfinished_count`/`filled_count`/`pending_fill_count`）；分组卡片显示"今日实际 X / 目标 Y"；实时快照不可用时 `production_available=false`、`actual_qty=null` 且不判完成；页面新增 60s 静默轮询（保留编辑草稿、页面隐藏时暂停）。
+- 提交义务状态（`pending`/`fulfilled`/`overdue`/`fulfilled_late`/`waived`）与责任摘要保持不变。
 
 ### 2026-09-17 员工 ID 改为 DormNo 优先、WorkerNo 回退
 
