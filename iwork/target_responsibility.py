@@ -326,6 +326,26 @@ def deadline_for_date(target_date: date) -> datetime:
     return datetime.combine(target_date, deadline_time, tzinfo=ZoneInfo(timezone_name))
 
 
+def workday_end_for_date(target_date: date) -> datetime:
+    """计算指定业务日期的下班时刻（今日目标完成判定截止）。
+
+    下班时间来自 ``WORKDAY_END_MINUTE``（默认 18:30），使用业务时区。
+
+    Args:
+        target_date (date): 目标业务日期。
+
+    Returns:
+        datetime: 业务时区当天的下班时刻。
+    """
+    end_minute = settings.WORKDAY_END_MINUTE
+    end_time = time(hour=end_minute // 60, minute=end_minute % 60)
+    return datetime.combine(
+        target_date,
+        end_time,
+        tzinfo=ZoneInfo(settings.IWORK_BUSINESS_TIME_ZONE),
+    )
+
+
 def _now_instant(now: datetime | None) -> datetime:
     """返回用于状态比较的时区感知当前时间。
 

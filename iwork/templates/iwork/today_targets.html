@@ -73,7 +73,7 @@
             </div>
         </section>
 
-        <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             <div class="rounded-xl border border-slate-700 bg-slate-800 p-4">
                 <div class="text-xs text-slate-400">负责分组</div>
                 <div class="mt-1 text-2xl font-bold tabular-nums">{[ totalCount ]}</div>
@@ -81,6 +81,10 @@
             <div class="rounded-xl border border-emerald-800 bg-emerald-950/50 p-4">
                 <div class="text-xs text-emerald-300">已完成</div>
                 <div class="mt-1 text-2xl font-bold text-emerald-200 tabular-nums">{[ completedCount ]}</div>
+            </div>
+            <div class="rounded-xl border border-orange-800 bg-orange-950/50 p-4">
+                <div class="text-xs text-orange-300">逾期完成</div>
+                <div class="mt-1 text-2xl font-bold text-orange-200 tabular-nums">{[ overdueCompletedCount ]}</div>
             </div>
             <div class="rounded-xl border border-red-800 bg-red-950/50 p-4">
                 <div class="text-xs text-red-300">未完成</div>
@@ -287,6 +291,7 @@
             const maxWorkHours = ref(0);
             const summary = ref({
                 completed_count: 0,
+                overdue_count: 0,
                 unfinished_count: 0,
                 filled_count: 0,
                 pending_fill_count: 0,
@@ -309,6 +314,7 @@
             let pollTimer = null;
 
             const completedCount = computed(() => summary.value.completed_count || 0);
+            const overdueCompletedCount = computed(() => summary.value.overdue_count || 0);
             const unfinishedCount = computed(() => summary.value.unfinished_count || 0);
             const filledCount = computed(() => summary.value.filled_count || 0);
             const pendingFillCount = computed(() => summary.value.pending_fill_count || 0);
@@ -357,6 +363,7 @@
                 maxWorkHours.value = Number(payload.max_work_hours);
                 summary.value = payload.summary || {
                     completed_count: payload.completed_count || 0,
+                    overdue_count: payload.overdue_count || 0,
                     unfinished_count: payload.unfinished_count || 0,
                     filled_count: payload.filled_count || 0,
                     pending_fill_count: payload.pending_fill_count || 0,
@@ -440,6 +447,7 @@
                 if (item.dirty || !item.target_set || !item.work_hours_set) return '待填写';
                 return {
                     completed: '已完成',
+                    overdue: '逾期完成',
                     unfinished: '未完成',
                     filled: '已填写',
                 }[item.production_state] || '已填写';
@@ -451,6 +459,7 @@
                 }
                 return {
                     completed: 'border-emerald-700 bg-emerald-950 text-emerald-200',
+                    overdue: 'border-orange-700 bg-orange-950 text-orange-200',
                     unfinished: 'border-red-700 bg-red-950 text-red-200',
                     filled: 'border-blue-700 bg-blue-950 text-blue-200',
                 }[item.production_state] || 'border-slate-600 bg-slate-800 text-slate-300';
@@ -533,6 +542,8 @@
                     await loadTargets({ preserveDirtyDrafts: true });
                     if (summary.value.all_complete) {
                         saveAllMessage.value = '全部分组已完成。';
+                    } else if (allGroupsReachedTarget()) {
+                        saveAllMessage.value = '全部分组已达标（含逾期完成）。';
                     } else {
                         saveAllMessage.value = '部分分组保存成功，仍有分组未填写或未达标。';
                     }
@@ -542,10 +553,13 @@
                 }
             }
 
-            function maybeReturnAfterComplete() {
-                const localDraftsComplete = groups.value.length > 0
+            function allGroupsReachedTarget() {
+                return groups.value.length > 0
                     && groups.value.every(item => item.complete && !item.dirty && !item.error);
-                if (returnTo && summary.value.all_complete && localDraftsComplete) {
+            }
+
+            function maybeReturnAfterComplete() {
+                if (returnTo && allGroupsReachedTarget()) {
                     window.location.assign(returnTo);
                 }
             }
@@ -567,7 +581,7 @@
                 basePath, currentView, groups, businessDate, deadlineAt, defaultWorkHours,
                 minWorkHours, maxWorkHours,
                 loading, loadError, savingAll, saveAllMessage,
-                completedCount, unfinishedCount, filledCount, pendingFillCount,
+                completedCount, overdueCompletedCount, unfinishedCount, filledCount, pendingFillCount,
                 incompleteCount, totalCount,
                 responsibilityPendingCount, responsibilityOverdueCount,
                 responsibilitySummaryItems,

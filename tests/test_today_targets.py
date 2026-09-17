@@ -233,6 +233,7 @@ def test_today_targets_api_lists_multiple_assigned_flows_and_preserves_zero(
     assert payload['business_date'] == TARGET_DATE.isoformat()
     assert payload['summary'] == {
         'completed_count': 1,
+        'overdue_count': 0,
         'unfinished_count': 0,
         'filled_count': 0,
         'pending_fill_count': 1,
@@ -343,11 +344,11 @@ def test_today_targets_admin_summary_covers_all_visible_flows_and_leaders(
     'iwork.api_views_account._flow_production_by_flow',
     return_value={'Sewing-A1': 50, 'Sewing-A2': 0},
 )
-def test_today_targets_production_state_uses_actual_output_and_deadline(
+def test_today_targets_production_state_uses_actual_output_and_workday_end(
     mock_production,
     fixed_business_clock,
 ):
-    """四状态按实际产量与截止时间判定：已填写/未完成/已完成。"""
+    """五状态按实际产量与下班时间（18:30）判定：已填写/未完成/已完成/逾期完成。"""
     from iwork.local_models import GroupTargetProduction
 
     GroupTargetProduction.objects.using('iwork_local').create(
@@ -378,22 +379,25 @@ def test_today_targets_production_state_uses_actual_output_and_deadline(
     assert groups['Sewing-A2']['production_state'] == 'completed'
     assert payload['summary']['filled_count'] == 1
     assert payload['summary']['completed_count'] == 1
+    assert payload['summary']['overdue_count'] == 0
     assert payload['summary']['unfinished_count'] == 0
 
     fixed_business_clock['value'] = datetime(
         2026,
         9,
         2,
-        10,
+        19,
         0,
         tzinfo=BUSINESS_ZONE,
     )
     payload_after = Client().get('/api/account/today-targets/', **headers).json()
     groups_after = {item['flow']: item for item in payload_after['groups']}
     assert groups_after['Sewing-A1']['production_state'] == 'unfinished'
-    assert groups_after['Sewing-A2']['production_state'] == 'completed'
+    assert groups_after['Sewing-A2']['production_state'] == 'overdue'
+    assert groups_after['Sewing-A2']['complete'] is True
     assert payload_after['summary']['unfinished_count'] == 1
-    assert payload_after['summary']['completed_count'] == 1
+    assert payload_after['summary']['overdue_count'] == 1
+    assert payload_after['summary']['completed_count'] == 0
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
@@ -719,11 +723,12 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
 
 
 def test_today_targets_template_renders_production_states_actual_output_and_polling():
-    """今日目标模板应展示四状态、实际/目标对比，并每 60s 静默轮询刷新。"""
+    """今日目标模板应展示五状态、实际/目标对比，并每 60s 静默轮询刷新。"""
     template_path = Path(__file__).resolve().parents[1] / 'iwork' / 'templates' / 'iwork' / 'today_targets.html'
     template = template_path.read_text(encoding='utf-8')
 
     assert "completed: '已完成'" in template
+    assert "overdue: '逾期完成'" in template
     assert "unfinished: '未完成'" in template
     assert "filled: '已填写'" in template
     assert "return '待填写';" in template
@@ -734,9 +739,11 @@ def test_today_targets_template_renders_production_states_actual_output_and_poll
     assert 'window.setInterval(pollTargets, POLL_INTERVAL_MS)' in template
     assert 'window.clearInterval(pollTimer)' in template
     assert 'preserveDirtyDrafts: true, silent: true' in template
+    assert 'overdueCompletedCount' in template
     assert 'unfinishedCount' in template
     assert 'filledCount' in template
     assert 'pendingFillCount' in template
+    assert 'allGroupsReachedTarget' in template
 
 
 @pytest.mark.django_db(databases=['default', 'iwork_local'])

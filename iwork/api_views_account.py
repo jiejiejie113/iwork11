@@ -40,6 +40,7 @@ from iwork.target_responsibility import (
     sync_principal,
     target_submission_status,
     waive_unfinished_obligations,
+    workday_end_for_date,
 )
 
 
@@ -355,6 +356,7 @@ def _today_target_work_hours(
 # ======
 # 今日目标产量达标状态
 PRODUCTION_STATE_COMPLETED = 'completed'
+PRODUCTION_STATE_OVERDUE = 'overdue'
 PRODUCTION_STATE_UNFINISHED = 'unfinished'
 PRODUCTION_STATE_FILLED = 'filled'
 PRODUCTION_STATE_PENDING_FILL = 'pending_fill'
@@ -397,35 +399,44 @@ def _today_target_production_state(
     submitted_fully: bool,
     target_qty: int | None,
     actual_qty: int | None,
-    deadline_at,
+    workday_end_at,
     now,
 ) -> str:
-    """按填写完整性与实际产量达成计算今日目标显示状态。
+    """按填写完整性、实际产量达成与下班时间计算今日目标显示状态。
 
-    优先级：已完成（产量达标）；未完成（已过截止仍未达标）；
-    已填写（未过截止且未达标）；待填写（目标或工时未填写完整）。
+    优先级：达标取决于下班时间（18:30 前=已完成，之后=逾期完成）；
+    未达标取决于下班时间（未到=已填写，已过=未完成）；未填写完整=待填写。
+    实时产量不可用时按未达标处理，不判已完成。
 
     Args:
         submitted_fully (bool): 目标产量与计划工时是否均已填写。
         target_qty (int | None): 已填写的目标产量。
         actual_qty (int | None): 当日实际产量；``None`` 表示实时数据不可用。
-        deadline_at: 已冻结的提交截止时刻。
+        workday_end_at: 当日下班时刻（完成判定截止）。
         now: 当前时刻。
 
     Returns:
-        str: ``completed``、``unfinished``、``filled`` 或 ``pending_fill``。
+        str: ``completed``、``overdue``、``unfinished``、``filled``
+        或 ``pending_fill``。
     """
     if not submitted_fully:
         return PRODUCTION_STATE_PENDING_FILL
+    after_workday_end = now > workday_end_at
     if (
         actual_qty is not None
         and target_qty is not None
         and actual_qty >= target_qty
     ):
-        return PRODUCTION_STATE_COMPLETED
-    if now > deadline_at:
-        return PRODUCTION_STATE_UNFINISHED
-    return PRODUCTION_STATE_FILLED
+        return (
+            PRODUCTION_STATE_OVERDUE
+            if after_workday_end
+            else PRODUCTION_STATE_COMPLETED
+        )
+    return (
+        PRODUCTION_STATE_UNFINISHED
+        if after_workday_end
+        else PRODUCTION_STATE_FILLED
+    )
 
 
 def _today_target_payload(
@@ -486,7 +497,7 @@ def _today_target_payload(
         submitted_fully=submitted_fully,
         target_qty=submitted_target_qty,
         actual_qty=actual_qty,
-        deadline_at=deadline_at,
+        workday_end_at=workday_end_for_date(target_date),
         now=now,
     )
     return {
@@ -496,7 +507,10 @@ def _today_target_payload(
         'work_hours_source': work_hours_source,
         'target_set': target_set,
         'work_hours_set': work_hours_set,
-        'complete': production_state == PRODUCTION_STATE_COMPLETED,
+        'complete': production_state in (
+            PRODUCTION_STATE_COMPLETED,
+            PRODUCTION_STATE_OVERDUE,
+        ),
         'production_state': production_state,
         'production_available': production_available,
         'actual_qty': actual_qty,
@@ -587,6 +601,7 @@ def today_targets(request):
             state: 0
             for state in (
                 PRODUCTION_STATE_COMPLETED,
+                PRODUCTION_STATE_OVERDUE,
                 PRODUCTION_STATE_UNFINISHED,
                 PRODUCTION_STATE_FILLED,
                 PRODUCTION_STATE_PENDING_FILL,
@@ -598,6 +613,7 @@ def today_targets(request):
         total_count = len(groups)
         summary = {
             'completed_count': completed_count,
+            'overdue_count': state_counts[PRODUCTION_STATE_OVERDUE],
             'unfinished_count': state_counts[PRODUCTION_STATE_UNFINISHED],
             'filled_count': state_counts[PRODUCTION_STATE_FILLED],
             'pending_fill_count': state_counts[PRODUCTION_STATE_PENDING_FILL],
@@ -618,6 +634,7 @@ def today_targets(request):
             'max_work_hours': MAX_TARGET_WORK_MINUTES / 60,
             'summary': summary,
             'completed_count': completed_count,
+            'overdue_count': state_counts[PRODUCTION_STATE_OVERDUE],
             'unfinished_count': state_counts[PRODUCTION_STATE_UNFINISHED],
             'filled_count': state_counts[PRODUCTION_STATE_FILLED],
             'pending_fill_count': state_counts[PRODUCTION_STATE_PENDING_FILL],
