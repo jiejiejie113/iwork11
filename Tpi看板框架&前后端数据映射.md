@@ -146,7 +146,7 @@ D:\iwork\
 | `queries.py` | 远程库查询层：细粒度事实单条 SQL（`get_read_model_fact_rows`）、全历史累计、批量查询族 `get_batch_*`、看板查询族 `get_kanban_*`、工序元数据；Flow 白名单过滤（仅 stepno 70） |
 | `statistics.py` | 并行聚合引擎：`get_batch_stats`（6 线程并行 5 维查询 + 月趋势缓存 TTL 30 天）、`get_batch_detail_stats`（5 线程）、有效工时计算（缅甸 07:30 起扣午休 11:30-12:00 与晚休 16:00-16:30，18:30 封顶） |
 | `tasks.py` | Celery：`sync_dashboard_stats`（beat 每 60s：Redis 刷新锁 → 构建快照 → 发布 → 通知 SSE → 入队告警评估）、`snapshot_recent_history`（每日 03:00 重建最近 3 天）、`build_history_snapshot`（带 `request_token` 请求锁所有权校验） |
-| `history_store.py` | 历史快照构建：`RemoteHistorySource.load()` 可重复读事务内单次聚合远程表（小时抽取、员工 Remark 映射）；`_snapshot_history_date_locked` 事务内先删后建 `HistoricalProductionFact`/`HistoricalStepSnapshot`（batch 2000）+ 更新 `HistoricalSyncState`；Redis 分布式锁 + 60s 续租 |
+| `history_store.py` | 历史快照构建：`RemoteHistorySource.load()` 可重复读事务内单次聚合远程表（小时抽取、员工 `WorkerNo` 映射），发布前经覆盖率闸门校验（`HISTORY_SNAPSHOT_MIN_COVERAGE`，默认 0.9，低于阈值抛 `SnapshotCoverageError` 拒绝发布）；`_snapshot_history_date_locked` 事务内先删后建 `HistoricalProductionFact`/`HistoricalStepSnapshot`（batch 2000）+ 更新 `HistoricalSyncState`；Redis 分布式锁 + 60s 续租 |
 | `sync.py` | 旧式逐行全量同步：按 `RegDate` 范围流式取远程 `pytckreg3`（chunk 5000），19 字段比对后 `update_or_create` 到本地 `LocalPytckreg3` |
 | `middleware.py` | `TrustedProxyMiddleware`：仅接受 Docker 内网可信代理 IP，解析 `Remote-*` 身份头；`TargetSubmissionGateMiddleware`：当前负责人未提交今日目标时拦截页面/API |
 | `identity.py` | `IworkIdentity`：subject/username/email/display_name/keycloak_groups/is_admin/is_iwork_admin |
@@ -252,6 +252,7 @@ D:\iwork\
 | 读模型 | `READ_MODEL_CACHE_PREFIX='iwork:read:v1'`、schema v1、保留 172800s、软陈旧 120s、硬陈旧 600s |
 | SSE | 频道 `iwork:read:v1:published`（快照）、`iwork:alerts:v1:notifications`（告警）、心跳 15s、租约 60s |
 | 其他 | `QUERY_TIMEOUT=45`、月趋势缓存 TTL 30 天、`KANBAN_DEFAULT_STEPNO='70'`、`KANBAN_DEFAULT_PAGE_SIZE=50` |
+| 历史快照闸门 | `HISTORY_SNAPSHOT_MIN_COVERAGE=0.9`（员工映射覆盖率低于阈值拒绝发布，防静默缩水）；`IWORK_REMOTE_STATEMENT_TIMEOUT_MS=30000`（远程语句执行上限，MySQL≥5.7.8 生效，5.6 自动跳过） |
 
 另有 `local_dev_settings.py`（SQLite + 直连 192.168.7.22/payroll 只读）与 `test_settings.py`（pytest：内存 SQLite + LocMem + 内存 Celery）。
 
@@ -292,7 +293,7 @@ D:\iwork\
 | Django 模型 | 表名 | 关键字段 | 用途 |
 |---|---|---|---|
 | `Pytckreg3` | `pytckreg3` | `TicketNo`(PK,13) `SeqNo` `WrkOrder`(14) `BundleNo` `StepNo` `Qty` `RegPerSysID` `RegDate` `RegTime` `RFID` `Flow`(40) `PO` `TimeCost` `SysSource` `AccBundleNo` `MtrType` `Color` `Sizx` `SerialNum` `StationID`；`full_datetime` 属性合并日期时间 | 生产流水线打卡记录（所有产量/工时的事实来源） |
-| `Pyperson` | `pyperson` | `SysID`(PK) `Remark` | 人员主数据；`Remark` 为**员工新 ID**（映射规则过滤空值/重复） |
+| `Pyperson` | `pyperson` | `SysID`(PK) `WorkerNo` `Remark` | 人员主数据；`WorkerNo` 为**员工工号（员工 ID 来源）**，空值/重复由映射规则过滤；`Remark` 已于 2026-09 被远程清空，不再作为员工 ID |
 | `Pywrkord` | `pywrkord` | `WrkOrder`(PK,14) `ExtField01` | 工单扩展；`ExtField01` = **初版款号** |
 | `Pydefstp` | `pydefstp` | `StepNo`(PK) | 工序定义（生产详情不使用其 Description） |
 | `Pywrkstp` | `pywrkstp` | 复合主键 `(WrkOrder, StepNo)` `Description`(120) `StepTime`(标准工时 float) | 工单工序描述与标准工时 |
@@ -329,7 +330,7 @@ D:\iwork\
 
 | 业务概念 | 数据库位置 | 字段链路 |
 |---|---|---|
-| 员工 ID | `iwork.pyperson.Remark`；`iwork.pytckreg3.RegPerSysID`；历史冗余 `iwork_local.historical_production_fact.employee_remark` | `RegPerSysID`（打卡记录）→ `pyperson.SysID` 匹配 → `pyperson.Remark`（新员工 ID）→ 历史事实表冗余为 `employee_remark`；查询层显示用 `employee_remark or employee_id` |
+| 员工 ID | `iwork.pyperson.WorkerNo`；`iwork.pytckreg3.RegPerSysID`；历史冗余 `iwork_local.historical_production_fact.employee_remark` | `RegPerSysID`（打卡记录）→ `pyperson.SysID` 匹配 → `pyperson.WorkerNo`（员工工号；2026-09-17 起取代已清空的 `Remark`）→ 历史事实表冗余为 `employee_remark`；查询层显示用 `employee_remark or employee_id` |
 | 初版款号 | `iwork.pywrkord.ExtField01`；历史冗余 `iwork_local.historical_step_snapshot.initial_style_no` | 按 `WrkOrder` 关联 |
 | 工序描述/标准工时 | `iwork.pywrkstp.Description / StepTime`；历史冗余 `iwork_local.historical_step_snapshot.description / step_time` | `(WrkOrder, StepNo)` 联合确定 |
 | 分组（Flow） | `iwork.pytckreg3.Flow`；历史 `iwork_local.historical_production_fact.flow` | 生产组名（Sewing-A1…B19，白名单仅 stepno 70 过滤） |
@@ -354,7 +355,9 @@ D:\iwork\
         ──► 发布通知 iwork:read:v1:published ──► SSE ──► 浏览器
 
 [历史链路] 远程 payroll.pytckreg3 ──每日03:00 / 前端ensure触发──► Celery(build_history_snapshot)
-    └─ RemoteHistorySource.load() 事务内聚合（ExtractHour、Sum qty、Remark映射）
+    └─ RemoteHistorySource.load() 事务内聚合（ExtractHour、Sum qty、WorkerNo 映射）
+    └─ 覆盖率闸门：过滤后源记录 / 过滤前源记录 < HISTORY_SNAPSHOT_MIN_COVERAGE(0.9)
+       → 抛 SnapshotCoverageError 拒绝发布并写入 error_message（既有成功快照保留）
     └─ 先删后建 historical_production_fact / historical_step_snapshot（batch 2000）
     └─ 更新 historical_sync_state ──► 前端读 iwork_local（api/history/date/<d>/）
 ```
@@ -365,6 +368,7 @@ D:\iwork\
 - API 前缀：`window.basePath = location.pathname.includes('/iwork/') ? '/iwork/' : '/'`，所有请求 URL 均以 `basePath` 拼接，无硬编码域名。
 - 写接口（POST）需带 `X-CSRFToken`（cookie `csrftoken`）+ `Content-Type: application/json`。
 - 读接口响应头：`X-Iwork-Snapshot-Version`、`X-Iwork-Generated-At`（前端用于版本去重）、`X-Iwork-Stale`。
+- 响应解析：dashboard / production_detail 统一使用 `parseJsonResponse` 校验 `content-type`；部署重启窗口网关返回的 502 HTML 错误页会提示「服务暂不可用（HTTP xxx），请稍后重试」，不再抛 `Unexpected token '<'` 解析异常。
 - Django 服务端直渲染 vs 前端异步的分工：dashboard 有 `{{ stats_json|safe }}` 首屏预填充（随后 API 覆盖）；production_detail 仅传 `initial_view/detail_type/detail_key`；today_targets / kanban 100% 异步。
 
 ## 7. 页面 ↔ 模板 ↔ API 映射总表
@@ -493,7 +497,7 @@ D:\iwork\
 
 ### 8.8 产量看板（已下线，接口保留）
 
-> 数据来源：Redis 快照 `kanban` 视图（源头 `iwork.pytckreg3`，员工名 `iwork.pyperson.Remark`；仅快照内事实筛选，无数据库直查）。
+> 数据来源：Redis 快照 `kanban` 视图（源头 `iwork.pytckreg3`，员工名 `iwork.pyperson.WorkerNo`；仅快照内事实筛选，无数据库直查）。
 
 `api/kanban/stats/` → `{worker_count, total_production, avg_production, max_production, max_worker_name}`；`api/kanban/ranking/` → `{pagination{page,page_size,total_pages,total_count}, workers:[{rank, reg_per_sys_id, worker_name, stepno, wrk_orders[], flow, production}]}`；`api/kanban/filter-options/` → `{stepnos[], wrk_orders[], flows[], employees:[{reg_per_sys_id, name}]}`；筛选参数：`date`（必填）、`stepno/wrk_order/flow/reg_per_sys_id` 可多传（同名参数重复追加）、`show_all_flows`。
 
@@ -525,4 +529,17 @@ D:\iwork\
 
 ---
 
-*文档生成时间：2026-09-16。代码行号与路由以当时代码基线为准，后续改动请同步更新本文档。*
+## 11. 变更记录
+
+### 2026-09-17 员工 ID 映射修复与历史快照恢复
+
+- **员工 ID 来源变更**：远程 `pyperson.Remark` 被大面积清空（14,346 人中仅 267 人有值，唯一映射仅 32 条），历史快照按映射过滤后源记录从 4 万级骤降到 2 千级、工序数据丢失。现改用完整唯一的 `pyperson.WorkerNo`（13,434 人非空且全唯一）作为员工工号来源；映射规则不变（去空白、空值与重复值排除），`Pyperson` 模型新增 `WorkerNo` 字段，映射规则按字段名参数化。
+- **覆盖率发布闸门**：历史快照发布前校验「过滤后源记录 / 过滤前源记录」（`HistorySnapshotPayload.source_total_records`），低于 `HISTORY_SNAPSHOT_MIN_COVERAGE`（默认 0.9）抛 `SnapshotCoverageError` 拒绝发布并写入 `historical_sync_state.error_message`；既有成功快照保持不变，空数据日期跳过校验。
+- **远程语句执行上限**：`read_model_consistent_snapshot` 按服务器版本设置 `MAX_EXECUTION_TIME`（仅 MySQL≥5.7.8；远程生产库为 5.6.29，自动跳过并记录 debug 日志），防止慢语句挂起采集事务。
+- **前端容错**：dashboard / production_detail 新增 `parseJsonResponse`（校验 `content-type` 并捕获解析异常），覆盖历史快照查询、入队轮询、工单分页、工序列表与实时加载；网关 502 HTML 错误页提示「服务暂不可用（HTTP xxx），请稍后重试」。
+- **历史快照重建**：重建 2026-09-02~09-16（15 天，含 9/02 员工号统一）与 2026-06-01~06-30（30 天）共 45 个日期；6/24 因容器重启残留构建锁（Redis 键 `iwork:1:history:snapshot:build:<date>`，TTL 1800s）曾卡 `running`，清理孤儿锁后重建成功。
+- **运维提示**：容器重建会中断进行中的历史快照构建并可能残留构建锁（TTL 30 分钟）；锁过期或人工清理后可用 `python manage.py snapshot_history --date <d>`（或 `--start/--end`）重建。覆盖率抽样基线：正常日期约 99.8%（每天 1 名无工号员工），断裂时约 3%。
+
+---
+
+*文档生成时间：2026-09-16；2026-09-17 更新员工 ID 映射与历史快照恢复。代码行号与路由以当时代码基线为准，后续改动请同步更新本文档。*

@@ -215,12 +215,15 @@ flows = list(settings.VISIBLE_FLOWS)
 70），没有工序 70 记录的初版款号仍保留并显示 0 件，避免同一件产品在多工序重复累计。
 
 生产详情员工 ID 使用 `pyperson` 的 `SysID` 与 `pytckreg3.RegPerSysID` 关联，
-通过 `pyperson.SysID` 主键批量读取 `Remark`。映射在详情事实进入 Flow/工序聚合前完成：
-`Remark` 去除首尾空白，空 Remark、重复 Remark 和无法匹配人员主数据的记录全部排除；
-其余记录直接使用唯一 Remark 作为 `reg_per_sys_id`。重复判断基于生产记录中的完整员工
-集合，不依赖当天是否出现，因此员工卡片的交换键在不同日期保持稳定。历史快照保留原
-`employee_id` 以便追溯，同时保存经过校验的 `employee_remark`；已有旧快照需重建后才
-会显示新的员工 ID。
+通过 `pyperson.SysID` 主键批量读取 `WorkerNo`（2026-09-17 起取代被远程清空的
+`Remark`）。映射在详情事实进入 Flow/工序聚合前完成：`WorkerNo` 去除首尾空白，
+空值、重复值和无法匹配人员主数据的记录全部排除；其余记录直接使用唯一 `WorkerNo`
+作为 `reg_per_sys_id`。重复判断基于生产记录中的完整员工集合，不依赖当天是否出现，
+因此员工卡片的交换键在不同日期保持稳定。历史快照保留原 `employee_id` 以便追溯，
+同时保存经过校验的 `employee_remark`（值为 `WorkerNo`）；已有旧快照需重建后才会
+显示新的员工 ID。历史快照发布前执行覆盖率闸门：过滤后源记录占全部源记录的比例低于
+`HISTORY_SNAPSHOT_MIN_COVERAGE`（默认 0.9）时抛 `SnapshotCoverageError` 拒绝发布，
+防止远程人员主数据异常导致快照静默缩水。
 
 历史快照把 `initial_style_no` 冻结在 `HistoricalStepSnapshot`。新增字段上线后使用
 `backfill_historical_initial_styles` 幂等回填：只处理成功快照中的空字段，按日期使用
@@ -772,7 +775,8 @@ D:\DM\iwork\sqlite\iGarment_ProdOrder.db（只读挂载）
 - [ ] **初版款号**：`pywrkord` 批量只读、同事务水位、工序70卡片口径、今日/历史字段、
   产品备选维度、普通线初版款号概览/详情、分组筛选、完整分组口径只读目标、独立列配置
   和历史幂等回填同时覆盖测试
-- [ ] **员工 ID 映射**：`pyperson.SysID` 关联、唯一非空 `Remark`、空值/重复值过滤、
+- [ ] **员工 ID 映射**：`pyperson.SysID` 关联、唯一非空 `WorkerNo`（2026-09-17 起取代
+  已清空的 `Remark`）、空值/重复值过滤、历史快照覆盖率闸门（`HISTORY_SNAPSHOT_MIN_COVERAGE`）、
   实时详情事实、历史快照保存与文本员工 ID 目标分配同时覆盖测试
 - [ ] **本地交付**：代码或配置变更先通过风险相称的相关测试和涉及文件 Ruff，再按规范提交 Git；
   使用 `deploy.ps1 -Environment local` 或 `..\DTD_nginx\scripts\Rebuild-Local.ps1 -Target iwork`
