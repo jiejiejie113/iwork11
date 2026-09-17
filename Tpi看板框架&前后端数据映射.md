@@ -324,6 +324,74 @@ D:\iwork\
 | `NotificationDelivery` | `notification_delivery` | `status`∈{pending,sending,sent,failed}，指数退避 | 通知投递 |
 | `AlertEvaluationRun` | `alert_evaluation_run` | `business_date+snapshot_version` 唯一 | 告警评估运行记录 |
 
+### 3.3 远程库 ER 图（`payroll`，应用相关表）
+
+> 远程库共 159 张表，iwork 仅引用以下 5 张（全部 `InnoDB`、`CHARSET=gbk`、**无物理外键**，关系均为应用层 JOIN）。行数为 `information_schema` 估算值（2026-09-17 采集）。
+
+```mermaid
+erDiagram
+    pyperson {
+        int SysID PK "人员系统ID"
+        char16 WorkerNo "员工工号（员工ID来源）"
+        text Remark "2026-09 起被远程清空，已弃用"
+    }
+    pytckreg3 {
+        char13 TicketNo PK "票号"
+        char3 SysSource PK "系统来源"
+        int SeqNo PK "序号"
+        char14 WrkOrder "完整工单号"
+        int StepNo "工序号"
+        int RegPerSysID "登记人系统ID"
+        int Qty "数量"
+        datetime RegDate "登记日期"
+        datetime RegTime "登记时间"
+        char40 Flow "生产组"
+        char3 StationID "工位ID"
+    }
+    pywrkord {
+        char14 WrkOrder PK "完整工单号"
+        char100 ExtField01 "初版款号"
+    }
+    pywrkstp {
+        char14 WrkOrder PK "完整工单号"
+        int StepNo PK "工序号"
+        char120 Description "工序描述"
+        double StepTime "标准工时"
+    }
+    pydefstp {
+        int StepNo PK "工序号"
+    }
+
+    pyperson ||--o{ pytckreg3 : "RegPerSysID = SysID"
+    pywrkord ||--o{ pytckreg3 : "WrkOrder"
+    pywrkstp ||--o{ pytckreg3 : "WrkOrder + StepNo"
+    pydefstp ||--o{ pytckreg3 : "StepNo"
+```
+
+**关系明细（应用层 JOIN）**
+
+| 关系 | 字段链 | 应用用途 |
+|---|---|---|
+| 打卡 → 员工 | `pytckreg3.RegPerSysID → pyperson.SysID` | 员工 ID 映射（`WorkerNo`；`Remark` 已弃用） |
+| 打卡 → 工单 | `pytckreg3.WrkOrder → pywrkord.WrkOrder` | 初版款号 `ExtField01`；前 6 位跨库匹配本地 `production_orders.style_no` |
+| 打卡 → 工序工时 | `pytckreg3.(WrkOrder, StepNo) → pywrkstp.(WrkOrder, StepNo)` | 工序描述、标准工时与产值 |
+| 打卡 → 工序定义 | `pytckreg3.StepNo → pydefstp.StepNo` | 仅模型映射，生产详情不使用 |
+
+**容量与结构注记**
+
+| 表 | 行数（估算） | 主键 | 关键索引 |
+|---|---|---|---|
+| `pytckreg3` | ~789 万 | `(TicketNo, SysSource, SeqNo)` 复合 | `PYTCKREG3_RegDate(RegDate,RegTime)`、`PYTCKREG3_RegPerSysID(RegPerSysID,RegDate,WrkOrder,StepNo,Color,Sizx)`、`PYTCKREG3_StepNo(WrkOrder,StepNo,BundleNo)` |
+| `pyperson` | ~1.32 万 | `SysID` | `PYPERSON_WorkerNo`、`PYPERSON_CardNo`、`PYPERSON_WorkGroup(Department,WorkGroup)` |
+| `pywrkord` | ~7,266 | `WrkOrder` | `PYWRKORD_OrderNo(OrderNo,Style)`、`PYWRKORD_Style` |
+| `pywrkstp` | ~48.9 万 | `(WrkOrder, StepNo)` 复合 | `PYWRKSTP_OperationCode(WrkOrder,OperationCode)` |
+| `pydefstp` | ~67 | `StepNo` | — |
+
+- **复合主键映射差异**：`pytckreg3` 真实主键为三字段复合，Django 模型（`models.Pytckreg3`）将其映射为单字段 `TicketNo`；查询层按 `TicketNo` 计数/去重，需保持该假设成立。
+- **字符集**：远程表为 `gbk`，Django 连接使用 `utf8mb4`，由 MySQL 连接层转换。
+- **无物理外键**：关系完全由应用查询保证，远程数据归档/删除不会级联。
+- **跨库关联（本地）**：`pywrkord.WrkOrder[:6] → iwork_local.production_orders.style_no`（产品名称/生产单号）；累计产量起点 `iwork_local.igarment_production_orders.customer_order_no`。
+
 ## 4. 关键字段映射与业务概念（含数据库位置）
 
 > 数据库位置标注格式：**库.表.字段**（库别名见 §1）。远程库=`iwork`(payroll)、本地库=`iwork_local`、缓存=Redis。
