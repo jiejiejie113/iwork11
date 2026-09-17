@@ -124,13 +124,22 @@ class TestPypersonModel:
 
         assert isinstance(Pyperson._meta.get_field('Remark'), TextField)
 
-    def test_worker_no_is_employee_id_source(self):
-        """员工工号字段支持字母数字文本且允许为空。"""
+    def test_worker_no_is_fallback_employee_id(self):
+        """员工工号字段支持字母数字文本且允许为空（DormNo 缺失时回退使用）。"""
         from django.db.models import CharField
 
         field = Pyperson._meta.get_field('WorkerNo')
         assert isinstance(field, CharField)
         assert field.max_length == 16
+        assert field.null is True
+
+    def test_dorm_no_is_preferred_employee_id(self):
+        """DormNo 为优先员工 ID 字段。"""
+        from django.db.models import CharField
+
+        field = Pyperson._meta.get_field('DormNo')
+        assert isinstance(field, CharField)
+        assert field.max_length == 20
         assert field.null is True
 
 

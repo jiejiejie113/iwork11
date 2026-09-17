@@ -244,13 +244,15 @@ def test_read_model_snapshot_skips_execution_limit_on_old_mysql(mock_connections
 
 @patch('iwork.models.Pyperson')
 @patch('iwork.models.Pytckreg3')
-def test_employee_remark_map_reads_worker_no(mock_pytckreg3, mock_pyperson):
-    """员工映射必须读取完整唯一的 WorkerNo，而非已清空的 Remark。"""
+def test_employee_remark_map_prefers_dorm_no_with_worker_no_fallback(mock_pytckreg3, mock_pyperson):
+    """员工映射必须 DormNo 优先、WorkerNo 回退，并排除双空员工。"""
     from iwork.queries import get_employee_remark_map
 
     mock_pyperson.objects.using.return_value.filter.return_value.values.return_value = [
-        {'SysID': 1001, 'WorkerNo': 'PC002'},
-        {'SysID': 1002, 'WorkerNo': '11532'},
+        {'SysID': 1001, 'WorkerNo': '12', 'DormNo': 'S0012'},
+        {'SysID': 1002, 'WorkerNo': 'SL001', 'DormNo': ''},
+        {'SysID': 1003, 'WorkerNo': '18', 'DormNo': None},
+        {'SysID': 1004, 'WorkerNo': '', 'DormNo': '   '},
     ]
 
     result = get_employee_remark_map()
@@ -260,8 +262,9 @@ def test_employee_remark_map_reads_worker_no(mock_pytckreg3, mock_pyperson):
     mock_pyperson.objects.using.return_value.filter.return_value.values.assert_called_once_with(
         'SysID',
         'WorkerNo',
+        'DormNo',
     )
-    assert result == {'1001': 'PC002', '1002': '11532'}
+    assert result == {'1001': 'S0012', '1002': 'SL001', '1003': '18'}
 
 
 class TestApplyStepnoFilter:

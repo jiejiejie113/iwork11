@@ -49,17 +49,20 @@ def get_records_queryset(target: date) -> object:
 
 
 def get_employee_remark_map() -> dict[str, str]:
-    """批量读取生产员工的唯一非空 WorkerNo 映射。
+    """批量读取生产员工的唯一员工 ID 映射（DormNo 优先、WorkerNo 回退）。
 
     生产员工集合通过 ``pytckreg3.RegPerSysID`` 子查询确定，随后使用
-    ``pyperson.SysID`` 主键批量查找；重复 WorkerNo 和空 WorkerNo 不返回。
+    ``pyperson.SysID`` 主键批量查找。每个员工优先使用 ``DormNo``
+    （远程员工 ID 字段），缺失时回退 ``WorkerNo``（生产一线工号，如
+    ``SL001``）；两类值合并后统一做非空与唯一性过滤。
 
     2026-09 远程 ``pyperson.Remark`` 被大面积清空（14,346 人中仅 267 人有值），
-    唯一映射曾骤降到 32 条导致历史快照数据严重缩水；现改用完整唯一的
-    ``WorkerNo`` 作为员工工号来源。
+    唯一映射曾骤降到 32 条导致历史快照数据严重缩水；此后先改用 ``WorkerNo``，
+    再按业务要求调整为 ``DormNo`` 优先、``WorkerNo`` 回退（生产员工 ``DormNo``
+    为空时仍显示工号，保证看板数据不丢失）。
 
     Returns:
-        dict[str, str]: 员工系统 ID 到员工工号的映射。
+        dict[str, str]: 员工系统 ID 到员工 ID 的映射。
     """
     from iwork.employee_id_mapping import build_unique_remark_map
     from iwork.models import Pyperson, Pytckreg3
@@ -73,9 +76,19 @@ def get_employee_remark_map() -> dict[str, str]:
     rows = (
         Pyperson.objects.using('iwork')
         .filter(SysID__in=Subquery(source_employee_ids))
-        .values('SysID', 'WorkerNo')
+        .values('SysID', 'WorkerNo', 'DormNo')
     )
-    return build_unique_remark_map(rows, remark_key='WorkerNo')
+    resolved_rows = [
+        {
+            'SysID': row['SysID'],
+            'EmployeeNo': (
+                (row['DormNo'] or '').strip()
+                or (row['WorkerNo'] or '').strip()
+            ),
+        }
+        for row in rows
+    ]
+    return build_unique_remark_map(resolved_rows, remark_key='EmployeeNo')
 
 
 def get_initial_style_numbers(wrk_orders: list[str]) -> dict[str, str]:
