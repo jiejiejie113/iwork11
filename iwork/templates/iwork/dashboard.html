@@ -463,7 +463,7 @@ createApp({
                 params.push(`date=${requestedDate}`);
             }
             const resp = await fetch(`${basePath}api/dashboard/workorders/?${params.filter(Boolean).join('&')}`);
-            const result = await resp.json();
+            const result = await parseJsonResponse(resp);
             if (requestId !== null && requestId !== historyLoadSequence) return;
             workorderCache[page] = result.items;
             workorderPagination.total = result.total;
@@ -618,6 +618,19 @@ createApp({
         }
 
         // ---- API 调用 ----
+        async function parseJsonResponse(response) {
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                // 部署重启或网关故障时可能返回 HTML 错误页，避免 JSON 解析崩溃。
+                throw new Error(`服务暂不可用（HTTP ${response.status}），请稍后重试`);
+            }
+            try {
+                return await response.json();
+            } catch (e) {
+                throw new Error(`服务响应异常（HTTP ${response.status}），请稍后重试`);
+            }
+        }
+
         function buildStepnoParam() {
             return stepnoFilter.value != null ? `stepno=${stepnoFilter.value}` : '';
         }
@@ -626,7 +639,7 @@ createApp({
             try {
                 const params = buildStepnoParam();
                 const resp = await fetch(`${basePath}api/dashboard/realtime/${params ? '?' + params : ''}`);
-                const result = await resp.json();
+                const result = await parseJsonResponse(resp);
                 Object.assign(data, result);
                 // 清空工单缓存（工序过滤变化导致数据不同）
                 Object.keys(workorderCache).forEach(k => delete workorderCache[k]);
@@ -716,7 +729,7 @@ createApp({
                             headers: { 'X-CSRFToken': getCookie('csrftoken') || '' },
                         },
                     );
-                    const payload = await response.json();
+                    const payload = await parseJsonResponse(response);
                     if (response.status === 202 && payload.code === 'history_snapshot_building') {
                         await new Promise(resolve => setTimeout(
                             resolve,
@@ -746,11 +759,11 @@ createApp({
 
         async function fetchHistoricalJson(url, snapshotDate) {
             let response = await fetch(url);
-            let payload = await response.json();
+            let payload = await parseJsonResponse(response);
             if (response.status === 404 && payload.code === 'history_snapshot_not_found') {
                 await ensureHistorySnapshot(snapshotDate);
                 response = await fetch(url);
-                payload = await response.json();
+                payload = await parseJsonResponse(response);
             }
             if (!response.ok) {
                 throw new Error(payload.error || `请求失败 (${response.status})`);
@@ -772,7 +785,7 @@ createApp({
                     url += `?date=${selectedDate.value}`;
                 }
                 const resp = await fetch(url);
-                const result = await resp.json();
+                const result = await parseJsonResponse(resp);
                 if (result.stepnos) {
                     data.all_stepnos = result.stepnos;
                 }

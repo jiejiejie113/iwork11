@@ -1641,6 +1641,19 @@ createApp({
             return rows;
         }
 
+        async function parseJsonResponse(response) {
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                // 部署重启或网关故障时可能返回 HTML 错误页，避免 JSON 解析崩溃。
+                throw new Error(`服务暂不可用（HTTP ${response.status}），请稍后重试`);
+            }
+            try {
+                return await response.json();
+            } catch (e) {
+                throw new Error(`服务响应异常（HTTP ${response.status}），请稍后重试`);
+            }
+        }
+
         async function ensureHistorySnapshot(snapshotDate) {
             if (historySnapshotPromises.has(snapshotDate)) {
                 return historySnapshotPromises.get(snapshotDate);
@@ -1657,7 +1670,7 @@ createApp({
                             headers: { 'X-CSRFToken': getCookie('csrftoken') || '' },
                         },
                     );
-                    const payload = await response.json();
+                    const payload = await parseJsonResponse(response);
                     if (response.status === 202 && payload.code === 'history_snapshot_building') {
                         await new Promise(resolve => setTimeout(
                             resolve,
@@ -1687,7 +1700,7 @@ createApp({
             const responseUrl = new URL(response.url, window.location.origin);
             const snapshotDate = responseUrl.searchParams.get('date') || selectedDate.value;
             const isHistoricalResponse = snapshotDate < businessDateString();
-            let payload = await response.json();
+            let payload = await parseJsonResponse(response);
             if (
                 response.status === 404
                 && payload.code === 'history_snapshot_not_found'
@@ -1696,7 +1709,7 @@ createApp({
                 const retryUrl = response.url;
                 await ensureHistorySnapshot(snapshotDate);
                 response = await fetch(retryUrl);
-                payload = await response.json();
+                payload = await parseJsonResponse(response);
             }
             if (!response.ok) {
                 throw new Error(payload.error || `请求失败 (${response.status})`);

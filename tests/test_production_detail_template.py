@@ -1048,3 +1048,45 @@ def test_target_responsibility_status_and_initial_style_targets_are_read_only():
     assert "逾期补填" in TEMPLATE
     assert "分组目标：" in TEMPLATE
     assert "flowTargets.length" in TEMPLATE
+
+
+def test_dashboard_history_handles_non_json_error_pages():
+    """网关返回 HTML 错误页时，历史加载应给出可读提示而非 JSON 解析异常。"""
+    assert 'async function parseJsonResponse(response)' in DASHBOARD_TEMPLATE
+    assert "contentType.includes('application/json')" in DASHBOARD_TEMPLATE
+    assert '服务暂不可用（HTTP ${response.status}）' in DASHBOARD_TEMPLATE
+    assert 'await parseJsonResponse(resp)' in DASHBOARD_TEMPLATE
+    assert 'await parseJsonResponse(response)' in DASHBOARD_TEMPLATE
+
+    history_loader = DASHBOARD_TEMPLATE.split(
+        'async function fetchHistoricalJson',
+        1,
+    )[1].split('\n        async function', 1)[0]
+    assert 'parseJsonResponse' in history_loader
+    assert 'await response.json()' not in history_loader
+
+    ensure_loader = DASHBOARD_TEMPLATE.split(
+        'async function ensureHistorySnapshot',
+        1,
+    )[1].split('\n        async function', 1)[0]
+    assert 'parseJsonResponse' in ensure_loader
+
+
+def test_production_detail_history_handles_non_json_error_pages():
+    """生产详情的历史与快照入队接口同样容忍 HTML 错误页。"""
+    assert 'async function parseJsonResponse(response)' in TEMPLATE
+    assert "contentType.includes('application/json')" in TEMPLATE
+    assert '服务暂不可用（HTTP ${response.status}）' in TEMPLATE
+
+    response_reader = TEMPLATE.split('async function readResponse', 1)[1].split(
+        '\n        function',
+        1,
+    )[0]
+    assert response_reader.count('parseJsonResponse') == 2
+    assert 'await response.json()' not in response_reader
+
+    ensure_loader = TEMPLATE.split(
+        'async function ensureHistorySnapshot',
+        1,
+    )[1].split('\n        async function readResponse', 1)[0]
+    assert 'parseJsonResponse' in ensure_loader
