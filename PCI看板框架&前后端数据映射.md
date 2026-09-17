@@ -545,13 +545,13 @@ erDiagram
 
 **GET `api/account/today-targets/`**：
 
-> 完成判定（2026-09-17 起）：读取实时快照 `detail.flow_overview` 的各 Flow 白名单工序（stepno 70）当日产量，与目标产量比较并结合截止时间输出四状态——`completed` 已完成（已填写且实际≥目标）、`unfinished` 未完成（未达标且已过截止）、`filled` 已填写（未达标且未过截止）、`pending_fill` 待填写（目标或工时未填写完整）。实时快照不可用时 `production_available=false` 且不判完成。页面每 60s 静默轮询刷新（保留编辑草稿、隐藏时不轮询）。
+> 完成判定（2026-09-17 起）：读取实时快照 `detail.flow_overview` 的各 Flow 白名单工序（stepno 70）当日产量，与目标产量比较并结合**下班时间 18:30**（`WORKDAY_END_MINUTE`，业务时区；填写截止 09:00 仅用于提交义务）输出五状态——`completed` 已完成（18:30 前实际≥目标）、`overdue` 逾期完成（18:30 后实际≥目标）、`unfinished` 未完成（已过 18:30 仍未达标）、`filled` 已填写（未到 18:30 且未达标）、`pending_fill` 待填写（目标或工时未填写完整）。`complete=true` 表示达标（含逾期完成）。实时快照不可用时 `production_available=false` 且不判完成。页面每 60s 静默轮询刷新（保留编辑草稿、隐藏时不轮询）。
 
 | 字段 | 前端使用 |
 |---|---|
 | `business_date` / `deadline_at` | 顶部横幅 |
 | `default_work_hours` / `min_work_hours` / `max_work_hours` | 默认工时卡片 + 输入校验 |
-| `summary{completed_count, unfinished_count, filled_count, pending_fill_count, incomplete_count, total_count, all_complete}` | 四类统计卡片（含平铺字段兜底） |
+| `summary{completed_count, overdue_count, unfinished_count, filled_count, pending_fill_count, incomplete_count, total_count, all_complete}` | 七格统计卡片（含平铺字段兜底） |
 | `groups[]` | 分组卡片：`flow`、`deadline_at`、`submitted_at`、`group_target`、`work_hours`、`target_set`、`work_hours_set`、`work_hours_source`（`'history'` 显示「沿用最近历史工时草稿」）、`complete`、`production_state`、`production_available`、`actual_qty`、`status`、`dirty`、`saving`、`error` |
 | `responsibility_summary{pending_count, overdue_count, status_counts, items[]}` | 管理员责任摘要表（`{% if today_targets_is_admin %}` 控制）：列=分组/目标产量/工作时间/状态/截止/负责人，字段 `flow_name`、`target_set`、`group_target`、`work_hours_set`、`work_hours`、`deadline_at`、`status`、`leaders` |
 
@@ -602,10 +602,11 @@ erDiagram
 
 ## 11. 变更记录
 
-### 2026-09-17 今日目标完成改为实际产量达标（四状态）
+### 2026-09-17 今日目标完成改为实际产量达标（五状态，下班时间判定）
 
-- 今日目标页"完成"由"填写完整"改为"当日实际产量 ≥ 目标产量"：读取实时快照 `detail.flow_overview`（白名单工序 stepno 70）计算四状态——`已完成`（已填写且实际≥目标）、`未完成`（未达标且已过截止）、`已填写`（未达标且未过截止）、`待填写`（目标或工时未填写完整）。
-- 顶部统计改为四类计数（`completed_count`/`unfinished_count`/`filled_count`/`pending_fill_count`）；分组卡片显示"今日实际 X / 目标 Y"；实时快照不可用时 `production_available=false`、`actual_qty=null` 且不判完成；页面新增 60s 静默轮询（保留编辑草稿、页面隐藏时暂停）。
+- 今日目标页"完成"由"填写完整"改为"当日实际产量 ≥ 目标产量"，判定截止使用**下班时间 18:30**（`WORKDAY_END_MINUTE`，业务时区）；填写截止 09:00 仅用于提交义务。
+- 五状态：`已完成`（18:30 前达标）、`逾期完成`（18:30 后达标，计入 `complete`）、`未完成`（已过 18:30 未达标）、`已填写`（未到 18:30 未达标）、`待填写`（目标或工时未填写完整）。
+- 读取实时快照 `detail.flow_overview`（白名单工序 stepno 70）计算实际产量；顶部统计改为七格（负责分组 + 五状态 + 默认工时）；分组卡片显示"今日实际 X / 目标 Y"；实时快照不可用时 `production_available=false`、`actual_qty=null` 且不判完成；页面新增 60s 静默轮询（保留编辑草稿、页面隐藏时暂停）；全部分组达标（含逾期完成）时提示并支持返回。
 - 提交义务状态（`pending`/`fulfilled`/`overdue`/`fulfilled_late`/`waived`）与责任摘要保持不变。
 
 ### 2026-09-17 员工 ID 改为 DormNo 优先、WorkerNo 回退
