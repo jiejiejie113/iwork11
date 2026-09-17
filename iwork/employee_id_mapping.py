@@ -20,13 +20,13 @@ def normalize_source_employee_id(value: object) -> str | None:
 
 
 def normalize_remark(value: object) -> str:
-    """将 Remark 规范化为新的员工 ID 文本。
+    """将员工 ID 字段值规范化为文本。
 
     Args:
-        value: pyperson.Remark 原始值。
+        value: 员工 ID 字段（如 ``WorkerNo`` 或 ``Remark``）原始值。
 
     Returns:
-        str: 去除首尾空白后的 Remark，空值返回空字符串。
+        str: 去除首尾空白后的值，空值返回空字符串。
     """
     if value is None:
         return ""
@@ -35,23 +35,25 @@ def normalize_remark(value: object) -> str:
 
 def build_unique_remark_map(
     rows: Iterable[Mapping[str, object]],
+    remark_key: str = "Remark",
 ) -> dict[str, str]:
-    """构建非空且唯一的员工系统 ID 到 Remark 映射。
+    """构建非空且唯一的员工系统 ID 到员工 ID 映射。
 
-    重复判断在传入的员工集合内进行；同一个 Remark 对应多个员工系统 ID 时，
-    该 Remark 关联的所有员工都会被排除，避免卡片 ID 合并或交换键冲突。
+    重复判断在传入的员工集合内进行；同一个员工 ID 对应多个员工系统 ID 时，
+    该员工 ID 关联的所有员工都会被排除，避免卡片 ID 合并或交换键冲突。
 
     Args:
-        rows: 包含 ``SysID`` 和 ``Remark`` 键的 pyperson 行。
+        rows: 包含 ``SysID`` 和员工 ID 键的 pyperson 行。
+        remark_key: 员工 ID 所在的字段名，默认 ``Remark``，可传 ``WorkerNo``。
 
     Returns:
-        dict[str, str]: ``SysID`` 字符串到唯一 Remark 的映射。
+        dict[str, str]: ``SysID`` 字符串到唯一员工 ID 的映射。
     """
     owners_by_remark: dict[str, set[str]] = defaultdict(set)
     normalized_rows: list[tuple[str, str]] = []
     for row in rows:
         source_id = normalize_source_employee_id(row.get("SysID"))
-        remark = normalize_remark(row.get("Remark"))
+        remark = normalize_remark(row.get(remark_key))
         if source_id is None or not remark:
             continue
         owners_by_remark[remark].add(source_id)

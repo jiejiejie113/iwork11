@@ -346,6 +346,13 @@ VISIBLE_FLOWS = [f for f in ALLOWED_FLOWS if f not in HIDDEN_FLOWS]
 # 数据库查询超时（秒）
 QUERY_TIMEOUT = 45
 
+# 远程只读语句的执行上限（毫秒）；用于 REPEATABLE READ 采集事务内的每条 SQL，
+# 防止大数据量工单的累计行等查询在远程服务器上长时间运行导致 Lost connection。
+IWORK_REMOTE_STATEMENT_TIMEOUT_MS = env.int(
+    'IWORK_REMOTE_STATEMENT_TIMEOUT_MS',
+    default=30000,
+)
+
 # 月度统计缓存 TTL（30 天）
 MONTHLY_CACHE_TTL = 60 * 60 * 24 * 30
 

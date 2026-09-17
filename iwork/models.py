@@ -66,12 +66,14 @@ class Pyperson(models.Model):
     """
     人员主数据模型（只读）。
 
-    ``SysID`` 用于匹配生产记录中的 ``RegPerSysID``；生产详情仅使用
-    ``Remark`` 作为新的员工 ID，空值和重复值由映射规则过滤。
+    ``SysID`` 用于匹配生产记录中的 ``RegPerSysID``；生产详情使用
+    ``WorkerNo`` 作为员工工号，空值和重复值由映射规则过滤。
+    ``Remark`` 字段因远程数据大面积清空已不再作为员工 ID 来源。
     """
 
     SysID = models.IntegerField('人员系统ID', primary_key=True)
-    Remark = models.TextField('员工ID', null=True, blank=True)
+    WorkerNo = models.CharField('员工工号', max_length=16, null=True, blank=True)
+    Remark = models.TextField('备注', null=True, blank=True)
 
     class Meta:
         app_label = 'iwork'

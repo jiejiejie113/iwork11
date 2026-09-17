@@ -3,7 +3,7 @@ from contextlib import contextmanager, suppress
 from datetime import date, timedelta
 from django.conf import settings
 from django.utils import timezone
-from django.db import connections, transaction
+from django.db import OperationalError, connections, transaction
 from django.db.models import Count, Min, Subquery, Sum
 from loguru import logger
 
@@ -49,13 +49,17 @@ def get_records_queryset(target: date) -> object:
 
 
 def get_employee_remark_map() -> dict[str, str]:
-    """批量读取生产员工的唯一非空 Remark 映射。
+    """批量读取生产员工的唯一非空 WorkerNo 映射。
 
     生产员工集合通过 ``pytckreg3.RegPerSysID`` 子查询确定，随后使用
-    ``pyperson.SysID`` 主键批量查找；重复 Remark 和空 Remark 不返回。
+    ``pyperson.SysID`` 主键批量查找；重复 WorkerNo 和空 WorkerNo 不返回。
+
+    2026-09 远程 ``pyperson.Remark`` 被大面积清空（14,346 人中仅 267 人有值），
+    唯一映射曾骤降到 32 条导致历史快照数据严重缩水；现改用完整唯一的
+    ``WorkerNo`` 作为员工工号来源。
 
     Returns:
-        dict[str, str]: 员工系统 ID 到新员工 ID 的映射。
+        dict[str, str]: 员工系统 ID 到员工工号的映射。
     """
     from iwork.employee_id_mapping import build_unique_remark_map
     from iwork.models import Pyperson, Pytckreg3
@@ -69,9 +73,9 @@ def get_employee_remark_map() -> dict[str, str]:
     rows = (
         Pyperson.objects.using('iwork')
         .filter(SysID__in=Subquery(source_employee_ids))
-        .values('SysID', 'Remark')
+        .values('SysID', 'WorkerNo')
     )
-    return build_unique_remark_map(rows)
+    return build_unique_remark_map(rows, remark_key='WorkerNo')
 
 
 def get_initial_style_numbers(wrk_orders: list[str]) -> dict[str, str]:
@@ -143,15 +147,33 @@ def get_igarment_creation_dates(wrk_orders: list[str]) -> dict[str, date]:
 def read_model_consistent_snapshot():
     """让本轮多个远程只读查询共享同一个可重复读快照。
 
+    事务前按 ``IWORK_REMOTE_STATEMENT_TIMEOUT_MS`` 设置语句级执行上限，
+    避免大数据量工单的累计行等单条慢查询在远程服务器长时间运行导致
+    ``Lost connection to server during query``；事务结束后复位为 0。
+
     Yields:
         None: 调用方可在上下文中执行属于同一快照的远程只读查询。
     """
     connection = connections['iwork']
+    timeout_ms = getattr(settings, 'IWORK_REMOTE_STATEMENT_TIMEOUT_MS', 30000)
     if connection.vendor == 'mysql':
         with connection.cursor() as cursor:
             cursor.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-    with transaction.atomic(using='iwork'):
-        yield
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET SESSION MAX_EXECUTION_TIME = {int(timeout_ms)}')
+        except OperationalError as exc:
+            logger.warning('设置远程语句执行上限失败，按无上限继续: {}', exc)
+    try:
+        with transaction.atomic(using='iwork'):
+            yield
+    finally:
+        if connection.vendor == 'mysql':
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute('SET SESSION MAX_EXECUTION_TIME = 0')
+            except OperationalError as exc:
+                logger.warning('复位远程语句执行上限失败: {}', exc)
 
 
 def get_read_model_cumulative_rows(
