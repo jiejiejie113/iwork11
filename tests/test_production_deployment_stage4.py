@@ -39,7 +39,7 @@ POWERSHELL_EXE = (
     SYSTEM_ROOT / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 )
 EXPECTED_COORDINATION_MODULE_SHA256 = (
-    "0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7"
+    "58858b23e7cd1881306e95e41f8dcfb7dc3e0990479c2e9e23c9e9e4e974f1ca"
 )
 
 
@@ -239,7 +239,7 @@ def test_deploy_workflow_exposes_only_typed_manual_inputs() -> None:
     assert "type: boolean" in content
     assert "default: false" in content
     assert "DEPLOY IWORK WITH MIGRATIONS" in content
-    assert "if ($env:GITHUB_ACTOR -cne 'GuChenkano')" in content
+    assert "if ($env:GITHUB_ACTOR -cne 'jiejiejie113')" in content
     assert "if ($env:GITHUB_REF -cne 'refs/heads/Keycloak')" in content
     assert "Production deploy repository is not approved." in content
     assert "environment: production-iwork" in content
@@ -483,7 +483,7 @@ def test_production_coordination_module_is_bom_pinned_and_integrated() -> None:
     assert "Enter-ProductionCoordinationLock" in content
     assert "Update-ProductionCoordinationLock" in content
     assert "Exit-ProductionCoordinationLock" in content
-    assert "-Repository 'GuChenkano/iwork'" in content
+    assert "-Repository 'jiejiejie113/iwork11'" in content
     assert "-Service 'iwork'" in content
     assert "iwork = $ImageDigest" in content
     assert "iwork_config = $ConfigDigest" in content
@@ -502,10 +502,10 @@ $ErrorActionPreference = 'Stop'
 Import-Module -Name $ModulePath -Force
 $lock = Enter-ProductionCoordinationLock `
     -LockRoot $LockRoot `
-    -Repository 'GuChenkano/iwork' `
+    -Repository 'jiejiejie113/iwork11' `
     -Service 'iwork' `
     -RunId '123456-1' `
-    -Actor 'GuChenkano' `
+    -Actor 'jiejiejie113' `
     -ExpectedRevision ('2' * 40) `
     -ArtifactDigests ([ordered]@{ iwork = 'sha256:' + ('1' * 64) }) `
     -RequestId '12345678-1234-1234-1234-123456789abc' `
@@ -620,7 +620,7 @@ def test_policy_installer_pins_workflow_commit_and_server_script() -> None:
     assert "StateRoot" in content
     assert "LockRoot" in content
     assert "Assert-CrossRepositoryRunReadiness" in content
-    assert "GuChenkano/DTD_nginx" in content
+    assert "jiejiejie113/DTD_nginx" in content
     assert '"repos/$CROSS_REPOSITORY/actions/runs?per_page=1"' in content
     assert "$env:GH_TOKEN = $null" in content
     assert "$env:GITHUB_TOKEN = $null" in content
@@ -1294,7 +1294,7 @@ if ($line -like 'compose*up *--no-build --no-deps iwork alert-worker*') {
     }
     if (
         $env:FAKE_FAIL_MAINTENANCE_CLEANUP -eq '1' -and
-        $images[0] -like 'ghcr.io/guchenkano/iwork@*'
+        $images[0] -like 'ghcr.io/jiejiejie113/iwork11@*'
     ) {
         Remove-Item -LiteralPath $env:FAKE_MAINTENANCE_FILE -Force
         New-Item -ItemType Directory -Path $env:FAKE_MAINTENANCE_FILE | Out-Null
@@ -1347,7 +1347,7 @@ exit /b %fakeDockerExitCode%
     env["FAKE_REVISION"] = CANDIDATE_REVISION
     env["FAKE_PREVIOUS_DIGEST"] = PREVIOUS_DIGEST
     env["FAKE_PREVIOUS_REVISION"] = PREVIOUS_REVISION
-    env["FAKE_CANDIDATE_IMAGE"] = f"ghcr.io/guchenkano/iwork@{CANDIDATE_DIGEST}"
+    env["FAKE_CANDIDATE_IMAGE"] = f"ghcr.io/jiejiejie113/iwork11@{CANDIDATE_DIGEST}"
     env["FAKE_FAIL_VALIDATION"] = "1" if fail_validation else "0"
     env["FAKE_FAIL_ROLLBACK"] = "1" if fail_rollback else "0"
     env["FAKE_COMPOSE_PROGRESS"] = "1" if emit_compose_progress else "0"
@@ -1363,7 +1363,7 @@ exit /b %fakeDockerExitCode%
     env["FAKE_DOCKER_SCRIPT"] = str(fake_docker)
     web_image_state = tmp_path / "web-image-state.txt"
     alert_image_state = tmp_path / "alert-image-state.txt"
-    previous_image = f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}"
+    previous_image = f"ghcr.io/jiejiejie113/iwork11@{PREVIOUS_DIGEST}"
     web_image_state.write_text(previous_image, encoding="utf-8")
     alert_image_state.write_text(previous_image, encoding="utf-8")
     env["FAKE_WEB_IMAGE_STATE"] = str(web_image_state)
@@ -1403,7 +1403,7 @@ exit /b %fakeDockerExitCode%
                     "run_id": PREFLIGHT_RUN_ID,
                     "request_id": PREFLIGHT_REQUEST_ID,
                     "request_claim_path": str(preflight_request_claim_path),
-                    "actor": "GuChenkano",
+                    "actor": "jiejiejie113",
                     "expected_revision": CANDIDATE_REVISION,
                     "image_digest": CANDIDATE_DIGEST,
                     "config_digest": config_digest,
@@ -1416,7 +1416,7 @@ exit /b %fakeDockerExitCode%
                         {
                             "Name": "DKT_iwork",
                             "ContainerId": "web-container-id",
-                            "ConfiguredImage": f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}",
+                            "ConfiguredImage": f"ghcr.io/jiejiejie113/iwork11@{PREVIOUS_DIGEST}",
                             "ImageDigest": PREVIOUS_DIGEST,
                             "Revision": PREVIOUS_REVISION,
                             "ImageId": "sha256:" + "a" * 64,
@@ -1427,7 +1427,7 @@ exit /b %fakeDockerExitCode%
                         {
                             "Name": "DKT_iwork_alert_worker",
                             "ContainerId": "alert-container-id",
-                            "ConfiguredImage": f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}",
+                            "ConfiguredImage": f"ghcr.io/jiejiejie113/iwork11@{PREVIOUS_DIGEST}",
                             "ImageDigest": PREVIOUS_DIGEST,
                             "Revision": PREVIOUS_REVISION,
                             "ImageId": "sha256:" + "b" * 64,
@@ -1480,7 +1480,7 @@ exit /b %fakeDockerExitCode%
             "-RunId",
             DEPLOYMENT_RUN_ID,
             "-Actor",
-            "GuChenkano",
+            "jiejiejie113",
             "-ChangeDescription",
             "阶段4预检测试",
             "-ExpectedIdentity",
@@ -1833,7 +1833,7 @@ def test_deploy_archives_expired_owned_maintenance_marker(tmp_path: Path) -> Non
             "application": "iwork",
             "operation": "production_deployment",
             "workflow_run_id": "654321-1",
-            "actor": "GuChenkano",
+            "actor": "jiejiejie113",
             "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
             "expires_at": expired_at.isoformat(),
         },
@@ -1858,7 +1858,7 @@ def test_deploy_preserves_untrusted_expired_maintenance_markers(
         "application": "iwork",
         "operation": "production_deployment",
         "workflow_run_id": "654321-1",
-        "actor": "GuChenkano",
+        "actor": "jiejiejie113",
         "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
         "expires_at": expired_at.isoformat(),
     }
@@ -1918,7 +1918,7 @@ def test_preflight_does_not_archive_expired_maintenance_without_lock(
             "application": "iwork",
             "operation": "production_deployment",
             "workflow_run_id": "654322-1",
-            "actor": "GuChenkano",
+            "actor": "jiejiejie113",
             "started_at": (expired_at - timedelta(minutes=19)).isoformat(),
             "expires_at": expired_at.isoformat(),
         },
@@ -1943,7 +1943,7 @@ def test_deploy_does_not_archive_active_maintenance_marker(tmp_path: Path) -> No
             "application": "iwork",
             "operation": "production_deployment",
             "workflow_run_id": "654323-1",
-            "actor": "GuChenkano",
+            "actor": "jiejiejie113",
             "started_at": started_at.isoformat(),
             "expires_at": (started_at + timedelta(minutes=20)).isoformat(),
         },
@@ -1982,7 +1982,7 @@ def test_deploy_switches_both_services_and_records_rollback_state(
     assert '"Mode":"Deploy"' in result.stdout
     assert '"Result":"deployed"' in result.stdout
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
-    assert f"ghcr.io/guchenkano/iwork@{CANDIDATE_DIGEST}" in docker_calls
+    assert f"ghcr.io/jiejiejie113/iwork11@{CANDIDATE_DIGEST}" in docker_calls
     assert "compose" in docker_calls
     assert "up -d --no-build --no-deps iwork alert-worker" in docker_calls
     assert "exec dkt_iwork python manage.py check --deploy" in docker_calls
@@ -2062,7 +2062,7 @@ def test_controlled_rollback_drill_restores_both_previous_images(
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
     persisted_config_path = str(paths["state_root"] / "release-config").lower()
     assert docker_calls.count(persisted_config_path) >= 2
-    assert f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}" in docker_calls
+    assert f"ghcr.io/jiejiejie113/iwork11@{PREVIOUS_DIGEST}" in docker_calls
     assert docker_calls.count("inspect dkt_iwork --format {{.image}}") >= 2
     assert docker_calls.count("inspect dkt_iwork_alert_worker --format {{.image}}") >= 2
 
@@ -2175,7 +2175,7 @@ def test_deploy_failure_automatically_restores_both_previous_images(
     assert result.returncode != 0
     docker_calls = paths["docker_log"].read_text(encoding="utf-8-sig").lower()
     assert docker_calls.count("up -d --no-build --no-deps iwork alert-worker") == 2
-    assert f"ghcr.io/guchenkano/iwork@{PREVIOUS_DIGEST}" in docker_calls
+    assert f"ghcr.io/jiejiejie113/iwork11@{PREVIOUS_DIGEST}" in docker_calls
     assert docker_calls.count("exec dkt_iwork python manage.py check --deploy") == 2
     assert docker_calls.count("exec dkt_iwork_alert_worker celery") == 1
 

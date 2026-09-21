@@ -922,7 +922,8 @@ KANBAN_DEFAULT_PAGE_SIZE = 50   # 每页条数
 
 - CI、GHCR发布、生产预检和部署只接受`Keycloak`远程分支当前完整Commit。
 - 生产预检和部署必须重新读取同一Commit的成功Release日志；iwork输入Digest必须与
-  `ghcr.io/guchenkano/iwork`发布产物完全一致。
+  `ghcr.io/jiejiejie113/iwork11`发布产物完全一致（2026-09-21起由
+  `ghcr.io/guchenkano/iwork`迁移而来）。
 - 只校验`sha256:`格式不构成有效准入，Release日志缺失、Digest不唯一或不一致时必须
   fail-closed。
 - 新Tag首次推送后，GHCR清单可能短暂不可查询；发布Workflow只允许在`docker push`成功后

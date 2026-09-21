@@ -48,10 +48,10 @@ jobs:
           if ($env:GITHUB_EVENT_NAME -cne "workflow_dispatch") {
               throw "发布只允许workflow_dispatch触发"
           }
-          if ($env:GITHUB_REPOSITORY -cne "GuChenkano/iwork") {
+          if ($env:GITHUB_REPOSITORY -cne "jiejiejie113/iwork11") {
               throw "发布只能在受信仓库运行"
           }
-          if ($env:GITHUB_ACTOR -cne "GuChenkano") {
+          if ($env:GITHUB_ACTOR -cne "jiejiejie113") {
               throw "发布触发账号不在准入清单"
           }
           if ($env:REQUEST_ID -notmatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") {
@@ -69,10 +69,10 @@ jobs:
           if (-not $allowedBranch) {
               throw "仅允许从Keycloak分支发布"
           }
-          if ($env:GITHUB_REPOSITORY -cne "GuChenkano/iwork") {
+          if ($env:GITHUB_REPOSITORY -cne "jiejiejie113/iwork11") {
               throw "发布只能在受信仓库运行"
           }
-          if ($env:GITHUB_ACTOR -cne "GuChenkano") {
+          if ($env:GITHUB_ACTOR -cne "jiejiejie113") {
               throw "发布触发账号不在准入清单"
           }
           if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") {
@@ -150,8 +150,8 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE_NAME: ghcr.io/guchenkano/iwork
-      IMAGE_REF: ghcr.io/guchenkano/iwork:${{ github.sha }}
+      IMAGE_NAME: ghcr.io/jiejiejie113/iwork11
+      IMAGE_REF: ghcr.io/jiejiejie113/iwork11:${{ github.sha }}
       CI_REQUEST_ID: ${{ needs.verify-ci.outputs.ci_request_id }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:

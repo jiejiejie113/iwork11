@@ -218,7 +218,7 @@ def test_ci_workflow_uses_pinned_actions_and_expected_checks() -> None:
     assert "inputs.request_id || github.run_id" not in content
     assert "inputs.request_id || github.sha" not in content
     assert "IWORK_REQUEST_ID=" in content
-    assert "GITHUB_REPOSITORY -cne 'GuChenkano/iwork'" in content
+    assert "GITHUB_REPOSITORY -cne 'jiejiejie113/iwork11'" in content
     assert "GITHUB_REF -cne 'refs/heads/Keycloak'" in content
     assert "GITHUB_STEP_SUMMARY" in content
 
@@ -256,7 +256,7 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "run_url: ${{ steps.ci.outputs.run_url }}" in content
     assert "packages: write" in content
     assert "contents: read" in content
-    assert "ghcr.io/guchenkano/iwork" in lowered
+    assert "ghcr.io/jiejiejie113/iwork11" in lowered
     assert "org.opencontainers.image.revision" in content
     assert "docker buildx imagetools inspect $ImageReference --format '{{.Manifest.Digest}}'" in content
     assert "manifest unknown" in content
@@ -269,8 +269,8 @@ def test_release_workflow_publishes_image_and_immutable_config_bundle() -> None:
     assert "CI_REQUEST_ID" in content
     assert '$_.event -eq "workflow_dispatch"' in content
     assert "function Get-ExactRequestId" in content
-    assert 'GITHUB_REPOSITORY -cne "GuChenkano/iwork"' in content
-    assert 'GITHUB_ACTOR -cne "GuChenkano"' in content
+    assert 'GITHUB_REPOSITORY -cne "jiejiejie113/iwork11"' in content
+    assert 'GITHUB_ACTOR -cne "jiejiejie113"' in content
     assert "(Get-ExactRequestId -Title ([string]$_.display_title)) -ceq $env:CI_REQUEST_ID.ToLowerInvariant()" in content
     assert 'display_title).Contains($env:CI_REQUEST_ID)' not in content
     assert content.count("$startedAt = [DateTimeOffset]::UtcNow") == 1
@@ -392,7 +392,7 @@ def test_release_publish_job_keeps_permissions_and_environment_at_job_scope() ->
         "contents": "read",
         "packages": "write",
     }
-    assert publish.get("env", {}).get("IMAGE_NAME") == "ghcr.io/guchenkano/iwork"
+    assert publish.get("env", {}).get("IMAGE_NAME") == "ghcr.io/jiejiejie113/iwork11"
     assert "env" not in publish["permissions"]
 
 

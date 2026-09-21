@@ -274,7 +274,7 @@ if ($RemainingArguments.Count -ge 3 -and
         else {
             $proxyDigest
         }
-        Write-Output "ghcr.io/guchenkano/iwork@$effectiveImageDigest"
+        Write-Output "ghcr.io/jiejiejie113/iwork11@$effectiveImageDigest"
         Write-Output "IWORK_IMAGE_DIGEST=$effectiveImageDigest"
         if (-not $missingConfigDigest) {
             Write-Output "IWORK_CONFIG_DIGEST=$configDigest"
@@ -315,15 +315,15 @@ if ($RemainingArguments.Count -ge 3 -and
             }
         }
         if ($invalidImageDigests) {
-            Write-Output "ghcr.io/guchenkano/iwork@sha256:$('4' * 64)"
+            Write-Output "ghcr.io/jiejiejie113/iwork11@sha256:$('4' * 64)"
         }
         if ($invalidPortalDigests) {
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectivePortalDigest"
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectiveProxyDigest"
+            Write-Output "ghcr.io/jiejiejie113/dtd-nginx@$effectivePortalDigest"
+            Write-Output "ghcr.io/jiejiejie113/dtd-nginx@$effectiveProxyDigest"
         }
         else {
-            Write-Output "ghcr.io/guchenkano/dtd-nginx@$effectivePortalDigest"
-            Write-Output "ghcr.io/guchenkano/dtd-oauth2-proxy@$effectiveProxyDigest"
+            Write-Output "ghcr.io/jiejiejie113/dtd-nginx@$effectivePortalDigest"
+            Write-Output "ghcr.io/jiejiejie113/dtd-oauth2-proxy@$effectiveProxyDigest"
         }
         exit 0
     }

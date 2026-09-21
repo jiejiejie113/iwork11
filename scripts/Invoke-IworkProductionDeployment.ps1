@@ -72,7 +72,7 @@ $OutputEncoding = [Text.Encoding]::UTF8
 
 # ======
 # 固定部署配置
-$IMAGE_REPOSITORY = 'ghcr.io/guchenkano/iwork'
+$IMAGE_REPOSITORY = 'ghcr.io/jiejiejie113/iwork11'
 $DEPLOYMENT_LOCK_FILE = Join-Path $LockRoot 'production-deploy.lock'
 $RELEASE_CONFIG_ROOT = Join-Path $StateRoot 'release-config'
 $REQUEST_CONSUMPTION_ROOT = Join-Path $StateRoot 'request-consumption'
@@ -1403,7 +1403,7 @@ function Assert-PreflightInputs {
     if ($RUN_MIGRATIONS_ENABLED) {
         throw 'run_migrations=true已禁用：缺少机器可验证的向后兼容迁移证据。'
     }
-    if ($Actor -cne 'GuChenkano') {
+    if ($Actor -cne 'jiejiejie113') {
         throw "部署触发账号不正确：$Actor"
     }
     if ($ROLLBACK_DRILL_ENABLED -and $Mode -ne 'Deploy') {
@@ -2355,7 +2355,7 @@ function Invoke-Deploy {
             -AccessDeniedRetrySeconds 30
         $coordinationLock = Enter-ProductionCoordinationLock `
             -LockRoot $LockRoot `
-            -Repository 'GuChenkano/iwork' `
+            -Repository 'jiejiejie113/iwork11' `
             -Service 'iwork' `
             -RunId $RunId `
             -Actor $Actor `

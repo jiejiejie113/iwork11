@@ -28,7 +28,7 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
     lowered = content.lower()
 
     assert "workflow_dispatch:" in content
-    assert "github.actor == 'GuChenkano'" in content
+    assert "github.actor == 'jiejiejie113'" in content
     assert "github.ref == 'refs/heads/Keycloak'" in content
     assert "self-hosted" in content
     assert "dkt-prod" in content
@@ -50,7 +50,7 @@ def test_iwork_runner_smoke_workflow_is_manual_and_read_only() -> None:
     assert "[debug-ghcr-auth]" not in lowered
     assert "诊断github与ghcr短期令牌授权边界" not in lowered
     assert (
-        "ghcr.io/guchenkano/iwork@sha256:"
+        "ghcr.io/jiejiejie113/iwork11@sha256:"
         "2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c"
         in lowered
     )

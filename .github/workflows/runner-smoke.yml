@@ -14,7 +14,7 @@ jobs:
   validate:
     name: 验证iwork Runner与GHCR只读拉取
     if: >-
-      github.actor == 'GuChenkano' &&
+      github.actor == 'jiejiejie113' &&
       github.ref == 'refs/heads/Keycloak'
     runs-on:
       - self-hosted
@@ -27,7 +27,7 @@ jobs:
     permissions:
       packages: read
     env:
-      IMAGE_REF: ghcr.io/guchenkano/iwork@sha256:2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c
+      IMAGE_REF: ghcr.io/jiejiejie113/iwork11@sha256:2d636c8e09f11667039e3322c6422bea870ebd577dfa1e6686c36b157009390c
       EXPECTED_REVISION: 51c1911e867c7183eef45b66b7fa6bc35ee8d676
     steps:
       - name: 验证执行身份、独立工作目录与Docker

@@ -1,7 +1,7 @@
 # iwork CI/CD 最后冲刺实施方案
 
 > 制定日期：2026-08-28
-> 适用仓库：`GuChenkano/iwork`
+> 适用仓库：`GuChenkano/iwork`（历史；2026-09-21 起绑定迁移至 `jiejiejie113/iwork11`，见总方案第15节）
 > 本地分支：`Keycloak`
 > 变更前生产基线：`4cb8e31188a0022ea5441e1e10490adc4cc8ad8a`
 > 原始实现提交：`774283a5ac293c9209a09f07e721b8880a9b3098`

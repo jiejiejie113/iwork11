@@ -222,7 +222,7 @@ $ciJson = $ciResult.Output | ConvertFrom-Json
 Assert-True -Condition ($ciJson.Status -eq 'queued') -Message '新 CI queued 不得误报成功'
 $ciLog = Get-Content -LiteralPath (Join-Path $ciResult.StateDirectory 'arguments.log') -Raw
 Assert-True -Condition ($ciLog.Contains('workflow') -and $ciLog.Contains('ci.yml')) -Message 'CI 应路由到 ci.yml'
-Assert-True -Condition ($ciLog.Contains('GuChenkano/iwork') -and $ciLog.Contains('Keycloak')) -Message 'CI 应固定仓库和分支'
+Assert-True -Condition ($ciLog.Contains('jiejiejie113/iwork11') -and $ciLog.Contains('Keycloak')) -Message 'CI 应固定仓库和分支'
 Remove-TestStateDirectory -Path $ciResult.StateDirectory
 
 $releaseResult = Invoke-SkillProcess -Arguments @(

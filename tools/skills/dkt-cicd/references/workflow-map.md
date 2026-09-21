@@ -4,8 +4,8 @@
 
 | 服务 | GitHub 仓库 | 固定分支 | CI | GHCR 发布 | 生产部署 | 生产环境 |
 |---|---|---|---|---|---|---|
-| iwork | `GuChenkano/iwork` | `Keycloak` | `ci.yml` | `release.yml` | `deploy-iwork.yml` | `production-iwork` |
-| Portal | `GuChenkano/DTD_nginx` | `feature/keycloak-migration` | `ci.yml` | `release.yml` | `deploy-portal.yml` | `production-portal` |
+| iwork | `jiejiejie113/iwork11` | `Keycloak` | `ci.yml` | `release.yml` | `deploy-iwork.yml` | `production-iwork` |
+| Portal | `jiejiejie113/DTD_nginx` | `feature/keycloak-migration` | `ci.yml` | `release.yml` | `deploy-portal.yml` | `production-portal` |
 
 仓库、分支和 Workflow 必须使用上表固定值，不接受用户提供的替代仓库或任意 Workflow
 路径。若需要调整映射，应先修改和审查 Skill，而不是在单次调用中绕过。

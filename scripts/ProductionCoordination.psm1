@@ -276,8 +276,8 @@ function Archive-StaleCoordinationLock {
         throw "不支持的生产部署锁Schema：$($fields['schema'])"
     }
     $allowedOwners = @{
-        'GuChenkano/DTD_nginx' = 'portal'
-        'GuChenkano/iwork' = 'iwork'
+        'jiejiejie113/DTD_nginx' = 'portal'
+        'jiejiejie113/iwork11' = 'iwork'
     }
     if (
         -not $allowedOwners.ContainsKey([string]$fields['repository']) -or

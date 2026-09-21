@@ -33,7 +33,7 @@ jobs:
         env:
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
-          if ($env:GITHUB_REPOSITORY -cne 'GuChenkano/iwork') {
+          if ($env:GITHUB_REPOSITORY -cne 'jiejiejie113/iwork11') {
               throw 'CI只能在受信仓库运行。'
           }
           if ($env:GITHUB_REF -cne 'refs/heads/Keycloak') {

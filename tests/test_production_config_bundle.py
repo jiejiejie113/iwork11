@@ -93,7 +93,7 @@ def test_generator_creates_verifiable_minimal_bundle(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     output_directory = tmp_path / "bundle"
     (source_root / "env").mkdir(parents=True)
-    compose = "services:\n  iwork:\n    image: ghcr.io/guchenkano/iwork@" + IMAGE_DIGEST + "\n"
+    compose = "services:\n  iwork:\n    image: ghcr.io/jiejiejie113/iwork11@" + IMAGE_DIGEST + "\n"
     production_env = "DKT_ENVIRONMENT=production\nDJANGO_DEBUG=False\n"
     (source_root / "docker-compose.yml").write_text(compose, encoding="utf-8", newline="")
     (source_root / "env" / "production.env").write_text(

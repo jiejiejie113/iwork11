@@ -4,10 +4,13 @@
 
 本文档是iwork与DITU Portal持续集成、镜像发布、生产部署、回滚和Codex自动编排的唯一长期实施基线。
 
-适用仓库：
+适用仓库（2026-09-21 绑定迁移后）：
 
-- `GuChenkano/iwork`，开发与部署分支为`Keycloak`。
-- `GuChenkano/DTD_nginx`，开发与部署分支为`feature/keycloak-migration`。
+- `jiejiejie113/iwork11`，开发与部署分支为`Keycloak`。
+- `jiejiejie113/DTD_nginx`，开发与部署分支为`feature/keycloak-migration`。
+
+> 历史绑定`GuChenkano/iwork`与`GuChenkano/DTD_nginx`自2026-09-21起停用；
+> 迁移依据、变更清单和待办见第15节。既有Run链接、提交号和Digest保持原文，不回改。
 
 适用生产服务器：
 
@@ -1497,3 +1500,56 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
 再在独立的DTD_nginx机制提交中提交并安装与上述看门狗清单字节一致的受信文件，提供六项探针收据生产者和签名/来源证明；
 全部证据完成后才可按“提交→CI→Release→生产准入更新→apply=false预检→新确认→apply=true”顺序推进。
 任一P1证据缺失立即停止并回写本总方案。
+
+## 15. 2026-09-21 仓库绑定迁移（GuChenkano → jiejiejie113）
+
+### 15.1 决策
+
+- 用户决定保留受控发布机制，只更换仓库归属：production链路从`GuChenkano/iwork`迁移到
+  `jiejiejie113/iwork11`，分支名继续使用`Keycloak`。
+- 迁移原因：本地业务线（`local-sync-b7b7b76`，含今日目标四/五状态与分时分析同步）与
+  `GuChenkano/iwork`的CI/CD机制线历史分叉，直接合并成本高；而本地HEAD是
+  `jiejiejie113/iwork11`的`Keycloak`分支的快进后继（0 behind / 43 ahead），无需合并。
+- 新绑定值：
+  - iwork仓库`jiejiejie113/iwork11`、分支`Keycloak`、actor`jiejiejie113`；
+  - 镜像`ghcr.io/jiejiejie113/iwork11`；
+  - Portal仓库`jiejiejie113/DTD_nginx`（用户确认，GitHub侧需先创建）；
+  - 跨仓库协调对端`jiejiejie113/DTD_nginx`。
+
+### 15.2 变更清单（本仓库）
+
+- `.github/workflows/ci.yml`：CI仓库守卫。
+- `.github/workflows/release.yml`：仓库/actor守卫、`IMAGE_NAME`/`IMAGE_REF`。
+- `.github/workflows/deploy-iwork.yml`：仓库/actor守卫、候选镜像名、跨仓库协调`repository`。
+- `.github/workflows/runner-smoke.yml`：actor守卫与固定镜像名。
+- `scripts/Install-GitHubProductionRunner.ps1`：`ROLE_CONFIG`仓库/WorkflowRef、`expectedActor`。
+- `scripts/Install-IworkProductionDeployment.ps1`：`EXPECTED_REPOSITORY`/`EXPECTED_ACTOR`/
+  `CROSS_REPOSITORY`/Workflow名称映射。
+- `scripts/Invoke-IworkProductionDeployment.ps1`：镜像仓库、actor守卫、探针`-Repository`。
+- `scripts/ProductionCoordination.psm1`：合法锁Owner映射。
+- `tests/test_ci_workflow.py`、`tests/test_production_config_bundle.py`、
+  `tests/test_production_deployment_stage4.py`、`tests/test_production_runner_stage3.py`：
+  同步断言。
+- `tools/skills/dkt-cicd/**`：工作流映射、Digest正则、夹具与断言；修改后必须运行
+  `scripts/Install-DktCicdSkill.ps1`并复核SHA-256。
+
+### 15.3 服务器与外部待办（未完成前不得切换生产）
+
+1. 在GitHub创建`jiejiejie113/DTD_nginx`并完成Portal侧同等绑定迁移。
+2. 确认`jiejiejie113`对`ghcr.io/jiejiejie113/iwork11`具备包写权限与Runner注册权限。
+3. 新Windows Server：按`Install-GitHubProductionRunner.ps1 -RunnerRole iwork`安装Runner；
+   Portal同理；身份校验默认`DONGMING\shuju`，如新服务器账号不同需显式传入。
+4. 重装生产准入策略：`Install-IworkProductionDeployment.ps1 -ApprovedHeadSha <批准的40位SHA>`，
+   更新仓库/actor/Workflow/SHA-256绑定（机制变更必须重装，旧策略不得继续使用）。
+5. 数据卷、MySQL/Redis/Keycloak/Portal所在Docker主机必须与iwork同机或同网络
+   （`docker_dkt-net`不能跨主机）。
+6. 新仓库首次CI→Release成功后，刷新`runner-smoke.yml`的`IMAGE_REF`Digest与
+   `EXPECTED_REVISION`（当前值为旧仓库历史镜像，新包尚未存在）。
+7. 服务器中央密钥仍为`D:\DM\dkt-secrets.env`，不得进入仓库或镜像。
+
+### 15.4 状态
+
+- 本仓库绑定代码变更：已完成并纳入本地提交（见本轮`[CHORE] CI/CD绑定迁移`提交）。
+- 服务器重装、Portal仓库创建、新仓库首次CI/Release/预检/切换：待执行。
+- 在15.3全部完成前，生产不得声称已完成迁移验收；本文档第8节Stage 8观察结论保持
+  “进行中”，不因仓库迁移自动关闭。

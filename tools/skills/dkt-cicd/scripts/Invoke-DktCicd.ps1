@@ -62,7 +62,7 @@ if ($RunMigrations) {
 # 固定仓库与 Workflow 路由
 $SERVICE_CONFIG = @{
     iwork = [ordered]@{
-        Repository = 'GuChenkano/iwork'
+        Repository = 'jiejiejie113/iwork11'
         Branch = 'Keycloak'
         CiWorkflow = 'ci.yml'
         ReleaseWorkflow = 'release.yml'
@@ -71,7 +71,7 @@ $SERVICE_CONFIG = @{
         Environment = 'production-iwork'
     }
     portal = [ordered]@{
-        Repository = 'GuChenkano/DTD_nginx'
+        Repository = 'jiejiejie113/DTD_nginx'
         Branch = 'feature/keycloak-migration'
         CiWorkflow = 'ci.yml'
         ReleaseWorkflow = 'release.yml'
@@ -725,7 +725,7 @@ function Get-RunEvidence {
     if ($ServiceName -eq 'iwork') {
         $matches = [regex]::Matches(
             $logResult.Output,
-            '(?im)(?:^IWORK_IMAGE_DIGEST\s*=\s*|ghcr\.io/guchenkano/iwork@)(?<digest>sha256:[0-9a-f]{64})'
+            '(?im)(?:^IWORK_IMAGE_DIGEST\s*=\s*|ghcr\.io/jiejiejie113/iwork11@)(?<digest>sha256:[0-9a-f]{64})'
         )
         $digests = @($matches | ForEach-Object { $_.Groups['digest'].Value } | Select-Object -Unique)
         if ($digests.Count -ne 1) {
@@ -841,7 +841,7 @@ function Get-RunEvidence {
 
     $portalMatches = [regex]::Matches(
         $logResult.Output,
-        'ghcr\.io/guchenkano/(?<image>dtd-nginx|dtd-oauth2-proxy)@(?<digest>sha256:[0-9a-f]{64})'
+        'ghcr\.io/jiejiejie113/(?<image>dtd-nginx|dtd-oauth2-proxy)@(?<digest>sha256:[0-9a-f]{64})'
     )
     $digestsByImage = @{}
     foreach ($imageName in @('dtd-nginx', 'dtd-oauth2-proxy')) {

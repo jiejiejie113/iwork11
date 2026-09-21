@@ -27,10 +27,10 @@ $OutputEncoding = [Text.Encoding]::UTF8
 $TARGET_DEPLOY_SCRIPT = Join-Path $ToolRoot 'Invoke-IworkProductionDeployment.ps1'
 $TARGET_COORDINATION_MODULE = Join-Path $ToolRoot 'ProductionCoordination.psm1'
 $TARGET_HOOK = Join-Path $PolicyRoot 'iwork-job-started.ps1'
-$EXPECTED_REPOSITORY = 'GuChenkano/iwork'
+$EXPECTED_REPOSITORY = 'jiejiejie113/iwork11'
 $EXPECTED_REF = 'refs/heads/Keycloak'
-$EXPECTED_ACTOR = 'GuChenkano'
-$CROSS_REPOSITORY = 'GuChenkano/DTD_nginx'
+$EXPECTED_ACTOR = 'jiejiejie113'
+$CROSS_REPOSITORY = 'jiejiejie113/DTD_nginx'
 
 function Assert-Administrator {
     $principal = [Security.Principal.WindowsPrincipal]::new(
@@ -144,8 +144,8 @@ $deployScriptSha256 = '__DEPLOY_SCRIPT_SHA256__'
 $coordinationModulePath = '__COORDINATION_MODULE_PATH__'
 $coordinationModuleSha256 = '__COORDINATION_MODULE_SHA256__'
 $allowedWorkflowRefs = @{
-    'iwork production runner smoke' = 'GuChenkano/iwork/.github/workflows/runner-smoke.yml@refs/heads/Keycloak'
-    'iwork controlled production deployment' = 'GuChenkano/iwork/.github/workflows/deploy-iwork.yml@refs/heads/Keycloak'
+    'iwork production runner smoke' = 'jiejiejie113/iwork11/.github/workflows/runner-smoke.yml@refs/heads/Keycloak'
+    'iwork controlled production deployment' = 'jiejiejie113/iwork11/.github/workflows/deploy-iwork.yml@refs/heads/Keycloak'
 }
 
 if ($env:GITHUB_EVENT_NAME -ne $expectedEvent) {

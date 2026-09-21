@@ -146,9 +146,9 @@ jobs:
       WATCHDOG_TASK_PATH: \
       EXTERNAL_PROBE_RECEIPT_PATH: D:\DM\cicd-state\iwork\external-probe-receipt.json
       DEPLOY_SCRIPT_PATH: D:\DM\cicd-tools\iwork\Invoke-IworkProductionDeployment.ps1
-      DEPLOY_SCRIPT_SHA256: c5a058a1e3243ab7fd2c68c00448c0d1976b060e5a035a4195171a89189185fb
+      DEPLOY_SCRIPT_SHA256: 25ab6cb57702de33fc6854893114394b9c331ce1b9ad5ee4f679687aaa1d6a0f
       DEPLOY_COORDINATION_MODULE_PATH: D:\DM\cicd-tools\iwork\ProductionCoordination.psm1
-      DEPLOY_COORDINATION_MODULE_SHA256: 0f2e7346e32bcc3dd59195b607c0ade58d11e3ee264d16292e8e669a7f614bc7
+      DEPLOY_COORDINATION_MODULE_SHA256: 58858b23e7cd1881306e95e41f8dcfb7dc3e0990479c2e9e23c9e9e4e974f1ca
       IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID: ${{ vars.IWORK_RELEASE_MANIFEST_SIGNING_KEY_ID }}
       IWORK_RELEASE_MANIFEST_VERIFY_CERT_B64: ${{ secrets.IWORK_RELEASE_MANIFEST_VERIFY_CERT_B64 }}
     steps:
@@ -157,8 +157,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Production deploy must use workflow_dispatch.' }
-          if ($env:GITHUB_REPOSITORY -cne 'GuChenkano/iwork') { throw 'Production deploy repository is not approved.' }
-          if ($env:GITHUB_ACTOR -cne 'GuChenkano') { throw 'Production deploy actor is not approved.' }
+          if ($env:GITHUB_REPOSITORY -cne 'jiejiejie113/iwork11') { throw 'Production deploy repository is not approved.' }
+          if ($env:GITHUB_ACTOR -cne 'jiejiejie113') { throw 'Production deploy actor is not approved.' }
           if ($env:GITHUB_REF -cne 'refs/heads/Keycloak') { throw 'Production deploy ref is not approved.' }
           if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') { throw 'Invalid OCI revision format.' }
           if ($env:RUN_MIGRATIONS -eq 'true') { throw 'run_migrations=true is disabled until a machine-verifiable backward-compatible migration proof exists.' }
@@ -200,7 +200,7 @@ jobs:
           if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') {
               throw 'Production deploy must use workflow_dispatch.'
           }
-          if ($env:GITHUB_ACTOR -cne 'GuChenkano') {
+          if ($env:GITHUB_ACTOR -cne 'jiejiejie113') {
               throw 'Production deploy actor is not approved.'
           }
           if ($env:EXPECTED_REVISION -notmatch '^[0-9a-f]{40}$') {
@@ -418,7 +418,7 @@ jobs:
               }
               $manifestChecks = @{
                   schema = 'iwork-release/v1'
-                  repository = 'GuChenkano/iwork'
+                  repository = 'jiejiejie113/iwork11'
                   branch = 'Keycloak'
                   commit = $env:EXPECTED_REVISION
                   release_run_id = [long]$env:RELEASE_RUN_ID
@@ -547,7 +547,7 @@ jobs:
               throw "Pinned coordination module SHA-256 mismatch: $actualModuleHash"
           }
 
-          $candidateImage = "ghcr.io/guchenkano/iwork@$env:IMAGE_DIGEST"
+          $candidateImage = "ghcr.io/jiejiejie113/iwork11@$env:IMAGE_DIGEST"
           $deploymentRunId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           function Assert-NoReparsePath {
               param([Parameter(Mandatory = $true)][string]$Path)
