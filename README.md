@@ -124,12 +124,16 @@ iwork/
 | 别名 | 用途 | 权限 |
 |------|------|------|
 | `default` | Django 系统库 (localhost) | 读写 |
-| `iwork` | 业务生产库 (192.168.4.19) | 只读 |
+| `iwork` | 业务生产库 (192.168.7.22) | 只读（仅 Celery / 管理命令） |
 | `iwork_local` | 本地业务副本 (localhost) | 读写 |
 
 核心表：`payroll.pytckreg3`（生产流水线打卡记录）
 
 `Pywrkstp` 使用 Django 5.2 `CompositePrimaryKey('WrkOrder', 'StepNo')` 映射远程联合主键，不假设数据库存在 `id` 列。
+
+数据流概览：远程 `pytckreg3` 为唯一产量源头——实时链路经 Celery 每 60 秒采集发布 Redis 版本化快照（Web 读 Redis）；历史链路经快照构建管线原子写入 `iwork_local`（按需 ensure / 每日 03:00 重建近 3 天 / 命令批量回填）；工单字典由人工传输 SQLite 导入 `production_orders`（产品名称/生产单号唯一来源）。Web 进程永不直连远程库。
+
+详见 [`docs/database-architecture.md`](docs/database-architecture.md)。
 
 ## 快速开始
 
