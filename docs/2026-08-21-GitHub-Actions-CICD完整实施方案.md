@@ -1594,4 +1594,11 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
   清单哈希一致与运行文件存在。
 - 离线包解压后执行`docker compose --env-file env/production.env --env-file <密钥> config --quiet`
   返回0，证明包内Compose与profile自洽。
-- 本通道首次在目标服务器运行的验收证据必须在执行后回写本小节。
+- 2026-09-21本机端到端实测：`dist/iwork-offline-20260921-103625.zip`（270文件，
+  `sha256:af9a031e75205da13f561b002941c8952c689ae9744404090983efbccfea66b4`）解压到
+  独立目录后执行`deploy.ps1 -Environment local -SecretsFile <密钥>`，成功构建
+  `iwork-iwork`镜像、重建`DKT_iwork`并保持`healthy`；容器内HTTP 200，
+  `api/account/today-targets/`返回200且`analysis.status=available`。
+- `deploy.ps1`固定`--project-name iwork`：任意解压目录都能接管同一组容器，
+  避免离线目录更换后出现“容器名已被占用”冲突。
+- 本通道在目标服务器首次运行的验收证据仍需在执行后回写本小节。

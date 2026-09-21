@@ -47,6 +47,7 @@ def test_deploy_script_loads_profile_and_central_secrets():
     content = (ROOT / 'deploy.ps1').read_text(encoding='utf-8')
     assert "'--env-file', $Profile" in content
     assert "'--env-file', $SecretsFile" in content
+    assert "'--project-name', 'iwork'" in content
     assert 'down -v' not in content.lower()
 
 

@@ -29,10 +29,15 @@ GHCR 受控发布。用户已明确要求并把该通道的风险接受交由运
 
 - 新增 `tests/test_offline_bundle.py` 3 项测试：必需文件缺失失败关闭、敏感项排除、
   清单哈希与运行文件校验，全部通过。
-- 实测产物：`dist/iwork-offline-20260921-103038.zip`（269 文件，
-  `sha256:7150754b445ccd7a64aa03fd591ef82178701c92d640b5901a3661fc1488a67d`）。
+- 实测产物：`dist/iwork-offline-20260921-103625.zip`（270 文件，
+  `sha256:af9a031e75205da13f561b002941c8952c689ae9744404090983efbccfea66b4`）。
 - 离线包解压后 `docker compose --env-file env/production.env --env-file <密钥> config --quiet`
   返回 0。
+- 端到端实测（本机）：解压到独立目录后运行 `deploy.ps1 -Environment local -SecretsFile <密钥>`，
+  成功构建 `iwork-iwork` 镜像、重建 `DKT_iwork` 并 `healthy`；容器内 HTTP 200，
+  今日目标接口 200 且 `analysis.status=available`。
+- `deploy.ps1` 固定 `--project-name iwork`，任意解压目录可接管同一组容器，
+  不会因目录变化出现容器名冲突。
 
 ## 风险边界
 

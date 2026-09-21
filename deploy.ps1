@@ -35,6 +35,8 @@ if (-not (Test-Path -LiteralPath $SecretsFile)) {
 
 $composeArguments = @(
     'compose',
+    # 固定Compose项目名，保证任意解压目录/工作区都能接管同一组容器。
+    '--project-name', 'iwork',
     '--env-file', $Profile,
     '--env-file', $SecretsFile,
     'up', '-d'
