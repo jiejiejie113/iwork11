@@ -39,6 +39,7 @@
 
 - GitHub Actions、GHCR、生产Self-hosted Runner、自动部署、回滚或`dkt-cicd` Skill相关开发，必须以`docs/2026-08-21-GitHub-Actions-CICD完整实施方案.md`为唯一进度基线。
 - 生产受控链路当前绑定：仓库`jiejiejie113/iwork11`、分支`Keycloak`、actor`jiejiejie113`、镜像`ghcr.io/jiejiejie113/iwork11`、Portal跨仓库协调`jiejiejie113/DTD_nginx`（2026-09-21自`GuChenkano`迁移，依据见总方案第15节）。
+- 离线运行通道（用户明确要求、不依赖Git）：`scripts/New-IworkOfflineBundle.ps1`生成`dist/iwork-offline-<时间戳>.zip`，目标机解压后用`deploy.ps1 -Environment production`运行；该通道绕过受控发布的Digest/预检/回滚/准入，风险边界与验收证据由总方案第16节维护，修改该通道必须同步更新第16节。
 - 每完成一个实施阶段，Agent必须在同一阶段提交中同步更新该文档，至少记录：阶段状态、完成日期、实际提交、Actions运行链接、测试与验收证据、发现的问题、方案偏差及下一阶段入口。
 - 阶段只在全部验收条件有实际证据时标记为“已完成”；部分完成必须逐项列出未完成内容，禁止仅因代码已提交而标记完成。
 - 发生阻断、回滚或设计调整时也必须更新该文档，不得让代码状态与方案进度脱节。

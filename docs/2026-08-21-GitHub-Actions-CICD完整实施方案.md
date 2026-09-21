@@ -1554,3 +1554,44 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
 - 服务器重装、Portal仓库创建、新仓库首次CI/Release/预检/切换：待执行。
 - 在15.3全部完成前，生产不得声称已完成迁移验收；本文档第8节Stage 8观察结论保持
   “进行中”，不因仓库迁移自动关闭。
+
+## 16. 2026-09-21 离线运行通道（不依赖Git）
+
+### 16.1 用户决策与适用范围
+
+- 用户明确要求：新Windows Server上以“本地文件直接运行”为目标，**不依赖Git**、
+  不经过GitHub Actions与GHCR受控发布。
+- 该通道用于代码与配置随介质拷贝、目标机离线或半离线构建运行的场景；不改变第15节
+  已完成的仓库绑定，也不代表受控发布链路被替代。
+- 风险与偏差：该通道绕过不可变镜像Digest、预检、自动回滚、准入与审计收据；
+  使用前需由用户在运维层面接受并记录（本小节即为记录）。
+
+### 16.2 交付物
+
+- `scripts/New-IworkOfflineBundle.ps1`：从当前工作树生成离线运行包
+  `dist/iwork-offline-<时间戳>.zip`，并生成`MANIFEST.sha256`逐文件清单与整包SHA-256。
+  - 必需文件缺失、打包后安全扫描命中禁止项（`.git`、密钥、数据库文件、
+    `iwork/.env`、`local_dev_settings.py`等）时失败关闭，不产出包。
+  - 自动排除虚拟环境、缓存、日志、`dist`、`.github`、敏感文件；
+    运行期挂载目录`logs/`、`sqlite/`保留占位文件。
+- 目标机运行入口沿用`deploy.ps1`（仅依赖Docker Compose、环境profile与中央密钥，
+  不读取Git）：`deploy.ps1 -Environment production`。
+
+### 16.3 目标机运行步骤
+
+1. 解压离线包到目标目录（如`D:\DM\iwork-offline`），保持目录结构。
+2. 放置中央密钥`D:\DM\dkt-secrets.env`并限制权限。
+3. 首次初始化需要迁移时设置`$env:IWORK_RUN_MIGRATIONS='true'`（Compose默认`false`）。
+4. 确认基础设施：`docker_dkt-net`存在，`mysql`、`iwork-redis`与
+   `DKT_kc_nginx`（如经Portal入口访问）可用，远程`payroll`库网络可达。
+5. 执行`.\deploy.ps1 -Environment production`；脚本构建镜像、启动`DKT_iwork`、
+   在`DKT_kc_nginx`存在时`nginx -t`并reload，最后校验容器内部HTTP 200。
+6. 校验`MANIFEST.sha256`与整包SHA-256，确保拷贝介质完整。
+
+### 16.4 验证证据
+
+- `tests/test_offline_bundle.py`：覆盖必需文件缺失失败关闭、敏感项排除、
+  清单哈希一致与运行文件存在。
+- 离线包解压后执行`docker compose --env-file env/production.env --env-file <密钥> config --quiet`
+  返回0，证明包内Compose与profile自洽。
+- 本通道首次在目标服务器运行的验收证据必须在执行后回写本小节。
