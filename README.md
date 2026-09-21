@@ -98,7 +98,7 @@ iwork/
 │   ├── 部署文档/                       # Docker部署、Portal集成、迁移手册
 │   ├── changelogs/                     # 变更日志（7篇）
 │   ├── superpowers/                    # 设计规范 specs/ + 实施计划 plans/
-│   └── architecture_flowchart.html     # Mermaid 架构流程图
+│   └── PCI-architecture_flowchart.html     # Mermaid 架构流程图
 ├── env/                                # 可提交的非敏感环境 profile
 │   ├── local.env
 │   └── production.env
@@ -248,14 +248,14 @@ TYPE: FEAT / FIX / DOCS / REFACTOR / TEST / PERF / STYLE / CHORE
 ## 文档
 
 - [架构决策记录](docs/adr/)（6篇）
-- [架构流程图](docs/architecture_flowchart.html)（Mermaid 可视化，浏览器打开）
-- [开发规范手册](docs/开发文档/iwork规范手册.md)
-- [数据流通与模块职责](docs/开发文档/数据流通与模块职责.md)
-- [应用数据结构总览](docs/开发文档/iwork（车间工效看板）应用数据结构.md)
-- [API 接口文档](docs/开发文档/API接口文档.md)
-- [前后端字段同步规则](docs/开发文档/前后端字段同步规则.md)
-- [SSE 迁移数据流设计](docs/开发文档/SSE迁移数据流设计.md)
-- [Docker 部署指南](docs/部署文档/docker-deployment.md)
-- [Portal 集成文档](docs/部署文档/portal-integration.md)
-- [迁移操作手册](docs/部署文档/迁移操作手册.md)
+- [架构流程图](docs/PCI-architecture_flowchart.html)（Mermaid 可视化，浏览器打开）
+- [开发规范手册](docs/开发文档/PCI-iwork规范手册.md)
+- [数据流通与模块职责](docs/开发文档/PCI-数据流通与模块职责.md)
+- [应用数据结构总览](docs/开发文档/PCI-iwork（车间工效看板）应用数据结构.md)
+- [API 接口文档](docs/开发文档/PCI-API接口文档.md)
+- [前后端字段同步规则](docs/开发文档/PCI-前后端字段同步规则.md)
+- [SSE 迁移数据流设计](docs/开发文档/PCI-SSE迁移数据流设计.md)
+- [Docker 部署指南](docs/部署文档/PCI-docker-deployment.md)
+- [Portal 集成文档](docs/部署文档/PCI-portal-integration.md)
+- [迁移操作手册](docs/部署文档/PCI-迁移操作手册.md)
 - [变更日志](docs/changelogs/CHANGELOG.md)

@@ -154,4 +154,4 @@ def test_offline_bundle_fails_closed_when_required_runtime_files_are_missing(
     result = _run_bundler(incomplete_root, tmp_path / "dist")
 
     assert result.returncode != 0
-    assert not list((tmp_path / "dist").glob("iwork-offline-*.zip"))
+    assert not list((tmp_path / "dist").glob("PCI-iwork-offline-*.zip"))

@@ -8,7 +8,7 @@ GHCR 受控发布。用户已明确要求并把该通道的风险接受交由运
 ## 交付物
 
 - `scripts/New-IworkOfflineBundle.ps1`
-  - 从当前工作树生成 `dist/iwork-offline-<时间戳>.zip` 与 `MANIFEST.sha256`。
+  - 从当前工作树生成 `dist/PCI-iwork-offline-<时间戳>.zip` 与 `MANIFEST.sha256`。
   - 失败关闭：运行必需文件缺失、安全扫描命中禁止项时不产出包。
   - 排除：`.git`、虚拟环境、缓存、日志、`dist`、`.github`、`.env`、
     `local_dev_settings.py`、`dkt-secrets.env`、`*.pem/*.key/*.db/*.sqlite` 等。
@@ -29,8 +29,8 @@ GHCR 受控发布。用户已明确要求并把该通道的风险接受交由运
 
 - 新增 `tests/test_offline_bundle.py` 3 项测试：必需文件缺失失败关闭、敏感项排除、
   清单哈希与运行文件校验（含清单路径正斜杠与逐文件哈希比对），全部通过。
-- 实测产物：`dist/iwork-offline-20260921-105734.zip`（270 文件，
-  `sha256:19496f7c433588b7fffff42e02ac911796c55225ec256ea7f6d95a0bb3b24c4e`）；
+- 实测产物：`dist/PCI-iwork-offline-20260921-112742.zip`（270 文件，
+  `sha256:48b550bed5c3fbdae4d3a69d5d30f4e39a7fcef47374aa81d73666766826cca2`）；
   独立校验：清单 270 项全部命中压缩包条目且哈希一致，无缺失、无多余。
 - 离线包解压后 `docker compose --env-file env/production.env --env-file <密钥> config --quiet`
   返回 0。

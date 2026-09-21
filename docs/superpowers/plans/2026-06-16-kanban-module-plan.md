@@ -1741,7 +1741,7 @@ cd C:/Users/lipengfei/ZCodeProject/iwork && chcp 65001 && python manage.py show_
 
 - [ ] **Step 4: 更新规范手册**
 
-在 `docs/开发文档/iwork规范手册.md` 追加产量看板模块相关条目：
+在 `docs/开发文档/PCI-iwork规范手册.md` 追加产量看板模块相关条目：
 
 ```markdown
 ### 产量看板模块
@@ -1758,7 +1758,7 @@ cd C:/Users/lipengfei/ZCodeProject/iwork && chcp 65001 && python manage.py show_
 - [ ] **Step 5: 最终提交**
 
 ```bash
-git add docs/开发文档/iwork规范手册.md
+git add docs/开发文档/PCI-iwork规范手册.md
 git commit -m "[2026-06-16][DOCS] 更新规范手册，记录产量看板模块"
 ```
 

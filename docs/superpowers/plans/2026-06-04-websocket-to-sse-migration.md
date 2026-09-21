@@ -8,7 +8,7 @@
 
 **Tech Stack:** Django StreamingHttpResponse、EventSource API、Redis（Django cache 同步连接）
 
-**设计文档:** `docs/开发文档/SSE迁移数据流设计.md`
+**设计文档:** `docs/开发文档/PCI-SSE迁移数据流设计.md`
 
 ---
 

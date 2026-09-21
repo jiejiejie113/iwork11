@@ -117,7 +117,7 @@ api_views_local.py  ← 本地历史读取 + 缺失快照异步入队 API
 
 ## 开发规范手册
 
-**每次修改必须更新** `docs/开发文档/iwork规范手册.md`。该手册是项目的活文档，包含：
+**每次修改必须更新** `docs/开发文档/PCI-iwork规范手册.md`。该手册是项目的活文档，包含：
 
 - 架构概览与数据流
 - 业务配置管理（ALLOWED_FLOWS / HIDDEN_FLOWS / VISIBLE_FLOWS）

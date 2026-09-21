@@ -293,8 +293,8 @@ TTL 到当晚 24:00（与实时缓存同步过期）。每个 Flow 一条记录�
 | `iwork/urls.py`                                | 新增 3 条路由    | 页面路由                                                            |
 | `iwork/templates/iwork/production_detail.html` | **新文件** | 独立模板                                                            |
 | `iwork/templates/iwork/dashboard.html`         | 修改导航栏       | 新增"生产详情"菜单项                                                |
-| `docs/开发文档/API接口文档.md`                 | 更新             | 新增 3 个端点 + Celery 扩展                                         |
-| `docs/开发文档/数据流通与模块职责.md`          | 更新             | 新增详情模块描述 + 数据流路径 D                                     |
+| `docs/开发文档/PCI-API接口文档.md`                 | 更新             | 新增 3 个端点 + Celery 扩展                                         |
+| `docs/开发文档/PCI-数据流通与模块职责.md`          | 更新             | 新增详情模块描述 + 数据流路径 D                                     |
 | `tests/test_queries.py`                        | 新增用例         | 5 个新 Batch 查询函数测试                                           |
 | `tests/test_statistics.py`                     | 新增用例         | get_batch_detail_stats 测试                                         |
 | `tests/test_api_views.py`                      | 新增用例         | 3 个新端点测试                                                      |

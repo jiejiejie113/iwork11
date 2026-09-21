@@ -62,5 +62,5 @@ docker compose --env-file .\env\production.env `
 ## 关联
 
 - DTD_nginx ADR 0013：中央密钥文件
-- `docs/部署文档/docker-deployment.md`
-- `docs/部署文档/迁移操作手册.md`
+- `docs/部署文档/PCI-docker-deployment.md`
+- `docs/部署文档/PCI-迁移操作手册.md`

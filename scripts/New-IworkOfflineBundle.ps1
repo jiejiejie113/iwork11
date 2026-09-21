@@ -186,7 +186,7 @@ try {
     Assert-StagingSafe -RootPath $stagingPath
 
     $timestamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss')
-    $zipName = "iwork-offline-$timestamp.zip"
+    $zipName = "PCI-iwork-offline-$timestamp.zip"
     $zipPath = Join-Path $OutputDirectory $zipName
     if (Test-Path -LiteralPath $zipPath) {
         throw "目标离线包已存在，拒绝覆盖：$zipPath"

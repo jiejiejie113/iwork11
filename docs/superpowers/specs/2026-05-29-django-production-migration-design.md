@@ -373,8 +373,8 @@ docker compose logs --tail=100
 | 5 | `restart_services.ps1` | 新建 | 重启所有服务 |
 | 6 | `uninstall_services.ps1` | 新建 | 卸载 Windows 服务 |
 | 7 | `iwork.conf` | 新建 | Nginx 反向代理配置模板 |
-| 8 | `docs/部署文档/API接口清单.md` | 新建 | 完整 API 接口文档 |
-| 9 | `docs/部署文档/迁移操作手册.md` | 新建 | 逐步骤迁移详细手册 |
+| 8 | `docs/部署文档/PCI-API接口清单.md` | 新建 | 完整 API 接口文档 |
+| 9 | `docs/部署文档/PCI-迁移操作手册.md` | 新建 | 逐步骤迁移详细手册 |
 | 10 | `docs/superpowers/specs/2026-05-29-django-production-migration-design.md` | 新建 | 本设计文档 |
 
 ### 服务器上手动操作项

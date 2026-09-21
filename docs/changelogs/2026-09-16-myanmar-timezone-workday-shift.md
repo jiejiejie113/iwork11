@@ -31,8 +31,8 @@
 
 - 测试统一替换为 `Asia/Yangon`；`tests/test_statistics.py` 边界用例按新作息重写
   （07:29→None、07:30→0、11:30→240、16:00→480、18:30→600、19:00→600 等）。
-- `docs/开发文档/iwork规范手册.md` 第 5 节、`docs/开发文档/API接口文档.md`、
-  `docs/部署文档/API接口清单.md`、`CLAUDE.md` 同步更新。
+- `docs/开发文档/PCI-iwork规范手册.md` 第 5 节、`docs/开发文档/PCI-API接口文档.md`、
+  `docs/部署文档/PCI-API接口清单.md`、`CLAUDE.md` 同步更新。
 
 ### 4. 存量数据更新（人工运维执行）
 

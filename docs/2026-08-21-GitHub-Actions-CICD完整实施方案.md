@@ -87,14 +87,14 @@ iwork：
 - `.github/workflows/ci.yml`
 - `requirements-ci.txt`
 - `tests/test_ci_workflow.py`
-- `docs/CI-CD.md`
+- `docs/PCI-CI-CD.md`
 
 Portal：
 
 - `.github/workflows/ci.yml`
 - `requirements-ci.txt`
 - `tests/test_ci_workflow.py`
-- `docs/CI-CD.md`
+- `docs/PCI-CI-CD.md`
 
 ### 4.2 安全边界
 
@@ -1569,7 +1569,7 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
 ### 16.2 交付物
 
 - `scripts/New-IworkOfflineBundle.ps1`：从当前工作树生成离线运行包
-  `dist/iwork-offline-<时间戳>.zip`，并生成`MANIFEST.sha256`逐文件清单与整包SHA-256。
+  `dist/PCI-iwork-offline-<时间戳>.zip`，并生成`MANIFEST.sha256`逐文件清单与整包SHA-256。
   - 必需文件缺失、打包后安全扫描命中禁止项（`.git`、密钥、数据库文件、
     `iwork/.env`、`local_dev_settings.py`等）时失败关闭，不产出包。
   - 自动排除虚拟环境、缓存、日志、`dist`、`.github`、敏感文件；
@@ -1594,8 +1594,8 @@ Hosted Runner只能使用临时信任清单和隔离ACL，不能通过生产路�
   清单哈希一致与运行文件存在。
 - 离线包解压后执行`docker compose --env-file env/production.env --env-file <密钥> config --quiet`
   返回0，证明包内Compose与profile自洽。
-- 2026-09-21本机端到端实测：`dist/iwork-offline-20260921-105734.zip`（270文件，
-  `sha256:19496f7c433588b7fffff42e02ac911796c55225ec256ea7f6d95a0bb3b24c4e`）解压到
+- 2026-09-21本机端到端实测：`dist/PCI-iwork-offline-20260921-112742.zip`（270文件，
+  `sha256:48b550bed5c3fbdae4d3a69d5d30f4e39a7fcef47374aa81d73666766826cca2`）解压到
   独立目录后执行`deploy.ps1 -Environment local -SecretsFile <密钥>`，成功构建
   `iwork-iwork`镜像、重建`DKT_iwork`并保持`healthy`；容器内HTTP 200，
   `api/account/today-targets/`返回200且`analysis.status=available`。
