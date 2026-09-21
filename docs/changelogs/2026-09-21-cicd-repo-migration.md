@@ -41,5 +41,13 @@
 
 ## 验证
 
-- `pytest tests/ -q` 全量通过。
+- `pytest tests/ -q` 全量通过（716 passed）。
+- `tests/test_install_dkt_cicd_skill.ps1` 安装校验通过；`Test-DktCicd.ps1` 139 项断言通过。
 - 代码与脚本中不得再有 `GuChenkano`/`guchenkano` 绑定残留（历史文档与 Run 链接除外）。
+
+## 推送记录
+
+- 提交 `9ab0bf6`，已推送 `origin/Keycloak`（`c4cca04` → `9ab0bf6`，快进）与
+  `origin/local-sync-b7b7b76`（`9275ddf` → `9ab0bf6`）。
+- `runner-smoke.yml` 固定的镜像 Digest 与 `EXPECTED_REVISION` 仍指向旧仓库历史镜像，
+  必须在新仓库首次 Release 成功后刷新（总方案第 15.3 节第 6 项）。
