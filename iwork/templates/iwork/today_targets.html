@@ -59,17 +59,24 @@
         <section class="mb-4 rounded-xl border border-blue-800 bg-blue-950/60 p-4">
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <h2 class="text-xl font-semibold text-blue-100">今日目标</h2>
+                    <h2 class="text-xl font-semibold text-blue-100">
+                        {[ isHistoricalDate ? '历史目标' : '今日目标' ]}
+                    </h2>
                     <p class="mt-1 text-sm text-blue-200">
-                        今日业务日：<span class="font-semibold">{[ businessDate || '--' ]}</span>
+                        {[ isHistoricalDate ? '业务日期：' : '今日业务日：' ]}<span class="font-semibold">{[ businessDate || '--' ]}</span>
                         <span class="mx-1 text-blue-400">·</span>
                         截止：<span class="font-semibold">{[ formatDeadline(deadlineAt) ]}</span>
                     </p>
                 </div>
-                <div class="text-sm text-blue-100">
-                    <span class="font-semibold">请完成填写今日目标产量</span>
-                    <span class="ml-2 text-blue-300">保存后按当日实际产量自动判定完成，逾期仍可补填</span>
+                <div class="text-right text-sm text-blue-100">
+                    <span v-if="!isHistoricalDate" class="font-semibold">请完成填写今日目标产量</span>
+                    <span v-else class="font-semibold text-amber-200">历史目标仅供查看</span>
+                    <span v-if="!isHistoricalDate" class="ml-2 text-blue-300">保存后按当日实际产量自动判定完成，逾期仍可补填</span>
                 </div>
+            </div>
+            <div v-if="isHistoricalDate" class="mt-3 rounded-md border border-amber-700 bg-amber-950/50 px-3 py-2 text-xs text-amber-200">
+                当前为历史日期，只读显示目标与达成分析，不会修改历史目标。
+                <span v-if="historySnapshotMessage" class="ml-2">{[ historySnapshotMessage ]}</span>
             </div>
         </section>
 
@@ -104,7 +111,7 @@
             </div>
         </section>
 
-        <section class="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-4">
+        <section v-if="!isHistoricalDate" class="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-4">
             <span class="mr-2 text-sm font-medium text-slate-200">快捷设置工时：</span>
             <button type="button" @click="applyWorkHours(8)"
                     class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
@@ -114,6 +121,139 @@
                     class="rounded-lg border border-blue-700 bg-blue-900 px-3 py-2 text-sm text-blue-100 transition hover:bg-blue-800">
                 全部 10 小时
             </button>
+        </section>
+
+        <section class="mb-4 rounded-xl border border-purple-800 bg-purple-950/40 p-4" id="today-target-analysis">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-purple-100">
+                        {[ isHistoricalDate ? '历史目标分析' : '今日目标分析' ]}
+                    </h2>
+                    <p class="mt-1 text-xs text-purple-200">
+                        默认显示各分组三个时段合计；点击分组展开早上、下午、晚上（{[ analysisTimeZone ]}，{[ analysisStepNo ]}号工序）。
+                    </p>
+                </div>
+                <span class="rounded-full border px-2.5 py-1 text-xs" :class="analysisAvailabilityClass">
+                    {[ analysisAvailabilityText ]}
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-end gap-3">
+                <label class="min-w-[13rem] flex-1">
+                    <span class="mb-1 block text-xs text-purple-200">筛选分组</span>
+                    <input v-model.trim="analysisFilter" type="search" placeholder="输入分组或状态"
+                           class="w-full rounded-lg border border-purple-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                </label>
+                <label>
+                    <span class="mb-1 block text-xs text-purple-200">目标填写状态</span>
+                    <select v-model="analysisStatusFilter"
+                            class="rounded-lg border border-purple-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <option value="all">全部状态</option>
+                        <option value="pending">未填写</option>
+                        <option value="overdue">逾期未填写</option>
+                        <option value="fulfilled">已填写</option>
+                        <option value="fulfilled_late">逾期已填写</option>
+                        <option value="waived">已免除</option>
+                        <option value="unknown">无责任记录</option>
+                    </select>
+                </label>
+                <label>
+                    <span class="mb-1 block text-xs text-purple-200">排序字段</span>
+                    <select v-model="analysisSortKey"
+                            class="rounded-lg border border-purple-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <option value="flow">分组</option>
+                        <option value="work_hours">工作时间</option>
+                        <option value="status">目标填写状态</option>
+                        <option value="submitted_at">填写时间</option>
+                        <option value="actual_qty">实际产量</option>
+                        <option value="target_qty">目标产量</option>
+                        <option value="achievement_rate">达成率</option>
+                    </select>
+                </label>
+                <button type="button" @click="toggleAnalysisSortDirection"
+                        class="rounded-lg border border-purple-700 bg-purple-900 px-3 py-2 text-sm text-purple-100 transition hover:bg-purple-800"
+                        :aria-label="analysisSortAsc ? '当前升序，点击切换为降序' : '当前降序，点击切换为升序'">
+                    {[ analysisSortAsc ? '升序 ↑' : '降序 ↓' ]}
+                </button>
+                <span class="pb-2 text-xs text-slate-400">
+                    显示 {[ filteredAnalysisGroups.length ]} / {[ groups.length ]} 个分组
+                </span>
+            </div>
+
+            <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="border-b border-purple-800 text-xs text-purple-200">
+                        <tr>
+                            <th v-for="column in analysisColumns" :key="column.key" scope="col" class="whitespace-nowrap px-3 py-2">
+                                <button type="button" @click="sortAnalysisBy(column.key)"
+                                        class="inline-flex items-center gap-1 font-semibold transition hover:text-white">
+                                    {[ column.label ]}
+                                    <span v-if="analysisSortKey === column.key" aria-hidden="true">
+                                        {[ analysisSortAsc ? '↑' : '↓' ]}
+                                    </span>
+                                </button>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-purple-900">
+                        <tr v-if="loading">
+                            <td colspan="7" class="px-3 py-3 text-center text-slate-400">正在读取今日目标…</td>
+                        </tr>
+                        <tr v-else-if="filteredAnalysisGroups.length === 0">
+                            <td colspan="7" class="px-3 py-3 text-center text-slate-400">没有符合筛选条件的分组。</td>
+                        </tr>
+                        <template v-else v-for="item in filteredAnalysisGroups" :key="`analysis-${item.flow}`">
+                            <tr class="cursor-pointer transition hover:bg-purple-900/40" @click="toggleAnalysisGroup(item.flow)">
+                                <td class="whitespace-nowrap px-3 py-2 font-medium text-slate-100">
+                                    <button type="button" @click.stop="toggleAnalysisGroup(item.flow)"
+                                            class="inline-flex items-center gap-2 text-left">
+                                        <span class="inline-flex h-5 w-5 items-center justify-center rounded border border-purple-700 text-xs text-purple-200">
+                                            {[ isAnalysisExpanded(item.flow) ? '−' : '+' ]}
+                                        </span>
+                                        <span>{[ item.flow ]}</span>
+                                    </button>
+                                </td>
+                                <td class="whitespace-nowrap px-3 py-2 tabular-nums">{[ formatWorkHours(item) ]}</td>
+                                <td class="whitespace-nowrap px-3 py-2">
+                                    <span class="rounded-full border px-2 py-1 text-xs" :class="analysisFillStatusClass(item)">
+                                        {[ analysisFillStatusText(item) ]}
+                                    </span>
+                                </td>
+                                <td class="whitespace-nowrap px-3 py-2 text-slate-300">{[ formatDateTime(item.submitted_at) ]}</td>
+                                <td class="whitespace-nowrap px-3 py-2 tabular-nums">{[ formatMetric(analysisTotals(item).actual_qty) ]}</td>
+                                <td class="whitespace-nowrap px-3 py-2 tabular-nums">{[ formatMetric(analysisTotals(item).target_qty) ]}</td>
+                                <td class="whitespace-nowrap px-3 py-2 tabular-nums" :class="achievementRateClass(analysisTotals(item).achievement_rate)">
+                                    {[ formatRate(analysisTotals(item).achievement_rate) ]}
+                                </td>
+                            </tr>
+                            <template v-if="isAnalysisExpanded(item.flow) && item.analysis">
+                                <tr v-for="period in item.analysis" :key="`analysis-${item.flow}-${period.key}`" class="bg-slate-900/50 text-slate-300">
+                                    <td class="whitespace-nowrap px-3 py-2 pl-10">↳ {[ period.label ]}</td>
+                                    <td class="whitespace-nowrap px-3 py-2">{[ period.time_range ]}</td>
+                                    <td class="whitespace-nowrap px-3 py-2">
+                                        <span class="rounded-full border px-2 py-1 text-xs" :class="analysisFillStatusClass(item)">
+                                            {[ analysisFillStatusText(item) ]}
+                                        </span>
+                                    </td>
+                                    <td class="whitespace-nowrap px-3 py-2 text-slate-400">{[ formatDateTime(item.submitted_at) ]}</td>
+                                    <td class="whitespace-nowrap px-3 py-2 tabular-nums">{[ formatMetric(period.actual_qty) ]}</td>
+                                    <td class="whitespace-nowrap px-3 py-2 tabular-nums">{[ formatMetric(period.target_qty) ]}</td>
+                                    <td class="whitespace-nowrap px-3 py-2 tabular-nums" :class="achievementRateClass(period.achievement_rate)">
+                                        {[ formatRate(period.achievement_rate) ]}
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="isAnalysisExpanded(item.flow) && !item.analysis" class="bg-slate-900/50">
+                                <td colspan="7" class="px-3 py-3 pl-10 text-sm text-amber-300">
+                                    {[ isHistoricalDate
+                                        ? '历史生产快照暂不可用，目标填写信息仍可查看。'
+                                        : '当前实时产量分析暂不可用，稍后刷新重试；目标填写信息仍可查看。' ]}
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
         </section>
 
         {% if today_targets_is_admin %}
@@ -164,7 +304,7 @@
         </div>
         <div v-else-if="loadError" class="rounded-xl border border-red-800 bg-red-950/60 p-4 text-red-200">
             {[ loadError ]}
-            <button type="button" @click="loadTargets" class="ml-3 rounded-md bg-red-800 px-3 py-1 text-sm hover:bg-red-700">重试</button>
+            <button type="button" @click="retryTargets" class="ml-3 rounded-md bg-red-800 px-3 py-1 text-sm hover:bg-red-700">重试</button>
         </div>
         <div v-else-if="groups.length === 0" class="rounded-xl border border-slate-700 bg-slate-800 p-8 text-center text-slate-300">
             当前账号没有有效负责的生产组。
@@ -178,6 +318,7 @@
                         <h3 class="text-lg font-semibold text-slate-100">{[ item.flow ]}</h3>
                         <p class="mt-1 text-xs text-slate-400">
                             截止 {[ formatDeadline(item.deadline_at) ]}
+                            <span v-if="item.submitted_by_username">· 提交人 {[ item.submitted_by_username ]}</span>
                             <span v-if="item.submitted_at">· 提交于 {[ formatDateTime(item.submitted_at) ]}</span>
                         </p>
                         <p class="mt-1 text-xs text-slate-300">
@@ -197,17 +338,19 @@
 
                 <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label class="block">
-                        <span class="mb-1 block text-sm text-slate-300">今日目标产量</span>
+                        <span class="mb-1 block text-sm text-slate-300">{[ isHistoricalDate ? '目标产量' : '今日目标产量' ]}</span>
                         <input v-model.number="item.group_target" @input="markDraft(item)"
+                               :disabled="isHistoricalDate || !item.can_edit"
                                type="number" min="0" step="1" inputmode="numeric"
                                placeholder="请输入目标产量"
-                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60">
                     </label>
                     <label class="block">
                         <span class="mb-1 block text-sm text-slate-300">计划工作时间（小时）</span>
                         <input v-model.number="item.work_hours" @input="markDraft(item)"
+                               :disabled="isHistoricalDate || !item.can_edit"
                                type="number" :min="minWorkHours" :max="maxWorkHours" step="0.5" inputmode="decimal"
-                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                               class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-lg tabular-nums outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60">
                         <span v-if="!item.work_hours_set && item.work_hours_source === 'history'" class="mt-1 block text-xs text-amber-300">
                             沿用最近历史工时草稿
                         </span>
@@ -215,13 +358,13 @@
                     </label>
                 </div>
 
-                <div v-if="item.dirty" class="mt-3 rounded-md border border-blue-800 bg-blue-950/50 px-3 py-2 text-xs text-blue-200">
+                <div v-if="!isHistoricalDate && item.dirty" class="mt-3 rounded-md border border-blue-800 bg-blue-950/50 px-3 py-2 text-xs text-blue-200">
                     草稿已修改，尚未保存。
                 </div>
-                <div v-if="item.error" class="mt-3 rounded-md border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-200">
+                <div v-if="!isHistoricalDate && item.error" class="mt-3 rounded-md border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-200">
                     {[ item.error ]}
                 </div>
-                <div class="mt-4 flex items-center justify-between gap-3">
+                <div v-if="!isHistoricalDate" class="mt-4 flex items-center justify-between gap-3">
                     <span class="text-xs text-slate-500">保存本组不会影响其他分组。</span>
                     <button type="button" @click="saveGroup(item)" :disabled="item.saving || savingAll || !draftIsValid(item)"
                             class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
@@ -231,7 +374,7 @@
             </article>
         </section>
 
-        <div v-if="groups.length" class="mt-5 flex flex-wrap items-center justify-end gap-3">
+        <div v-if="groups.length && !isHistoricalDate" class="mt-5 flex flex-wrap items-center justify-end gap-3">
             <span v-if="saveAllMessage" class="text-sm text-slate-300">{[ saveAllMessage ]}</span>
             <button type="button" @click="saveAll" :disabled="savingAll || loading"
                     class="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
@@ -285,6 +428,8 @@
             const currentView = ref('today_targets');
             const groups = ref([]);
             const businessDate = ref('');
+            const currentBusinessDate = ref('');
+            const selectedDate = ref('');
             const deadlineAt = ref('');
             const defaultWorkHours = ref(0);
             const minWorkHours = ref(0);
@@ -305,14 +450,40 @@
                 status_counts: {},
                 items: [],
             });
+            const analysisStatus = ref('unavailable');
+            const analysisSnapshotStatus = ref('');
+            const analysisStepNo = ref('--');
+            const analysisTimeZone = ref('Asia/Yangon');
+            const analysisFilter = ref('');
+            const analysisStatusFilter = ref('all');
+            const analysisSortKey = ref('flow');
+            const analysisSortAsc = ref(true);
+            const expandedAnalysisGroups = ref(new Set());
+            const analysisColumns = [
+                { key: 'flow', label: '分组' },
+                { key: 'work_hours', label: '工作时间' },
+                { key: 'status', label: '目标填写状态' },
+                { key: 'submitted_at', label: '填写时间' },
+                { key: 'actual_qty', label: '实际产量' },
+                { key: 'target_qty', label: '目标产量' },
+                { key: 'achievement_rate', label: '达成率' },
+            ];
             const loading = ref(true);
             const loadError = ref('');
             const savingAll = ref(false);
             const saveAllMessage = ref('');
+            const historySnapshotMessage = ref('');
+            const historySnapshotPromises = new Map();
+            let targetLoadSequence = 0;
             const errorByFlow = {};
             const POLL_INTERVAL_MS = 60000;
             let pollTimer = null;
 
+            const isHistoricalDate = computed(() => (
+                Boolean(businessDate.value)
+                && Boolean(currentBusinessDate.value)
+                && businessDate.value < currentBusinessDate.value
+            ));
             const completedCount = computed(() => summary.value.completed_count || 0);
             const overdueCompletedCount = computed(() => summary.value.overdue_count || 0);
             const unfinishedCount = computed(() => summary.value.unfinished_count || 0);
@@ -329,6 +500,61 @@
             const responsibilitySummaryItems = computed(
                 () => responsibilitySummary.value.items || [],
             );
+            const analysisAvailabilityText = computed(() => {
+                if (!isHistoricalDate.value) {
+                    return analysisStatus.value === 'available'
+                        ? '实时分析已就绪'
+                        : '实时分析暂不可用';
+                }
+                if (analysisStatus.value === 'available') return '历史分析已就绪';
+                return {
+                    missing: '正在准备历史快照',
+                    running: '历史快照构建中',
+                    failed: '历史快照构建失败',
+                    error: '历史分析读取失败',
+                }[analysisSnapshotStatus.value] || '历史分析暂不可用';
+            });
+            const analysisAvailabilityClass = computed(
+                () => analysisStatus.value === 'available'
+                    ? 'border-emerald-700 bg-emerald-950 text-emerald-200'
+                    : 'border-amber-700 bg-amber-950 text-amber-200',
+            );
+            const filteredAnalysisGroups = computed(() => {
+                const query = String(analysisFilter.value || '').trim().toLocaleLowerCase();
+                const statusFilter = analysisStatusFilter.value;
+                const matched = groups.value.filter(item => {
+                    const statusMatches = statusFilter === 'all'
+                        || analysisFillStatusKey(item) === statusFilter;
+                    if (!statusMatches) return false;
+                    if (!query) return true;
+                    const totals = analysisTotals(item);
+                    const searchText = [
+                        item.flow,
+                        item.status,
+                        analysisFillStatusText(item),
+                        formatWorkHours(item),
+                        formatDateTime(item.submitted_at),
+                        totals.actual_qty,
+                        totals.target_qty,
+                        totals.achievement_rate,
+                        formatMetric(totals.actual_qty),
+                        formatMetric(totals.target_qty),
+                        formatRate(totals.achievement_rate),
+                        ...(item.analysis || []).flatMap(period => [
+                            period.label,
+                            period.time_range,
+                            period.actual_qty,
+                            period.target_qty,
+                            period.achievement_rate,
+                            formatMetric(period.actual_qty),
+                            formatMetric(period.target_qty),
+                            formatRate(period.achievement_rate),
+                        ]),
+                    ].join(' ').toLocaleLowerCase();
+                    return searchText.includes(query);
+                });
+                return [...matched].sort(compareAnalysisGroups);
+            });
 
             function formatDeadline(value) {
                 if (!value) return '--';
@@ -340,6 +566,144 @@
 
             function formatDateTime(value) {
                 return formatDeadline(value);
+            }
+
+            function formatMetric(value) {
+                if (value === null || value === undefined || value === '') return '--';
+                const number = Number(value);
+                return Number.isFinite(number)
+                    ? number.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+                    : '--';
+            }
+
+            function formatRate(value) {
+                if (value === null || value === undefined || value === '') return '--';
+                const number = Number(value);
+                return Number.isFinite(number) ? `${number.toFixed(1)}%` : '--';
+            }
+
+            function formatWorkHours(item) {
+                return item.work_hours_set
+                    ? `${formatMetric(item.work_hours)} 小时`
+                    : '--';
+            }
+
+            function analysisFillStatusKey(item) {
+                if (item.status === 'unknown') return 'unknown';
+                if (item.status === 'waived' && !item.dirty) return 'waived';
+                if (item.dirty || !item.complete) {
+                    return item.status === 'overdue' ? 'overdue' : 'pending';
+                }
+                return item.status === 'fulfilled_late' ? 'fulfilled_late' : 'fulfilled';
+            }
+
+            function analysisFillStatusText(item) {
+                return {
+                    pending: '未填写',
+                    overdue: '逾期未填写',
+                    fulfilled: '已填写',
+                    fulfilled_late: '逾期已填写',
+                    waived: '已免除',
+                    unknown: '无责任记录',
+                }[analysisFillStatusKey(item)] || '未填写';
+            }
+
+            function analysisFillStatusClass(item) {
+                return {
+                    pending: 'border-amber-700 bg-amber-950 text-amber-200',
+                    overdue: 'border-red-700 bg-red-950 text-red-200',
+                    fulfilled: 'border-emerald-700 bg-emerald-950 text-emerald-200',
+                    fulfilled_late: 'border-orange-700 bg-orange-950 text-orange-200',
+                    waived: 'border-slate-600 bg-slate-800 text-slate-300',
+                    unknown: 'border-slate-600 bg-slate-800 text-slate-300',
+                }[analysisFillStatusKey(item)] || 'border-slate-600 bg-slate-800 text-slate-300';
+            }
+
+            function targetQtyForAnalysis(item) {
+                const target = Number(item.group_target);
+                const workHours = Number(item.work_hours);
+                if (!item.target_set || !item.work_hours_set
+                    || !Number.isFinite(target) || target <= 0
+                    || !Number.isFinite(workHours) || workHours <= 0) {
+                    return null;
+                }
+                return target;
+            }
+
+            function analysisTotals(item) {
+                const target = targetQtyForAnalysis(item);
+                if (!Array.isArray(item.analysis)) {
+                    return { actual_qty: null, target_qty: target, achievement_rate: null };
+                }
+                const actual = item.analysis.reduce((total, period) => {
+                    const quantity = Number(period.actual_qty);
+                    return total + (Number.isFinite(quantity) ? quantity : 0);
+                }, 0);
+                const rate = target === null ? null : Math.round(actual / target * 1000) / 10;
+                return { actual_qty: actual, target_qty: target, achievement_rate: rate };
+            }
+
+            function achievementRateClass(value) {
+                if (value === null || value === undefined) return 'text-slate-400';
+                if (value >= 100) return 'text-emerald-300';
+                if (value >= 80) return 'text-amber-300';
+                return 'text-red-300';
+            }
+
+            function analysisSortValue(item, key) {
+                if (key === 'flow') return item.flow || '';
+                if (key === 'status') return analysisFillStatusText(item);
+                if (key === 'submitted_at') {
+                    const timestamp = item.submitted_at ? Date.parse(item.submitted_at) : NaN;
+                    return Number.isFinite(timestamp) ? timestamp : null;
+                }
+                if (key === 'work_hours') {
+                    return item.work_hours_set ? Number(item.work_hours) : null;
+                }
+                return analysisTotals(item)[key] ?? null;
+            }
+
+            function compareAnalysisGroups(left, right) {
+                const leftValue = analysisSortValue(left, analysisSortKey.value);
+                const rightValue = analysisSortValue(right, analysisSortKey.value);
+                const leftMissing = leftValue === null || leftValue === undefined || Number.isNaN(leftValue);
+                const rightMissing = rightValue === null || rightValue === undefined || Number.isNaN(rightValue);
+                if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+                if (leftMissing) return String(left.flow).localeCompare(String(right.flow), 'zh-CN', { numeric: true });
+                let result;
+                if (typeof leftValue === 'string' || typeof rightValue === 'string') {
+                    result = String(leftValue).localeCompare(String(rightValue), 'zh-CN', { numeric: true });
+                } else {
+                    result = leftValue - rightValue;
+                }
+                if (result === 0) {
+                    result = String(left.flow).localeCompare(String(right.flow), 'zh-CN', { numeric: true });
+                }
+                return analysisSortAsc.value ? result : -result;
+            }
+
+            function sortAnalysisBy(key) {
+                if (analysisSortKey.value === key) {
+                    analysisSortAsc.value = !analysisSortAsc.value;
+                } else {
+                    analysisSortKey.value = key;
+                    analysisSortAsc.value = true;
+                }
+            }
+
+            function toggleAnalysisSortDirection() {
+                analysisSortAsc.value = !analysisSortAsc.value;
+            }
+
+            function toggleAnalysisGroup(flow) {
+                const next = new Set(expandedAnalysisGroups.value);
+                if (next.has(flow)) next.delete(flow);
+                else next.add(flow);
+                expandedAnalysisGroups.value = next;
+            }
+
+            function isAnalysisExpanded(flow) {
+                return expandedAnalysisGroups.value.has(flow);
             }
 
             function applyPayload(payload, preserveDirtyDrafts = false) {
@@ -357,10 +721,18 @@
                     });
                 }
                 businessDate.value = payload.business_date || '';
+                currentBusinessDate.value = payload.current_business_date || payload.business_date || '';
+                selectedDate.value = payload.business_date || selectedDate.value || '';
                 deadlineAt.value = payload.deadline_at || '';
                 defaultWorkHours.value = Number(payload.default_work_hours);
                 minWorkHours.value = Number(payload.min_work_hours);
                 maxWorkHours.value = Number(payload.max_work_hours);
+                analysisStatus.value = payload.analysis?.status || 'unavailable';
+                analysisSnapshotStatus.value = payload.analysis?.snapshot_status || (
+                    payload.is_historical ? 'missing' : 'available'
+                );
+                analysisStepNo.value = payload.analysis?.step_no ?? '--';
+                analysisTimeZone.value = payload.analysis?.time_zone || 'Asia/Yangon';
                 summary.value = payload.summary || {
                     completed_count: payload.completed_count || 0,
                     overdue_count: payload.overdue_count || 0,
@@ -382,10 +754,12 @@
                         ...item,
                         group_target: item.target_set ? Number(item.group_target) : '',
                         work_hours: item.work_hours === null || item.work_hours === undefined
-                            ? defaultWorkHours.value
+                            ? (payload.is_historical ? null : defaultWorkHours.value)
                             : Number(item.work_hours),
                         work_hours_source: item.work_hours_source
-                            || (item.work_hours_set ? 'current' : 'default'),
+                            || (item.work_hours_set
+                                ? 'current'
+                                : payload.is_historical ? 'missing' : 'default'),
                         dirty: false,
                         saving: false,
                         error: errorByFlow[item.flow] || '',
@@ -396,28 +770,160 @@
                 });
             }
 
-            async function loadTargets({ preserveDirtyDrafts = false, silent = false } = {}) {
-                if (!silent) loading.value = true;
-                loadError.value = '';
+            async function fetchTargetPayload(requestedDate = '') {
+                const query = requestedDate
+                    ? `?date=${encodeURIComponent(requestedDate)}`
+                    : '';
+                const response = await fetch(
+                    `${basePath}api/account/today-targets/${query}`,
+                    { headers: { 'Accept': 'application/json' } },
+                );
+                return responsePayload(response);
+            }
+
+            async function ensureHistorySnapshot(snapshotDate) {
+                if (historySnapshotPromises.has(snapshotDate)) {
+                    return historySnapshotPromises.get(snapshotDate);
+                }
+                const isCurrentDate = () => selectedDate.value === snapshotDate;
+                if (isCurrentDate()) {
+                    historySnapshotMessage.value = `正在准备 ${snapshotDate} 的历史产量分析...`;
+                }
+                const buildPromise = (async () => {
+                    const startedAt = Date.now();
+                    let requestSubmitted = false;
+                    let retryAfterMs = 2000;
+                    while (true) {
+                        if (requestSubmitted) {
+                            const currentPayload = await fetchTargetPayload(snapshotDate);
+                            const snapshotStatus = currentPayload.analysis?.snapshot_status;
+                            if (snapshotStatus === 'available') return currentPayload;
+                            if (snapshotStatus === 'failed' || snapshotStatus === 'error') {
+                                throw new Error('历史产量快照构建失败，请稍后重试。');
+                            }
+                            if (Date.now() - startedAt >= 10 * 60 * 1000) {
+                                throw new Error('历史产量快照构建超时，请稍后重试。');
+                            }
+                            await new Promise(resolve => setTimeout(resolve, retryAfterMs));
+                            continue;
+                        }
+                        const response = await fetch(
+                            `${basePath}api/history/snapshots/${snapshotDate}/ensure/`,
+                            {
+                                method: 'POST',
+                                headers: { 'X-CSRFToken': getCookie('csrftoken') || '' },
+                            },
+                        );
+                        let payload = {};
+                        try {
+                            payload = await response.json();
+                        } catch (error) {
+                            payload = {};
+                        }
+                        if (response.status === 202 && payload.code === 'history_snapshot_building') {
+                            requestSubmitted = true;
+                            retryAfterMs = Math.max(1000, Number(payload.retry_after || 2) * 1000);
+                            if (Date.now() - startedAt >= 10 * 60 * 1000) {
+                                throw new Error('历史产量快照构建超时，请稍后重试。');
+                            }
+                            await new Promise(resolve => setTimeout(resolve, retryAfterMs));
+                            continue;
+                        }
+                        if (!response.ok) {
+                            throw new Error(payload.error || `历史快照构建失败 (${response.status})`);
+                        }
+                        if (isCurrentDate()) {
+                            historySnapshotMessage.value = `历史产量分析已准备：${snapshotDate}`;
+                        }
+                        return payload;
+                    }
+                })();
+                historySnapshotPromises.set(snapshotDate, buildPromise);
                 try {
-                    const response = await fetch(`${basePath}api/account/today-targets/`, {
-                        headers: { 'Accept': 'application/json' },
-                    });
-                    const payload = await responsePayload(response);
-                    applyPayload(payload, preserveDirtyDrafts);
-                } catch (error) {
-                    loadError.value = error.message || '今日目标读取失败';
+                    return await buildPromise;
                 } finally {
-                    if (!silent) loading.value = false;
+                    historySnapshotPromises.delete(snapshotDate);
                 }
             }
 
+            async function loadTargets({
+                preserveDirtyDrafts = false,
+                forceHistoryRetry = false,
+                silent = false,
+            } = {}) {
+                const requestId = ++targetLoadSequence;
+                const requestedDate = selectedDate.value;
+                if (!preserveDirtyDrafts) {
+                    // 日期切换或错误重试时先清空旧日期数据，禁止错误状态继续显示浏览器旧值。
+                    groups.value = [];
+                    businessDate.value = '';
+                    deadlineAt.value = '';
+                    summary.value = {
+                        completed_count: 0,
+                        overdue_count: 0,
+                        unfinished_count: 0,
+                        filled_count: 0,
+                        pending_fill_count: 0,
+                        incomplete_count: 0,
+                        total_count: 0,
+                        all_complete: false,
+                    };
+                    analysisStatus.value = 'unavailable';
+                    analysisSnapshotStatus.value = '';
+                }
+                if (!silent) loading.value = true;
+                loadError.value = '';
+                if (!silent) historySnapshotMessage.value = '';
+                try {
+                    const payload = await fetchTargetPayload(requestedDate);
+                    if (requestId !== targetLoadSequence) return;
+                    applyPayload(payload, preserveDirtyDrafts);
+                    const snapshotStatus = payload.analysis?.snapshot_status;
+                    const shouldBuildHistorySnapshot = payload.is_historical && (
+                        snapshotStatus === 'missing'
+                        || snapshotStatus === 'running'
+                        || (forceHistoryRetry && snapshotStatus === 'failed')
+                    );
+                    if (
+                        payload.is_historical
+                        && (snapshotStatus === 'failed' || snapshotStatus === 'error')
+                        && !shouldBuildHistorySnapshot
+                    ) {
+                        throw new Error('历史产量快照构建失败，请点击重试或稍后重试。');
+                    }
+                    if (shouldBuildHistorySnapshot) {
+                        // 先展示目标记录，再后台等待本地生产快照，避免目标数据被快照状态遮住。
+                        loading.value = false;
+                        await ensureHistorySnapshot(payload.business_date);
+                        if (requestId !== targetLoadSequence) return;
+                        const refreshed = await fetchTargetPayload(payload.business_date);
+                        if (requestId !== targetLoadSequence) return;
+                        applyPayload(refreshed, false);
+                    }
+                } catch (error) {
+                    if (requestId === targetLoadSequence) {
+                        loadError.value = error.message || '今日目标读取失败';
+                    }
+                } finally {
+                    if (!silent && requestId === targetLoadSequence) loading.value = false;
+                }
+            }
+
+            function changeTargetDate() {
+                loadTargets();
+            }
+
+            function retryTargets() {
+                loadTargets({ forceHistoryRetry: true });
+            }
+
             async function pollTargets() {
-                if (document.hidden) return;
+                if (document.hidden || isHistoricalDate.value) return;
                 await loadTargets({ preserveDirtyDrafts: true, silent: true });
             }
 
             function applyWorkHours(hours) {
+                if (isHistoricalDate.value) return;
                 groups.value.forEach(item => {
                     item.work_hours = Number(hours);
                     item.dirty = true;
@@ -426,6 +932,7 @@
             }
 
             function markDraft(item) {
+                if (isHistoricalDate.value || !item.can_edit) return;
                 item.dirty = true;
                 saveAllMessage.value = '';
             }
@@ -473,6 +980,7 @@
                     overdue: 'border-red-700 bg-red-950 text-red-200',
                     fulfilled_late: 'border-orange-700 bg-orange-950 text-orange-200',
                     waived: 'border-slate-600 bg-slate-800 text-slate-300',
+                    unknown: 'border-slate-600 bg-slate-800 text-slate-300',
                 }[item.status] || 'border-slate-600 bg-slate-800 text-slate-300';
             }
 
@@ -484,6 +992,7 @@
             }
 
             async function saveGroup(item) {
+                if (isHistoricalDate.value || !item.can_edit) return false;
                 if (!draftIsValid(item)) {
                     errorByFlow[item.flow] = '请填写非负整数目标和有效工作时间。';
                     item.error = errorByFlow[item.flow];
@@ -532,6 +1041,7 @@
             }
 
             async function saveAll() {
+                if (isHistoricalDate.value) return;
                 savingAll.value = true;
                 saveAllMessage.value = '';
                 try {
@@ -578,14 +1088,24 @@
             });
 
             return {
-                basePath, currentView, groups, businessDate, deadlineAt, defaultWorkHours,
+                basePath, currentView, groups, businessDate, currentBusinessDate, selectedDate,
+                deadlineAt, defaultWorkHours,
                 minWorkHours, maxWorkHours,
                 loading, loadError, savingAll, saveAllMessage,
+                isHistoricalDate, historySnapshotMessage,
                 completedCount, overdueCompletedCount, unfinishedCount, filledCount, pendingFillCount,
                 incompleteCount, totalCount,
                 responsibilityPendingCount, responsibilityOverdueCount,
                 responsibilitySummaryItems,
-                formatDeadline, formatDateTime, loadTargets, applyWorkHours, markDraft,
+                analysisStatus, analysisSnapshotStatus, analysisStepNo, analysisTimeZone,
+                analysisFilter, analysisStatusFilter, analysisSortKey, analysisSortAsc,
+                analysisColumns, filteredAnalysisGroups,
+                analysisAvailabilityText, analysisAvailabilityClass,
+                formatDeadline, formatDateTime, formatMetric, formatRate, formatWorkHours,
+                analysisFillStatusText, analysisFillStatusClass, analysisTotals,
+                achievementRateClass, sortAnalysisBy, toggleAnalysisSortDirection,
+                toggleAnalysisGroup, isAnalysisExpanded,
+                loadTargets, changeTargetDate, retryTargets, applyWorkHours, markDraft,
                 draftIsValid, statusText, statusClass, productionStatusClass, leaderNames,
                 saveGroup: saveSingleAndRefresh, saveAll,
             };

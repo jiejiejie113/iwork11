@@ -4,6 +4,12 @@ from datetime import date, datetime
 
 from django.conf import settings
 
+from iwork.target_analysis import (
+    TARGET_ANALYSIS_STEP_NO,
+    TARGET_ANALYSIS_TIME_ZONE,
+    get_period_metadata,
+)
+
 from .errors import SnapshotConsistencyError, SnapshotValidationError
 
 
@@ -17,6 +23,7 @@ REQUIRED_VIEW_NAMES = frozenset({
     "workorder_details",
     "detail",
     "kanban",
+    "target_analysis",
 })
 REQUIRED_DETAIL_NAMES = frozenset({
     "flow_overview",
@@ -125,6 +132,47 @@ def _validate_realtime_totals(realtime: dict, business_date: date) -> None:
                 )
 
 
+def _validate_target_analysis(target_analysis: dict) -> None:
+    """校验今日目标分析视图的固定元数据和嵌套产量结构。
+
+    Args:
+        target_analysis (dict): 待写入或读取的今日目标分析视图。
+
+    Raises:
+        SnapshotValidationError: 分析时段或 Flow 产量结构不符合约定。
+    """
+    if target_analysis.get("step_no") != TARGET_ANALYSIS_STEP_NO:
+        raise SnapshotValidationError(
+            f"今日目标分析工序必须为{TARGET_ANALYSIS_STEP_NO}"
+        )
+    if target_analysis.get("time_zone") != TARGET_ANALYSIS_TIME_ZONE:
+        raise SnapshotValidationError(
+            "今日目标分析时区必须为" + TARGET_ANALYSIS_TIME_ZONE
+        )
+
+    periods = target_analysis.get("periods")
+    if periods != get_period_metadata():
+        raise SnapshotValidationError("今日目标分析时段结构无效")
+
+    flows = target_analysis.get("flows")
+    if not isinstance(flows, dict):
+        raise SnapshotValidationError("今日目标分析Flow结构无效")
+    period_keys = {period["key"] for period in get_period_metadata()}
+    for flow, period_totals in flows.items():
+        if not isinstance(flow, str) or not flow.strip():
+            raise SnapshotValidationError("今日目标分析Flow名称无效")
+        if not isinstance(period_totals, dict) or set(period_totals) != period_keys:
+            raise SnapshotValidationError(
+                f"今日目标分析Flow时段结构无效: {flow}"
+            )
+        for period_key in period_keys:
+            quantity = period_totals[period_key]
+            if not isinstance(quantity, int) or isinstance(quantity, bool):
+                raise SnapshotValidationError(
+                    f"今日目标分析产量无效: {flow}/{period_key}"
+                )
+
+
 def validate_snapshot(snapshot: dict) -> tuple[dict, dict]:
     """校验完整快照并返回元数据与视图。
 
@@ -178,10 +226,13 @@ def validate_snapshot(snapshot: dict) -> tuple[dict, dict]:
         "workorder_details": dict,
         "detail": dict,
         "kanban": list,
+        "target_analysis": dict,
     }
     for view_name, expected_type in expected_types.items():
         if not isinstance(views[view_name], expected_type):
             raise SnapshotValidationError(f"快照视图结构无效: {view_name}")
+
+    _validate_target_analysis(views["target_analysis"])
 
     workorders = views["workorders"]
     if not isinstance(workorders.get("rows"), list) or not isinstance(

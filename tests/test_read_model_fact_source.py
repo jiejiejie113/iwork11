@@ -133,6 +133,31 @@ def test_one_fact_set_builds_consistent_realtime_detail_and_kanban():
     assert snapshot["views"]["detail"]["product_overview"]["products"][0][
         "total_qty"
     ] == 100
+    assert snapshot["views"]["target_analysis"] == {
+        "step_no": 70,
+        "time_zone": "Asia/Yangon",
+        "periods": [
+            {
+                "key": "morning",
+                "label": "早上",
+                "time_range": "07:30-11:30",
+                "duration_minutes": 240,
+            },
+            {
+                "key": "afternoon",
+                "label": "下午",
+                "time_range": "12:00-16:00",
+                "duration_minutes": 240,
+            },
+            {
+                "key": "night",
+                "label": "晚上",
+                "time_range": "16:30-18:30",
+                "duration_minutes": 120,
+            },
+        ],
+        "flows": {"Sewing-A1": {"morning": 100, "afternoon": 0, "night": 0}},
+    }
     assert sum(item["qty"] for item in snapshot["views"]["kanban"]) == 1099
     assert snapshot["metadata"]["record_count"] == 4
 

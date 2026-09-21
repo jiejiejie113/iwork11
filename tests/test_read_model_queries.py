@@ -10,7 +10,9 @@ from django.core.cache import cache
 
 from iwork.read_model.builder import build_snapshot
 from iwork.read_model.queries import ReadModelQueries
+from iwork.read_model.schemas import READ_MODEL_SCHEMA_VERSION
 from iwork.read_model.store import SnapshotStore
+from iwork.target_analysis import get_period_metadata
 
 
 BUSINESS_DATE = date(2026, 7, 31)
@@ -28,7 +30,7 @@ def clear_cache():
 def _publish_snapshot() -> ReadModelQueries:
     """发布覆盖工单、详情和看板筛选的测试快照。"""
     metadata = {
-        "schema_version": 1,
+        "schema_version": READ_MODEL_SCHEMA_VERSION,
         "snapshot_version": "20260731-120000-000001",
         "business_date": BUSINESS_DATE.isoformat(),
         "generated_at": NOW.isoformat(),
@@ -137,6 +139,12 @@ def _publish_snapshot() -> ReadModelQueries:
             {"reg_per_sys_id": 3, "stepno": 69, "wrk_order": "WO-A", "flow": "B", "qty": 20, "record_count": 1},
             {"reg_per_sys_id": 9, "stepno": 70, "wrk_order": "WO-HIDDEN", "flow": "Sewing-Training", "qty": 999, "record_count": 1},
         ],
+        "target_analysis": {
+            "step_no": 70,
+            "time_zone": "Asia/Yangon",
+            "periods": get_period_metadata(),
+            "flows": {"A": {"morning": 130, "afternoon": 0, "night": 0}},
+        },
     }
     store = SnapshotStore(cache_backend=cache, now=lambda: NOW)
     store.publish({"metadata": metadata, "views": views})
@@ -170,7 +178,8 @@ def test_builder_creates_all_views_from_one_business_date(monkeypatch):
     snapshot = build_snapshot(BUSINESS_DATE, source=source, now=lambda: NOW)
 
     assert set(snapshot["views"]) == {
-        "realtime", "processes", "workorders", "workorder_details", "detail", "kanban"
+        "realtime", "processes", "workorders", "workorder_details", "detail", "kanban",
+        "target_analysis",
     }
     assert snapshot["metadata"]["business_date"] == BUSINESS_DATE.isoformat()
     assert snapshot["metadata"]["record_count"] == 2

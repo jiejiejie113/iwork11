@@ -5,6 +5,7 @@ from django.db.models import Count, Q, Sum
 
 from iwork.local_models import HistoricalProductionFact, HistoricalStepSnapshot
 from iwork.queries import _build_flow_employees
+from iwork.target_analysis import build_target_analysis_snapshot
 
 
 def _facts(target_date: date):
@@ -395,3 +396,38 @@ def get_batch_product_overview(target_date: date) -> dict:
         'products': products,
         'normal_flows': sorted(settings.ALLOWED_FLOWS),
     }
+
+
+def get_target_analysis(target_date: date) -> dict[str, object]:
+    """从本地历史事实构建指定日期的今日目标分时分析。
+
+    Args:
+        target_date (date): 已发布历史快照对应的生产日期。
+
+    Returns:
+        dict[str, object]: 与实时读模型一致的 70 号工序分时分析视图。
+
+    Notes:
+        历史分析只读取 ``iwork_local`` 中已经发布的事实快照，不回查
+        远程生产库。``event_hour`` 沿用历史快照构建时冻结的本地小时口径。
+    """
+    allowed_flows = list(settings.VISIBLE_FLOWS)
+    rows = (
+        _facts(target_date)
+        .filter(step_no=settings.TARGET_ANALYSIS_STEP_NO)
+        .exclude(flow='')
+        .filter(flow__in=allowed_flows)
+        .values('step_no', 'flow', 'event_hour')
+        .annotate(qty=Sum('qty'))
+        .order_by('flow', 'event_hour')
+    )
+    facts = [
+        {
+            'stepno': row['step_no'],
+            'flow': row['flow'],
+            'event_hour': row['event_hour'],
+            'qty': row['qty'] or 0,
+        }
+        for row in rows
+    ]
+    return build_target_analysis_snapshot(facts, allowed_flows=allowed_flows)

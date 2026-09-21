@@ -53,6 +53,17 @@ class ReadModelQueries:
         """读取当前快照的工序列表。"""
         return self.store.read("processes", business_date)
 
+    def target_analysis(self, business_date: date) -> SnapshotReadResult:
+        """读取当前快照中的今日目标分析实际产量。
+
+        Args:
+            business_date (date): 需要读取的缅甸业务日期。
+
+        Returns:
+            SnapshotReadResult: 包含时段元数据和 Flow 实际产量的快照结果。
+        """
+        return self.store.read("target_analysis", business_date)
+
     def workorders(
         self,
         business_date: date,

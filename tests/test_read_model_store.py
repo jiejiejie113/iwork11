@@ -11,7 +11,9 @@ from iwork.read_model.errors import (
     SnapshotPublishInProgressError,
     SnapshotValidationError,
 )
+from iwork.read_model.schemas import READ_MODEL_SCHEMA_VERSION
 from iwork.read_model.store import SnapshotStore
+from iwork.target_analysis import get_period_metadata
 
 
 BUSINESS_TIME_ZONE = ZoneInfo("Asia/Yangon")
@@ -22,7 +24,7 @@ def _snapshot_payload(generated_at: datetime, total_qty: int = 100) -> dict:
     """构造包含全部必要视图的测试快照。"""
     return {
         "metadata": {
-            "schema_version": 1,
+            "schema_version": READ_MODEL_SCHEMA_VERSION,
             "snapshot_version": generated_at.strftime("%Y%m%d-%H%M%S-%f"),
             "business_date": BUSINESS_DATE.isoformat(),
             "generated_at": generated_at.isoformat(),
@@ -43,6 +45,12 @@ def _snapshot_payload(generated_at: datetime, total_qty: int = 100) -> dict:
                 "product_overview": {},
             },
             "kanban": [],
+            "target_analysis": {
+                "step_no": 70,
+                "time_zone": "Asia/Yangon",
+                "periods": get_period_metadata(),
+                "flows": {},
+            },
         },
     }
 

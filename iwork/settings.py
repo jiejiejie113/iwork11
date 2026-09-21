@@ -286,7 +286,7 @@ FLOW_DETAIL_CACHE_NAME = 'flow'
 
 # 版本化实时读模型配置。新键与既有缓存并存，发布失败时保留旧 current。
 READ_MODEL_CACHE_PREFIX = 'iwork:read:v1'
-READ_MODEL_SCHEMA_VERSION = 1
+READ_MODEL_SCHEMA_VERSION = 2
 READ_MODEL_RETENTION_SECONDS = env.int('READ_MODEL_RETENTION_SECONDS', default=172800)
 READ_MODEL_STALE_AFTER_SECONDS = env.int('READ_MODEL_STALE_AFTER_SECONDS', default=120)
 READ_MODEL_MAX_STALE_SECONDS = env.int('READ_MODEL_MAX_STALE_SECONDS', default=600)
@@ -348,6 +348,38 @@ HIDDEN_FLOWS = []
 
 # 实际可见分组 = 白名单 - 隐藏
 VISIBLE_FLOWS = [f for f in ALLOWED_FLOWS if f not in HIDDEN_FLOWS]
+
+# 今日目标分析的固定业务口径；具体计算由 iwork.target_analysis 执行。
+# 时段按缅甸工厂作息（07:30-11:30 / 12:00-16:00 / 16:30-18:30）划分，
+# 事实仅有整点 event_hour，边界按整点近似归集。
+TARGET_ANALYSIS_STEP_NO = ALLOWED_FLOWS_STEPNO
+TARGET_ANALYSIS_NORMAL_WORK_MINUTES = 10 * 60
+TARGET_ANALYSIS_PERIODS = (
+    {
+        'key': 'morning',
+        'label': '早上',
+        'time_range': '07:30-11:30',
+        'start_hour': 7,
+        'end_hour': 11,
+        'duration_minutes': 4 * 60,
+    },
+    {
+        'key': 'afternoon',
+        'label': '下午',
+        'time_range': '12:00-16:00',
+        'start_hour': 12,
+        'end_hour': 16,
+        'duration_minutes': 4 * 60,
+    },
+    {
+        'key': 'night',
+        'label': '晚上',
+        'time_range': '16:30-18:30',
+        'start_hour': 16,
+        'end_hour': 18,
+        'duration_minutes': 2 * 60,
+    },
+)
 
 # 数据库查询超时（秒）
 QUERY_TIMEOUT = 45

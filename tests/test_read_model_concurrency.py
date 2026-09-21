@@ -7,7 +7,9 @@ from zoneinfo import ZoneInfo
 from django.core.cache import cache
 
 from iwork.read_model.queries import ReadModelQueries
+from iwork.read_model.schemas import READ_MODEL_SCHEMA_VERSION
 from iwork.read_model.store import SnapshotStore
+from iwork.target_analysis import get_period_metadata
 
 
 BUSINESS_DATE = date(2026, 7, 31)
@@ -38,7 +40,7 @@ def _snapshot() -> dict:
     }
     return {
         "metadata": {
-            "schema_version": 1,
+            "schema_version": READ_MODEL_SCHEMA_VERSION,
             "snapshot_version": "concurrency-v1",
             "business_date": BUSINESS_DATE.isoformat(),
             "generated_at": NOW.isoformat(),
@@ -77,6 +79,12 @@ def _snapshot() -> dict:
                 "qty": 100,
                 "record_count": 1,
             }],
+            "target_analysis": {
+                "step_no": 70,
+                "time_zone": "Asia/Yangon",
+                "periods": get_period_metadata(),
+                "flows": {},
+            },
         },
     }
 

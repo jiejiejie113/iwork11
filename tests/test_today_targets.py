@@ -3,6 +3,7 @@
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
@@ -708,7 +709,6 @@ def test_today_targets_template_contains_shortcuts_sequential_save_and_return_fl
         '按时完成',
         '已逾期待填',
         '逾期已补填',
-        '已免除',
         '状态未知',
     ):
         assert detailed_status_copy not in template
@@ -746,6 +746,38 @@ def test_today_targets_template_renders_production_states_actual_output_and_poll
     assert 'allGroupsReachedTarget' in template
 
 
+def test_today_targets_template_contains_analysis_table_and_history_controls():
+    """今日目标模板应包含分时分析表、历史日期控件与只读保护。"""
+    template_path = Path(__file__).resolve().parents[1] / 'iwork' / 'templates' / 'iwork' / 'today_targets.html'
+    template = template_path.read_text(encoding='utf-8')
+    header = (
+        Path(__file__).resolve().parents[1] / 'iwork' / 'templates' / 'iwork' / '_header.html'
+    ).read_text(encoding='utf-8')
+
+    assert 'id="today-target-analysis"' in template
+    assert 'analysisColumns' in template
+    assert 'filteredAnalysisGroups' in template
+    assert 'analysisFillStatusText' in template
+    assert 'analysisTotals' in template
+    assert 'achievementRateClass' in template
+    assert 'toggleAnalysisGroup' in template
+    assert 'analysisAvailabilityText' in template
+    assert "analysisTimeZone = ref('Asia/Yangon')" in template
+    assert '历史目标分析' in template
+    assert '历史目标仅供查看' in template
+    assert 'isHistoricalDate' in template
+    assert ':disabled="isHistoricalDate || !item.can_edit"' in template
+    assert 'fetchTargetPayload' in template
+    assert 'ensureHistorySnapshot' in template
+    assert 'api/history/snapshots/${snapshotDate}/ensure/' in template
+    assert 'forceHistoryRetry' in template
+    assert 'changeTargetDate' in template
+    assert 'currentBusinessDate' in template
+    assert 'selectedDate' in template
+    assert 'type="date"' in header
+    assert '@change="changeTargetDate"' in header
+
+
 @pytest.mark.django_db(databases=['default', 'iwork_local'])
 def test_today_targets_page_renders_public_return_parameter_safely(fixed_business_clock):
     """今日目标页面保留合法站内返回地址，拒绝外部地址。"""
@@ -757,3 +789,333 @@ def test_today_targets_page_renders_public_return_parameter_safely(fixed_busines
     assert b'/production/detail-data/' in safe.content
     assert unsafe.status_code == 200
     assert b'https://evil.example' not in unsafe.content
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1'])
+def test_today_targets_api_merges_saved_target_with_period_analysis(
+    fixed_business_clock,
+    monkeypatch,
+):
+    """今日目标响应应把已保存目标与70号工序时段产量合并返回。"""
+    from iwork.local_models import GroupTargetProduction
+
+    _create_assignment('leader-analysis', 'Sewing-A1')
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_by_subject='leader-analysis',
+        submitted_by_username='leader-analysis',
+        submitted_at=EARLY_TIME,
+    )
+    monkeypatch.setattr(
+        'iwork.api_views_account.READ_MODEL',
+        SimpleNamespace(
+            target_analysis=lambda _date: SimpleNamespace(
+                data={
+                    'step_no': 70,
+                    'time_zone': 'Asia/Yangon',
+                    'flows': {
+                        'Sewing-A1': {
+                            'morning': 40,
+                            'afternoon': 30,
+                            'night': 12,
+                        },
+                    },
+                },
+                metadata={'snapshot_version': 'analysis-v1'},
+            ),
+        ),
+    )
+
+    response = Client().get(
+        '/api/account/today-targets/',
+        **_identity_headers(subject='leader-analysis', username='leader-analysis'),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['analysis'] == {
+        'status': 'available',
+        'step_no': 70,
+        'time_zone': 'Asia/Yangon',
+        'periods': [
+            {'key': 'morning', 'label': '早上', 'time_range': '07:30-11:30'},
+            {'key': 'afternoon', 'label': '下午', 'time_range': '12:00-16:00'},
+            {'key': 'night', 'label': '晚上', 'time_range': '16:30-18:30'},
+        ],
+    }
+    assert payload['groups'][0]['analysis'] == [
+        {
+            'key': 'morning',
+            'label': '早上',
+            'time_range': '07:30-11:30',
+            'actual_qty': 40,
+            'target_qty': 40.0,
+            'achievement_rate': 100.0,
+        },
+        {
+            'key': 'afternoon',
+            'label': '下午',
+            'time_range': '12:00-16:00',
+            'actual_qty': 30,
+            'target_qty': 40.0,
+            'achievement_rate': 75.0,
+        },
+        {
+            'key': 'night',
+            'label': '晚上',
+            'time_range': '16:30-18:30',
+            'actual_qty': 12,
+            'target_qty': 20.0,
+            'achievement_rate': 60.0,
+        },
+    ]
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1'])
+def test_today_targets_api_loads_historical_target_and_local_period_analysis(
+    fixed_business_clock,
+    monkeypatch,
+):
+    """历史日期读取最终目标，并从本地快照计算70号工序分时达成率。"""
+    from iwork.local_models import (
+        DailyTargetObligation,
+        GroupTargetProduction,
+        HistoricalProductionFact,
+        HistoricalSyncState,
+    )
+
+    historical_date = TARGET_DATE - timedelta(days=1)
+    _create_assignment('leader-history', 'Sewing-A1')
+    submitted_at = datetime(2026, 9, 1, 8, 30, tzinfo=BUSINESS_ZONE)
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=historical_date,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_by_subject='leader-history',
+        submitted_by_username='leader-history',
+        submitted_at=submitted_at,
+    )
+    DailyTargetObligation.objects.using('iwork_local').create(
+        target_date=historical_date,
+        flow_name='Sewing-A1',
+        status=DailyTargetObligation.Status.FULFILLED,
+        deadline_at=datetime(2026, 9, 1, 9, 0, tzinfo=BUSINESS_ZONE),
+        submitted_by_subject='',
+        submitted_by_username='',
+        submitted_at=None,
+    )
+    HistoricalSyncState.objects.using('iwork_local').create(
+        snapshot_date=historical_date,
+        status=HistoricalSyncState.Status.SUCCESS,
+        source_row_count=3,
+        source_total_qty=82,
+        fact_row_count=3,
+        metadata_row_count=0,
+        snapshot_version=7,
+    )
+    for event_hour, qty in ((8, 40), (13, 30), (17, 12)):
+        HistoricalProductionFact.objects.using('iwork_local').create(
+            production_date=historical_date,
+            event_hour=event_hour,
+            registered_date=datetime(2026, 9, 1, event_hour, tzinfo=BUSINESS_ZONE),
+            registered_time=datetime(2026, 9, 1, event_hour, tzinfo=BUSINESS_ZONE),
+            flow='Sewing-A1',
+            station_id='A1',
+            employee_id=1942,
+            wrk_order='WO-HISTORY',
+            step_no=70,
+            qty=qty,
+            source_record_count=1,
+        )
+
+    monkeypatch.setattr(
+        'iwork.api_views_account.READ_MODEL',
+        SimpleNamespace(
+            target_analysis=lambda _date: pytest.fail(
+                '历史目标不得读取当前实时读模型',
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        'iwork.api_views_account.ensure_daily_target_obligations',
+        lambda *_args, **_kwargs: pytest.fail(
+            '历史目标读取不得创建或刷新责任记录',
+        ),
+    )
+
+    response = Client().get(
+        f'/api/account/today-targets/?date={historical_date.isoformat()}',
+        **_identity_headers(subject='leader-history', username='leader-history'),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['business_date'] == historical_date.isoformat()
+    assert payload['current_business_date'] == TARGET_DATE.isoformat()
+    assert payload['is_historical'] is True
+    assert payload['analysis']['source'] == 'local_snapshot'
+    assert payload['analysis']['snapshot_status'] == 'available'
+    assert payload['analysis']['snapshot_version'] == 7
+    group = payload['groups'][0]
+    assert group['target_date'] == historical_date.isoformat()
+    assert group['group_target'] == 100
+    assert group['work_hours'] == 10
+    assert group['submitted_by_username'] == 'leader-history'
+    assert payload['responsibility_summary']['items'][0]['submitted_by_username'] == 'leader-history'
+    assert group['can_edit'] is False
+    assert group['analysis'] == [
+        {
+            'key': 'morning',
+            'label': '早上',
+            'time_range': '07:30-11:30',
+            'actual_qty': 40,
+            'target_qty': 40.0,
+            'achievement_rate': 100.0,
+        },
+        {
+            'key': 'afternoon',
+            'label': '下午',
+            'time_range': '12:00-16:00',
+            'actual_qty': 30,
+            'target_qty': 40.0,
+            'achievement_rate': 75.0,
+        },
+        {
+            'key': 'night',
+            'label': '晚上',
+            'time_range': '16:30-18:30',
+            'actual_qty': 12,
+            'target_qty': 20.0,
+            'achievement_rate': 60.0,
+        },
+    ]
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1'])
+def test_today_targets_api_keeps_historical_target_when_snapshot_is_missing(
+    fixed_business_clock,
+    monkeypatch,
+):
+    """历史快照缺失时仍返回目标，但不伪造工时、责任状态或实际产量。"""
+    from iwork.local_models import GroupTargetProduction
+
+    historical_date = TARGET_DATE - timedelta(days=2)
+    _create_assignment('leader-history-missing', 'Sewing-A1')
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=historical_date,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=None,
+    )
+    monkeypatch.setattr(
+        'iwork.api_views_account.READ_MODEL',
+        SimpleNamespace(
+            target_analysis=lambda _date: pytest.fail(
+                '历史目标不得读取当前实时读模型',
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        'iwork.api_views_account.ensure_daily_target_obligations',
+        lambda *_args, **_kwargs: pytest.fail(
+            '历史目标读取不得创建责任记录',
+        ),
+    )
+
+    response = Client().get(
+        f'/api/account/today-targets/?date={historical_date.isoformat()}',
+        **_identity_headers(
+            subject='leader-history-missing',
+            username='leader-history-missing',
+        ),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['analysis']['snapshot_status'] == 'missing'
+    group = payload['groups'][0]
+    assert group['group_target'] == 100
+    assert group['work_hours'] is None
+    assert group['work_hours_set'] is False
+    assert group['status'] == 'unknown'
+    assert group['submitted_at'] is None
+    assert group['can_edit'] is False
+    assert group['analysis'] is None
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+def test_today_targets_api_rejects_future_and_invalid_history_dates(fixed_business_clock):
+    """今日目标日期参数不得查询未来日期或非法日期。"""
+    client = Client()
+    headers = _identity_headers(subject='date-validation', username='date-validation')
+
+    future_response = client.get(
+        '/api/account/today-targets/?date=2026-09-03',
+        **headers,
+    )
+    invalid_response = client.get(
+        '/api/account/today-targets/?date=not-a-date',
+        **headers,
+    )
+
+    assert future_response.status_code == 400
+    assert future_response.json()['code'] == 'future_date_not_allowed'
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()['code'] == 'invalid_date'
+
+
+@pytest.mark.django_db(databases=['default', 'iwork_local'])
+@override_settings(VISIBLE_FLOWS=['Sewing-A1'])
+@patch(
+    'iwork.api_views_account._flow_production_by_flow',
+    return_value={'Sewing-A1': 50},
+)
+def test_today_targets_api_keeps_actuals_when_target_analysis_is_unavailable(
+    mock_production,
+    fixed_business_clock,
+    monkeypatch,
+):
+    """实时分析快照不可用时仍返回目标责任数据且不伪造分时产量。"""
+    from iwork.local_models import GroupTargetProduction
+    from iwork.read_model.errors import ReadModelNotReadyError
+
+    _create_assignment('leader-analysis-unavailable', 'Sewing-A1')
+    GroupTargetProduction.objects.using('iwork_local').create(
+        target_date=TARGET_DATE,
+        flow_name='Sewing-A1',
+        target_qty=100,
+        planned_work_minutes=600,
+        submitted_at=EARLY_TIME,
+    )
+
+    def raise_not_ready(_date):
+        raise ReadModelNotReadyError('实时快照未准备')
+
+    monkeypatch.setattr(
+        'iwork.api_views_account.READ_MODEL',
+        SimpleNamespace(target_analysis=raise_not_ready),
+    )
+
+    response = Client().get(
+        '/api/account/today-targets/',
+        **_identity_headers(
+            subject='leader-analysis-unavailable',
+            username='leader-analysis-unavailable',
+        ),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['analysis']['status'] == 'unavailable'
+    group = payload['groups'][0]
+    assert group['analysis'] is None
+    assert group['actual_qty'] == 50
+    assert group['production_available'] is True
+    assert group['production_state'] == 'filled'

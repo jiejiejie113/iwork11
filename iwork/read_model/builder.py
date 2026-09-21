@@ -9,6 +9,7 @@ from uuid import uuid4
 from django.conf import settings
 
 from iwork.statistics import get_batch_detail_stats, get_batch_stats
+from iwork.target_analysis import build_target_analysis_snapshot
 
 from .fact_source import ReadModelFactSource
 from .schemas import READ_MODEL_SCHEMA_VERSION, validate_snapshot
@@ -44,6 +45,11 @@ def build_snapshot(
     fact_payload = source.get_read_model_facts(business_date)
     facts = fact_payload.get("facts", [])
     products = fact_payload.get("products", {})
+    target_analysis_facts = getattr(source, "facts", None) or facts
+    target_analysis = build_target_analysis_snapshot(
+        target_analysis_facts,
+        allowed_flows=settings.VISIBLE_FLOWS,
+    )
     workorders, workorder_details = _build_workorder_views(facts, products)
     completed_at = (now or (lambda: datetime.now(BUSINESS_TIME_ZONE)))()
     if completed_at.tzinfo is None:
@@ -71,6 +77,7 @@ def build_snapshot(
             "workorder_details": workorder_details,
             "detail": detail,
             "kanban": facts,
+            "target_analysis": target_analysis,
         },
     }
     validate_snapshot(snapshot)

@@ -26,6 +26,18 @@
         {% endif %}
     </div>
 
+    <!-- 今日目标页：在主导航栏选择查看日期 -->
+    <div v-if="currentView === 'today_targets'" class="flex items-center gap-2">
+        <label class="flex items-center gap-2 text-xs text-slate-300">
+            <span>查看日期</span>
+            <input v-model="selectedDate" type="date"
+                   :max="currentBusinessDate || businessDate"
+                   @change="changeTargetDate"
+                   aria-label="今日目标查看日期"
+                   class="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-100 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+        </label>
+    </div>
+
     <div class="relative" data-iwork-notification-center>
         <div hidden data-notification-csrf-bootstrap>{% csrf_token %}</div>
         <button type="button" data-notification-toggle
