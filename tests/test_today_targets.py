@@ -758,6 +758,8 @@ def test_today_targets_template_contains_analysis_table_and_history_controls():
     assert 'analysisColumns' in template
     assert 'filteredAnalysisGroups' in template
     assert 'analysisFillStatusText' in template
+    assert 'if (item.dirty || !(item.target_set && item.work_hours_set))' in template
+    assert 'if (item.dirty || !item.complete)' not in template
     assert 'analysisTotals' in template
     assert 'achievementRateClass' in template
     assert 'toggleAnalysisGroup' in template

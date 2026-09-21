@@ -591,7 +591,8 @@
             function analysisFillStatusKey(item) {
                 if (item.status === 'unknown') return 'unknown';
                 if (item.status === 'waived' && !item.dirty) return 'waived';
-                if (item.dirty || !item.complete) {
+                // 填写状态只取决于目标与工时是否填报完整，与实际产量是否达标无关。
+                if (item.dirty || !(item.target_set && item.work_hours_set)) {
                     return item.status === 'overdue' ? 'overdue' : 'pending';
                 }
                 return item.status === 'fulfilled_late' ? 'fulfilled_late' : 'fulfilled';
