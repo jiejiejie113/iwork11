@@ -35,10 +35,12 @@ env/
 !env/local.env
 !env/production.env
 .venv/
+venv311/
 
 # Django
 *.log
 local_settings.py
+iwork/local_dev_settings.py
 db.sqlite3
 media/
 staticfiles/
