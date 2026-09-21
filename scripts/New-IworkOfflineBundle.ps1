@@ -125,7 +125,8 @@ function New-BundleManifest {
     $resolvedRoot = [IO.Path]::GetFullPath($RootPath).TrimEnd('\')
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($file in Get-ChildItem -LiteralPath $resolvedRoot -Recurse -File | Sort-Object FullName) {
-        $relativePath = $file.FullName.Substring($resolvedRoot.Length + 1)
+        # 清单统一使用正斜杠，与压缩包条目及其它平台校验工具保持一致。
+        $relativePath = $file.FullName.Substring($resolvedRoot.Length + 1).Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         $lines.Add("$hash  $relativePath")
     }

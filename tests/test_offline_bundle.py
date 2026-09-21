@@ -136,6 +136,11 @@ def test_offline_bundle_contains_runtime_files_and_excludes_sensitive_content(tm
             digest, _, relative_path = line.partition("  ")
             assert len(digest) == 64 and relative_path
             int(digest, 16)
+            assert "\\" not in relative_path, "清单路径必须使用正斜杠"
+            assert relative_path in names, f"清单路径不在压缩包内: {relative_path}"
+            assert (
+                hashlib.sha256(archive.read(relative_path)).hexdigest() == digest
+            ), f"清单哈希不一致: {relative_path}"
 
 
 def test_offline_bundle_fails_closed_when_required_runtime_files_are_missing(

@@ -28,9 +28,10 @@ GHCR 受控发布。用户已明确要求并把该通道的风险接受交由运
 ## 验证
 
 - 新增 `tests/test_offline_bundle.py` 3 项测试：必需文件缺失失败关闭、敏感项排除、
-  清单哈希与运行文件校验，全部通过。
-- 实测产物：`dist/iwork-offline-20260921-103625.zip`（270 文件，
-  `sha256:af9a031e75205da13f561b002941c8952c689ae9744404090983efbccfea66b4`）。
+  清单哈希与运行文件校验（含清单路径正斜杠与逐文件哈希比对），全部通过。
+- 实测产物：`dist/iwork-offline-20260921-105734.zip`（270 文件，
+  `sha256:19496f7c433588b7fffff42e02ac911796c55225ec256ea7f6d95a0bb3b24c4e`）；
+  独立校验：清单 270 项全部命中压缩包条目且哈希一致，无缺失、无多余。
 - 离线包解压后 `docker compose --env-file env/production.env --env-file <密钥> config --quiet`
   返回 0。
 - 端到端实测（本机）：解压到独立目录后运行 `deploy.ps1 -Environment local -SecretsFile <密钥>`，
@@ -38,6 +39,8 @@ GHCR 受控发布。用户已明确要求并把该通道的风险接受交由运
   今日目标接口 200 且 `analysis.status=available`。
 - `deploy.ps1` 固定 `--project-name iwork`，任意解压目录可接管同一组容器，
   不会因目录变化出现容器名冲突。
+- MANIFEST 路径统一使用正斜杠（与压缩包条目及跨平台校验工具一致）；早先两份旧包
+  已删除，避免误用。
 
 ## 风险边界
 
